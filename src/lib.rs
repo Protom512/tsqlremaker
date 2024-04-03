@@ -45,8 +45,6 @@ pub struct query {
     queries: Vec<query>,
 }
 
-
-
 /// ```bnf
 /// create [or replace] procedure [owner.]procedure_name[;number]
 /// 	[[(@parameter_name datatype [(length) | (precision [, scale])]
@@ -57,8 +55,7 @@ pub struct query {
 /// 	as {SQL_statements | external name dll_name}
 ///```
 ///
-pub struct SP{}
-
+pub struct SP {}
 
 ///```bnf
 /// insert [into] [database.[owner.]]{table_name|view_name}
@@ -66,7 +63,6 @@ pub struct SP{}
 /// 	{values (expression [, expression]...)
 /// 		|select_statement [plan "abstract plan"]}
 /// ```
-
 
 ///
 /// ```bnf
@@ -92,13 +88,13 @@ pub struct SP{}
 ///
 ///
 
-#[derive(Debug,Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub enum select_all_distict {
     All,
     Distinct,
     None,
 }
-#[derive(Debug,Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Select<'a> {
     all_or_distinct: select_all_distict,
     top_int: Option<u8>,
@@ -137,7 +133,7 @@ fn is_ident(ch: char) -> bool {
 pub fn is_char_digit(chr: char) -> bool {
     return chr.is_ascii() && is_digit(chr as u8);
 }
-fn parse_select(input: &str) -> IResult<&str, select_all_distict, Option<( &str,  &str)>> {
+fn parse_select(input: &str) -> IResult<&str, &str> {
     map(
         tuple((
             multispace0,
@@ -155,36 +151,33 @@ fn parse_select(input: &str) -> IResult<&str, select_all_distict, Option<( &str,
             ))),
         )),
         |(_, select_phrase, _, select_all_distinct_phrase, top_phrase)| {
+            // let alldist:select_all_distict =match select_all_distinct_phrase {
+            //     Some((n,_)) => {
+            //         match(n.to_uppercase().as_str()){
+            //             "ALL" => select_all_distict::All,
+            //             "DISTINCT" => select_all_distict::Distinct,
+            //             _ => panic!("{:?}",n)
+            //         }
+            //         dbg!(n)
 
-            let alldist:select_all_distict =match select_all_distinct_phrase {
-                Some((n,_)) => {
-                    match(n.to_uppercase().as_str()){
-                        "ALL" => select_all_distict::All,
-                        "DISTINCT" => select_all_distict::Distinct,
-                        _ => panic!("{:?}",n)
-                    }
-                    dbg!(n)
+            //     }
+            //     None => select_all_distict::None
+            // };
+            // let top = match(top_phrase){
+            //     Some((_,m,_,j))=>{Some(j.parse().unwrap())},
+            //     None=>None,
 
-                }
-                None => select_all_distict::None
-            };
-            let top = match(top_phrase){
-                Some((_,m,_,j))=>{Some(j.parse().unwrap())},
-                None=>None,
+            // };
+            // let result=Select{
+            //    all_or_distinct: alldist,
+            //     top_int: top,
 
-            };
-            let result=Select{
-               all_or_distinct: alldist,
-                top_int: top,
-
-            };
+            // };
 
             // ( select_phrase, alldist, top_phrase)
             select_phrase
         },
-
     )(input)
-
 }
 fn remove_comments(input: &str) -> String {
     let re = Regex::new(r"--.*\n?").unwrap();
@@ -199,7 +192,7 @@ fn sp(input: &str) -> IResult<&str, &str> {
 }
 
 fn main() {
-unimplemented!()
+    unimplemented!()
 }
 #[cfg(test)]
 mod tests {
@@ -213,15 +206,11 @@ mod tests {
     #[case("select * from test01db",Ok(("* from test01db", "select")))]
     #[case("select distinct * from test01db",Ok(("* from test01db", "select")))]
     #[case("select top 10  * from test01db",Ok(("* from test01db", "select")))]
-
-
     #[test]
-    fn test_rstest_selct(#[case] sql:&str,#[case] result:IResult<&str,&str>) {
-
+    fn test_rstest_selct(#[case] sql: &str, #[case] result: IResult<&str, &str>) {
         assert_eq!(sp(sql), result);
     }
 }
-
 
 // #[test]
 // fn test_simple_comment() {
