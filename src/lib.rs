@@ -96,7 +96,7 @@ pub enum select_all_distict {
 }
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Select<'a> {
-    all_or_distinct: select_all_distict,
+    all_or_distinct: Option<&'a str>,
     top_int: Option<u8>,
     select_list: &'a str,
     into_clause: Option<&'a str>,
@@ -126,10 +126,45 @@ pub struct Select<'a> {
 //     Ok((input, Color { red, green, blue }))
 // }
 
+fn parse_select_into(input: &str) -> IResult<&str, &str> {
+    let (input, opt_into) = opt(tuple((multispace0, tag_no_case("into"), multispace1)))(input)?;
+    let into = match opt_into {
+        Some((_, m, _)) => m,
+        None => "",
+    };
+    Ok((input, into))
+}
 fn is_ident(ch: char) -> bool {
     is_alphanumeric(ch as u8) || ch == '_' || ch == '-'
 }
 
+fn parse_select_top(input: &str) -> IResult<&str, Option<u8>> {
+    let (input, opt_top) = opt(tuple((
+        tag_no_case("top"),
+        multispace1,
+        take_while1(is_char_digit),
+        multispace1,
+    )))(input)?;
+    let num: Option<u8> = match opt_top {
+        Some((m, _, num, _)) => Some(num.parse().expect("failed to convert")),
+        None => None,
+    };
+    Ok((input, num))
+}
+
+fn parse_select_ditinct(input: &str) -> IResult<&str, &str> {
+    let (input, opt_top) = opt(tuple((
+        multispace0,
+        alt((tag_no_case("all"), tag_no_case("distinct"))),
+        multispace1,
+    )))(input)?;
+    dbg!("{:#?}", opt_top);
+    let top = match opt_top {
+        Some((n, m, p)) => m,
+        None => "",
+    };
+    Ok((input, top))
+}
 pub fn is_char_digit(chr: char) -> bool {
     return chr.is_ascii() && is_digit(chr as u8);
 }
@@ -139,44 +174,10 @@ fn parse_select(input: &str) -> IResult<&str, &str> {
             multispace0,
             tag_no_case("select"),
             multispace1,
-            opt(tuple((
-                alt((tag_no_case("all"), tag_no_case("distinct"))),
-                multispace1,
-            ))),
-            opt(tuple((
-                tag_no_case("top"),
-                multispace1,
-                take_while1(is_char_digit),
-                multispace1,
-            ))),
+            parse_select_ditinct,
+            parse_select_top,
         )),
-        |(_, select_phrase, _, select_all_distinct_phrase, top_phrase)| {
-            // let alldist:select_all_distict =match select_all_distinct_phrase {
-            //     Some((n,_)) => {
-            //         match(n.to_uppercase().as_str()){
-            //             "ALL" => select_all_distict::All,
-            //             "DISTINCT" => select_all_distict::Distinct,
-            //             _ => panic!("{:?}",n)
-            //         }
-            //         dbg!(n)
-
-            //     }
-            //     None => select_all_distict::None
-            // };
-            // let top = match(top_phrase){
-            //     Some((_,m,_,j))=>{Some(j.parse().unwrap())},
-            //     None=>None,
-
-            // };
-            // let result=Select{
-            //    all_or_distinct: alldist,
-            //     top_int: top,
-
-            // };
-
-            // ( select_phrase, alldist, top_phrase)
-            select_phrase
-        },
+        |(_, select_phrase, _, select_all_distinct_phrase, top_phrase)| select_phrase,
     )(input)
 }
 fn remove_comments(input: &str) -> String {
@@ -200,21 +201,41 @@ mod tests {
     use rstest::rstest;
 
     use crate::sp;
+    use crate::{parse_select_ditinct, parse_select_into, parse_select_top};
 
     #[rstest]
     #[test]
     #[case("select * from test01db",Ok(("* from test01db", "select")))]
     #[case("select distinct * from test01db",Ok(("* from test01db", "select")))]
     #[case("select top 10  * from test01db",Ok(("* from test01db", "select")))]
-    #[test]
     fn test_rstest_selct(#[case] sql: &str, #[case] result: IResult<&str, &str>) {
         assert_eq!(sp(sql), result);
     }
-}
+    #[rstest]
+    #[test]
+    #[case("all * ",Ok(("* ", "all")))]
+    #[case("  all * ",Ok(("* ", "all")))]
+    #[case("All * ",Ok(("* ", "All")))]
+    #[case("  All * ",Ok(("* ", "All")))]
+    #[case("distinct * ",Ok(("* ", "distinct")))]
+    #[case("  distinct * ",Ok(("* ", "distinct")))]
+    #[case("   * ",Ok(("   * ", "")))]
+    fn test_rstest_parse_select_ditinct(#[case] sql: &str, #[case] result: IResult<&str, &str>) {
+        assert_eq!(parse_select_ditinct(sql), result);
+    }
 
-// #[test]
-// fn test_simple_comment() {
-//     let sql = "select * -- hoge comment \
-//     from test01db";
-//     assert_eq!(sp(sql), Ok(("* from test01db", "select")));
-// }
+    #[rstest]
+    #[test]
+    #[case("top 1 * ",Ok(("* ", Some(1))))]
+
+    fn test_rstest_parse_select_top(#[case] sql: &str, #[case] result: IResult<&str, Option<u8>>) {
+        assert_eq!(parse_select_top(sql), result);
+    }
+    #[rstest]
+    #[test]
+    #[case("into * ",Ok(("* ", "into")))]
+
+    fn test_rstest_parse_select_into(#[case] sql: &str, #[case] result: IResult<&str, &str>) {
+        assert_eq!(parse_select_into(sql), result);
+    }
+}
