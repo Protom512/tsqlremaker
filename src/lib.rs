@@ -1,14 +1,9 @@
 use nom::branch::alt;
 use nom::bytes::complete::{tag_no_case, take_while1};
 use nom::character::complete::{multispace0, multispace1};
-use nom::bytes::complete::{tag_no_case, take_while1};
-use nom::character::complete::{multispace0, multispace1};
 use nom::character::{is_alphanumeric, is_digit};
 use nom::combinator::{map, opt};
-use nom::{
-    sequence::tuple,
-    IResult,
-};
+use nom::{sequence::tuple, IResult};
 use regex::Regex;
 
 pub enum Operator {
@@ -24,8 +19,6 @@ pub enum Operator {
 /// expr ::= term   | term   ('+'|'-') term
 /// ```
 ///
-
-
 
 pub struct Procedure<'a> {
     /// プロシージャ名
@@ -150,10 +143,6 @@ fn parse_select_top(input: &str) -> IResult<&str, Option<u8>> {
     Ok((input, num))
 }
 
-
-
-
-
 fn parse_select_ditinct(input: &str) -> IResult<&str, &str> {
     let (input, opt_top) = opt(tuple((
         multispace0,
@@ -183,7 +172,10 @@ fn parse_select(input: &str) -> IResult<&str, &str> {
     )(input)
 }
 fn remove_comments(input: &str) -> String {
-    let re = Regex::new(r"(?: (?:'[^']*?') | (?<singleline>--[^\n]*) | (?<multiline>(?:\/\*)+?[\w\W]+?(?:\*\/)+) )").unwrap();
+    let re = Regex::new(
+        r"(?: (?:'[^']*?') | (?<singleline>--[^\n]*) | (?<multiline>(?:\/\*)+?[\w\W]+?(?:\*\/)+) )",
+    )
+    .unwrap();
     re.replace_all(input, "\n").into_owned()
 }
 
