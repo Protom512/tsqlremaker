@@ -171,16 +171,66 @@ fn parse_select(input: &str) -> IResult<&str, &str> {
         |(_, select_phrase, _, select_all_distinct_phrase, top_phrase)| select_phrase,
     )(input)
 }
+
+/// remove_comments
+///
+/// # Arguments
+///
+/// * `arg1`: sql text 
+///
+/// # Returns
+///
+/// String: コメント削除されたSqlテキスト
+///
+/// # Examples
+///
+/// ```
+/// // 使用例をここに示します。
+/// let sql_text="select hoge -- comment
+/// from table";
+/// let input_txt = remove_comments(sql_text);
+/// assert_eq!(input_txt, "select hoge from table");
+/// ```
+///
+/// # Panics
+///
+/// 関数がパニックする条件や状況について説明します。パニックしない場合はこのセクションを省略します。
+/// TBD
+/// 
+/// # Errors
+///
+/// エラーが発生する可能性がある場合、その詳細をここに記述します。エラーが発生しない場合はこのセクションを省略します。
+/// TBD
+/// 
+/// # Safety
+///
+/// `unsafe`な関数の場合、なぜ安全性が保証されているのかを説明します。安全性に関する特記事項がない場合はこのセクションを省略します。
+/// TBD
+/// # Notes
+///
+/// 追加の注記や関連する情報があればここに記述します。
+///
+/// # See also
+///
+/// 他に関連する関数やドキュメントへのリンクを記述します。
+///
 fn remove_comments(input: &str) -> String {
+    /// 一行のみのコメントを削除する
+    ///
     let re = Regex::new(
-        r"(?: (?:'[^']*?') | (?<singleline>--[^\n]*) | (?<multiline>(?:\/\*)+?[\w\W]+?(?:\*\/)+) )",
+        // r"(?: (?:'[^']*?') | (?<singleline>\s*--\s*[^\n]*) | (?<multiline>(?:\/\*)+?[\w\W]+?(?:\*\/)+) )",
+        r"\s*--\s*.*[\r\n]+",
     )
-    .unwrap();
-    re.replace_all(input, "\n").into_owned()
+    .expect("single line comments removal regex failed");
+    let input2 = re.replace_all(input, "").into_owned();
+    let re = Regex::new(r#"[\r\n]+"#).expect("regex init on newline  failed");
+    let temp_input = re.replace_all(input2.as_str(), "").into_owned();
+    let re = Regex::new(r#"\/\*.*\*\/"#).expect("multi line comments removal regex failed");
+    re.replace_all(temp_input.as_str(), "").into_owned()
 }
 
 fn sp(input: &str) -> IResult<&str, &str> {
-    // let input_Str = remove_comments(input);
+    let input_Str = remove_comments(input);
     let (input, ob) = parse_select(input)?;
 
     Ok((input, ob))
@@ -192,7 +242,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::sp;
-    use crate::{parse_select_ditinct, parse_select_into, parse_select_top};
+    use crate::{parse_select_ditinct, parse_select_into, parse_select_top, remove_comments};
 
     #[rstest]
     #[test]
@@ -229,6 +279,29 @@ mod tests {
     fn test_rstest_parse_select_into(#[case] sql: &str, #[case] result: IResult<&str, &str>) {
         assert_eq!(parse_select_into(sql), result);
     }
-
-    // fn test_rstest_comments_()
+    #[rstest]
+    #[test]
+    #[case(
+        r"
+    SELECT 1 --hoge
+    ",
+        "    SELECT 1    "
+    )]
+    #[case(
+        r"/*comment1*/*comment2*/comment1end*/
+    SELECT 1 
+    ",
+        "    SELECT 1     "
+    )]
+    #[case(
+        r"/*comment1
+    */
+    SELECT 1 
+    ",
+        "    SELECT 1     "
+    )]
+    fn test_rstest_comments_(#[case] sql: &str, #[case] expect: String) {
+        let res = remove_comments(sql);
+        assert_eq!(res, expect);
+    }
 }
