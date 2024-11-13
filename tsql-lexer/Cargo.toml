@@ -1,0 +1,7 @@
+[package]
+name = "tsql-lexer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+"tsql-token" = { path = "../tsql-token" }
