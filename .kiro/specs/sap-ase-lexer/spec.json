@@ -1,0 +1,22 @@
+{
+  "feature_name": "sap-ase-lexer",
+  "created_at": "2026-01-19T23:40:49+09:00",
+  "updated_at": "2026-01-20T12:30:00+09:00",
+  "language": "ja",
+  "phase": "tasks",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": false
+    },
+    "design": {
+      "generated": true,
+      "approved": false
+    },
+    "tasks": {
+      "generated": true,
+      "approved": false
+    }
+  },
+  "ready_for_implementation": false
+}

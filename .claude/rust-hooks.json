@@ -1,0 +1,31 @@
+{
+  "preToolUse": [
+    {
+      "pattern": "cargo build|cargo test|cargo check|cargo clippy",
+      "description": "Long-running Rust command reminder",
+      "command": "echo 'Tip: Run long-running cargo commands in background with & or use tmux'"
+    },
+    {
+      "pattern": "cargo run",
+      "description": "CLI run warning",
+      "command": "echo 'Note: For long-running servers, consider using a process manager or tmux'"
+    }
+  ],
+  "postToolUse": [
+    {
+      "pattern": "**/*.rs",
+      "description": "Auto-format Rust files with rustfmt",
+      "command": "rustfmt {filePath}"
+    },
+    {
+      "pattern": "**/*.rs",
+      "description": "Run clippy on edited Rust files",
+      "command": "cargo clippy -- -D warnings 2>&1 | head -20"
+    },
+    {
+      "pattern": "**/*.rs",
+      "description": "Check for TODO comments in production code",
+      "command": "grep -n 'TODO' {filePath} || true"
+    }
+  ]
+}
