@@ -15,6 +15,10 @@
 #![warn(clippy::expect_used)]
 #![warn(clippy::panic)]
 
+pub mod cursor;
+pub mod error;
+
+pub use error::{BracketType, LexError};
 pub use tsql_token::{Position, Span, TokenKind};
 
 /// 字句解析器
