@@ -2218,6 +2218,1348 @@ impl SqlEmitter for OracleEmitter { /* ... */ }
 | 日付 | バージョン | 変更内容 |
 |------|------------|----------|
 | 2026-01-19 | 0.1.0 | 初版作成 |
+| 2026-01-19 | 0.2.0 | 追加要件（セクション9）を追加、Rust言語特性最適化 |
+
+---
+
+## 9. 追加要件（v0.2.0）
+
+本セクションは、初期SDDに対する追加要件を定義する。
+MVP（Must）とPost-MVP（Should/Could）に分類し、優先度を明確化する。
+
+### 9.1 Rust言語特性に関する制約（MANDATORY）
+
+#### 9.1.1 パニック禁止ポリシー
+
+**ライブラリcrateにおいて `panic!`, `unwrap()`, `expect()` は禁止する。**
+
+| 禁止事項 | 代替手段 |
+|----------|----------|
+| `panic!("message")` | `return Err(Error::...)` |
+| `option.unwrap()` | `option.ok_or(Error::...)?` または `option.ok_or_else(\|\| Error::...)?` |
+| `result.unwrap()` | `result?` または `result.map_err(\|e\| Error::...)?` |
+| `option.expect("msg")` | `option.ok_or(Error::WithContext("msg"))?` |
+| `slice[index]` (境界チェックなし) | `slice.get(index).ok_or(Error::OutOfBounds)?` |
+| `assert!` (リリースビルド) | `if !cond { return Err(...) }` |
+
+**例外**: `#[cfg(test)]` モジュール内のテストコードのみ許可。
+
+```rust
+// ❌ 禁止
+pub fn next_token(&mut self) -> Token {
+    let ch = self.input.chars().nth(0).unwrap(); // PANIC!
+    // ...
+}
+
+// ✅ 許可
+pub fn next_token(&mut self) -> Result<Token, LexError> {
+    let ch = self.input.chars().next()
+        .ok_or(LexError::UnexpectedEof { pos: self.position })?;
+    // ...
+}
+```
+
+#### 9.1.2 Result型の統一
+
+```rust
+/// 全crateで共通のResult型エイリアス
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// エラー型は thiserror を使用
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Lexer error: {0}")]
+    Lex(#[from] LexError),
+    
+    #[error("Parser error: {0}")]
+    Parse(#[from] ParseError),
+    
+    #[error("Emit error: {0}")]
+    Emit(#[from] EmitError),
+    
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+}
+```
+
+#### 9.1.3 Zero-cost abstractions の活用
+
+```rust
+// ✅ Zero-copy Token（メモリ割り当てなし）
+pub struct Token<'src> {
+    pub kind: TokenKind,
+    pub text: &'src str,    // ソースへの借用
+    pub span: Span,
+}
+
+// ✅ 静的キーワードマップ（once_cell / LazyLock）
+static KEYWORDS: LazyLock<HashMap<&'static str, TokenKind>> = LazyLock::new(|| {
+    // 一度だけ初期化
+});
+
+// ❌ 毎回HashMapを作成（現在の実装）
+pub fn lookup_ident(ident: &str) -> token_type {
+    let mut map = HashMap::new(); // 毎回allocate!
+    // ...
+}
+```
+
+#### 9.1.4 所有権とライフタイムの設計指針
+
+| パターン | 使用場面 | 例 |
+|----------|----------|-----|
+| `&'src str` | Token, Span, 一時参照 | `Token<'src>` |
+| `String` | エラーメッセージ, 出力SQL | `EmitError::message` |
+| `Cow<'a, str>` | 入力そのまま or 変換が必要 | 文字列リテラルのエスケープ |
+| `Box<T>` | 再帰的構造（AST） | `Box<Expr>` |
+| `Arc<T>` | 複数所有者（並列処理） | 将来のLSP用 |
+
+---
+
+### 9.2 中間表現（IR）とシリアライズ形式【MVP - Must】
+
+#### 9.2.1 内部表現と外部形式の分離
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        内部表現層                                │
+│  common-sql crate: Rust型（AST/IR）                             │
+│  - Statement, Expr, DataType, Span                              │
+│  - 全ての処理はRust型を正とする                                   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        変換層                                    │
+│  proto-mapper crate: Rust ⇄ Protobuf 双方向変換                  │
+│  - From/Into trait実装                                          │
+│  - 変換時の検証ロジック                                          │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        外部形式層                                │
+│  /proto/*.proto: 外部ツール連携用                                │
+│  - tsqlremaker_ir.proto: 変換パイプライン用                      │
+│  - tsqlremaker_index.proto: コードインテリジェンス用             │
+│  - JSON: デバッグ用補助出力                                      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### 9.2.2 Protobufスキーマ分割
+
+**ファイル構成**:
+```
+proto/
+├── common.proto           # 共通定義（Span, Location）
+├── tsqlremaker_ir.proto   # 変換パイプライン用
+└── tsqlremaker_index.proto # コードインテリジェンス用
+```
+
+**common.proto**:
+```protobuf
+syntax = "proto3";
+package tsqlremaker.common;
+
+// バイトオフセットベースの位置情報
+message Span {
+  uint32 start = 1;  // 開始バイトオフセット（UTF-8）
+  uint32 end = 2;    // 終了バイトオフセット
+}
+
+// 行・列情報（LSP向け）
+message Location {
+  uint32 line = 1;    // 1-indexed
+  uint32 column = 2;  // 1-indexed (UTF-16 code units for LSP)
+  uint32 offset = 3;  // 0-indexed byte offset
+}
+
+// ソース位置の完全情報
+message SourceSpan {
+  Span span = 1;
+  Location start_loc = 2;
+  Location end_loc = 3;
+}
+```
+
+**tsqlremaker_ir.proto**:
+```protobuf
+syntax = "proto3";
+package tsqlremaker.ir;
+
+import "common.proto";
+
+// フィールド番号ルール:
+// - 1-15: 頻出フィールド（1バイトエンコード）
+// - 16-2047: 通常フィールド
+// - reserved で削除フィールドを管理
+// - 破壊的変更禁止（後方互換維持）
+
+message Statement {
+  oneof stmt {
+    SelectStatement select = 1;
+    InsertStatement insert = 2;
+    UpdateStatement update = 3;
+    DeleteStatement delete = 4;
+    CreateTableStatement create_table = 5;
+    CreateProcedureStatement create_procedure = 6;
+    // ...
+  }
+  common.SourceSpan span = 15;
+}
+
+message SelectStatement {
+  bool distinct = 1;
+  optional LimitClause limit = 2;
+  repeated SelectColumn columns = 3;
+  optional FromClause from = 4;
+  repeated JoinClause joins = 5;
+  optional Expr where_clause = 6;
+  repeated Expr group_by = 7;
+  optional Expr having = 8;
+  repeated OrderByItem order_by = 9;
+  common.SourceSpan span = 15;
+}
+
+message Expr {
+  oneof expr {
+    Literal literal = 1;
+    Identifier ident = 2;
+    BinaryExpr binary = 3;
+    UnaryExpr unary = 4;
+    FunctionCall function = 5;
+    CaseExpr case = 6;
+    SubqueryExpr subquery = 7;
+    ErrorExpr error = 14;  // 不完全ノード
+  }
+  common.SourceSpan span = 15;
+}
+
+// 不完全ノード（エラー回復用）
+message ErrorExpr {
+  string message = 1;
+  repeated string partial_tokens = 2;  // 回収できたトークン
+}
+```
+
+**tsqlremaker_index.proto**:
+```protobuf
+syntax = "proto3";
+package tsqlremaker.index;
+
+import "common.proto";
+
+message Index {
+  repeated Symbol symbols = 1;
+  repeated Reference references = 2;
+  repeated Scope scopes = 3;
+  repeated Dependency dependencies = 4;
+}
+
+message Symbol {
+  string id = 1;           // ユニークID
+  string name = 2;         // 識別子名
+  SymbolKind kind = 3;
+  common.SourceSpan span = 4;
+  string scope_id = 5;     // 所属スコープ
+  optional string type_info = 6;  // 型情報（解決済みの場合）
+}
+
+enum SymbolKind {
+  SYMBOL_KIND_UNSPECIFIED = 0;
+  SYMBOL_KIND_TABLE = 1;
+  SYMBOL_KIND_COLUMN = 2;
+  SYMBOL_KIND_VARIABLE = 3;
+  SYMBOL_KIND_PARAMETER = 4;
+  SYMBOL_KIND_PROCEDURE = 5;
+  SYMBOL_KIND_FUNCTION = 6;
+  SYMBOL_KIND_ALIAS = 7;
+  SYMBOL_KIND_TEMP_TABLE = 8;
+}
+
+message Reference {
+  string id = 1;
+  string name = 2;
+  common.SourceSpan span = 3;
+  ReferenceKind kind = 4;
+  ResolutionStatus resolution = 5;
+  optional string resolved_symbol_id = 6;  // 解決済みの場合
+  optional string unresolved_reason = 7;   // 未解決の場合の理由
+}
+
+enum ReferenceKind {
+  REFERENCE_KIND_UNSPECIFIED = 0;
+  REFERENCE_KIND_READ = 1;
+  REFERENCE_KIND_WRITE = 2;
+  REFERENCE_KIND_CALL = 3;
+}
+
+enum ResolutionStatus {
+  RESOLUTION_STATUS_UNSPECIFIED = 0;
+  RESOLUTION_STATUS_RESOLVED = 1;
+  RESOLUTION_STATUS_UNRESOLVED = 2;
+  RESOLUTION_STATUS_AMBIGUOUS = 3;
+}
+
+message Scope {
+  string id = 1;
+  ScopeKind kind = 2;
+  common.SourceSpan span = 3;
+  optional string parent_id = 4;
+  repeated string symbol_ids = 5;
+}
+
+enum ScopeKind {
+  SCOPE_KIND_UNSPECIFIED = 0;
+  SCOPE_KIND_GLOBAL = 1;
+  SCOPE_KIND_PROCEDURE = 2;
+  SCOPE_KIND_BLOCK = 3;
+  SCOPE_KIND_QUERY = 4;
+}
+
+message Dependency {
+  string source_object = 1;  // 依存元
+  string target_object = 2;  // 依存先
+  DependencyKind kind = 3;
+  bool is_dynamic = 4;       // 動的SQL由来か
+}
+
+enum DependencyKind {
+  DEPENDENCY_KIND_UNSPECIFIED = 0;
+  DEPENDENCY_KIND_TABLE_READ = 1;
+  DEPENDENCY_KIND_TABLE_WRITE = 2;
+  DEPENDENCY_KIND_PROCEDURE_CALL = 3;
+  DEPENDENCY_KIND_FUNCTION_CALL = 4;
+}
+```
+
+#### 9.2.3 後方互換性ルール
+
+| ルール | 説明 |
+|--------|------|
+| フィールド番号固定 | 一度割り当てた番号は変更不可 |
+| reserved運用 | 削除フィールドは `reserved` に追加 |
+| 新規フィールド | `optional` または `repeated` で追加 |
+| 列挙値 | `_UNSPECIFIED = 0` を必須、新規値は末尾追加 |
+| 破壊的変更禁止 | メジャーバージョンアップ時のみ許可 |
+
+---
+
+### 9.3 Span/位置情報の全工程適用【MVP - Must】
+
+#### 9.3.1 位置情報の要件
+
+**全ノードがSpanを保持する**:
+- Lexer Token: ✅
+- Parser AST: ✅
+- Common IR: ✅
+- Emitter Warning: ✅
+
+```rust
+/// バイトオフセットベースのSpan
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Span {
+    pub start: u32,  // UTF-8 byte offset
+    pub end: u32,
+}
+
+impl Span {
+    pub const DUMMY: Span = Span { start: 0, end: 0 };
+    
+    pub fn new(start: usize, end: usize) -> Self {
+        Self {
+            start: start as u32,
+            end: end as u32,
+        }
+    }
+    
+    pub fn len(&self) -> usize {
+        (self.end - self.start) as usize
+    }
+    
+    pub fn merge(self, other: Span) -> Span {
+        Span {
+            start: self.start.min(other.start),
+            end: self.end.max(other.end),
+        }
+    }
+}
+
+/// LSP向けの行・列変換
+pub struct LineIndex {
+    line_starts: Vec<u32>,  // 各行の開始オフセット
+}
+
+impl LineIndex {
+    pub fn new(text: &str) -> Self {
+        let mut line_starts = vec![0];
+        for (i, c) in text.char_indices() {
+            if c == '\n' {
+                line_starts.push((i + 1) as u32);
+            }
+        }
+        Self { line_starts }
+    }
+    
+    /// byte offset → (line, column) (both 0-indexed)
+    pub fn line_col(&self, offset: u32) -> (u32, u32) {
+        let line = self.line_starts
+            .partition_point(|&start| start <= offset)
+            .saturating_sub(1);
+        let line_start = self.line_starts[line];
+        let col = offset - line_start;
+        (line as u32, col)
+    }
+    
+    /// LSP用: UTF-16 code units への変換
+    pub fn to_lsp_position(&self, text: &str, offset: u32) -> lsp_types::Position {
+        let (line, col_bytes) = self.line_col(offset);
+        let line_start = self.line_starts[line as usize] as usize;
+        let col_utf16 = text[line_start..offset as usize]
+            .encode_utf16()
+            .count();
+        lsp_types::Position {
+            line,
+            character: col_utf16 as u32,
+        }
+    }
+}
+```
+
+#### 9.3.2 エラー/警告の統一構造
+
+```rust
+/// 診断情報（エラー・警告共通）
+#[derive(Debug, Clone)]
+pub struct Diagnostic {
+    pub severity: Severity,
+    pub code: DiagnosticCode,
+    pub message: String,
+    pub span: Span,
+    pub suggestion: Option<Suggestion>,
+    pub related: Vec<RelatedInfo>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Error,
+    Warning,
+    Info,
+    Hint,
+}
+
+/// 診断コード（カテゴリ + 番号）
+#[derive(Debug, Clone, Copy)]
+pub struct DiagnosticCode {
+    pub category: DiagnosticCategory,
+    pub number: u16,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum DiagnosticCategory {
+    Lex,    // L001, L002, ...
+    Parse,  // P001, P002, ...
+    Sem,    // S001, S002, ... (Semantic)
+    Emit,   // E001, E002, ...
+}
+
+impl std::fmt::Display for DiagnosticCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let prefix = match self.category {
+            DiagnosticCategory::Lex => 'L',
+            DiagnosticCategory::Parse => 'P',
+            DiagnosticCategory::Sem => 'S',
+            DiagnosticCategory::Emit => 'E',
+        };
+        write!(f, "{}{:03}", prefix, self.number)
+    }
+}
+
+/// 修正提案
+#[derive(Debug, Clone)]
+pub struct Suggestion {
+    pub message: String,
+    pub replacement: Option<String>,
+    pub span: Span,
+}
+
+/// 関連情報（複数箇所に跨るエラー用）
+#[derive(Debug, Clone)]
+pub struct RelatedInfo {
+    pub message: String,
+    pub span: Span,
+}
+```
+
+---
+
+### 9.4 エラー回復（壊れたSQLでも解析継続）【MVP - Must】
+
+#### 9.4.1 エラー回復戦略
+
+```rust
+/// パーサーのエラー回復モード
+pub struct Parser<'src> {
+    tokens: Vec<Token<'src>>,
+    pos: usize,
+    diagnostics: Vec<Diagnostic>,
+    panic_mode: bool,  // エラー回復中フラグ
+}
+
+impl<'src> Parser<'src> {
+    /// エラー発生時の同期点まで回復
+    fn synchronize(&mut self) {
+        self.panic_mode = true;
+        
+        while !self.is_at_end() {
+            // セミコロンで同期
+            if self.previous().kind == TokenKind::Semicolon {
+                self.panic_mode = false;
+                return;
+            }
+            
+            // 文の開始キーワードで同期
+            match self.peek().kind {
+                TokenKind::Select |
+                TokenKind::Insert |
+                TokenKind::Update |
+                TokenKind::Delete |
+                TokenKind::Create |
+                TokenKind::Alter |
+                TokenKind::Drop |
+                TokenKind::If |
+                TokenKind::While |
+                TokenKind::Begin |
+                TokenKind::Declare |
+                TokenKind::Set |
+                TokenKind::Exec |
+                TokenKind::Execute |
+                TokenKind::Go => {
+                    self.panic_mode = false;
+                    return;
+                }
+                _ => {}
+            }
+            
+            self.advance();
+        }
+        
+        self.panic_mode = false;
+    }
+    
+    /// エラーを記録してErrorノードを返す
+    fn error_expr(&mut self, message: &str) -> Expr {
+        let span = self.current_span();
+        self.diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            code: DiagnosticCode { 
+                category: DiagnosticCategory::Parse, 
+                number: 1 
+            },
+            message: message.to_string(),
+            span,
+            suggestion: None,
+            related: vec![],
+        });
+        
+        Expr::Error(ErrorExpr {
+            message: message.to_string(),
+            span,
+        })
+    }
+    
+    /// 複数エラー収集（fail-fast禁止）
+    pub fn parse(&mut self) -> ParseResult {
+        let mut statements = Vec::new();
+        
+        while !self.is_at_end() {
+            match self.parse_statement() {
+                Ok(stmt) => statements.push(stmt),
+                Err(_) => {
+                    // エラー発生時も継続
+                    self.synchronize();
+                }
+            }
+        }
+        
+        ParseResult {
+            statements,
+            diagnostics: std::mem::take(&mut self.diagnostics),
+        }
+    }
+}
+
+/// 不完全ノードを許容するAST
+#[derive(Debug, Clone)]
+pub enum Expr {
+    Literal(Literal),
+    Ident(Ident),
+    Binary(BinaryExpr),
+    // ... 他のノード
+    
+    /// エラー回復用の不完全ノード
+    Error(ErrorExpr),
+}
+
+#[derive(Debug, Clone)]
+pub struct ErrorExpr {
+    pub message: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum Statement {
+    Select(SelectStatement),
+    Insert(InsertStatement),
+    // ... 他のノード
+    
+    /// エラー回復用の不完全ノード
+    Error(ErrorStatement),
+}
+
+#[derive(Debug, Clone)]
+pub struct ErrorStatement {
+    pub message: String,
+    pub partial_tokens: Vec<TokenKind>,  // 回収できたトークン種別
+    pub span: Span,
+}
+```
+
+#### 9.4.2 エラー回復の同期点
+
+| 同期点 | トークン/パターン |
+|--------|------------------|
+| 文の終端 | `;` |
+| 文の開始 | `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP` |
+| ブロック開始 | `BEGIN`, `IF`, `WHILE` |
+| バッチ区切り | `GO` |
+| 宣言 | `DECLARE`, `SET` |
+
+---
+
+### 9.5 共通API定義【MVP - Must】
+
+#### 9.5.1 統一APIインターフェース
+
+```rust
+/// tsqlremaker の公開API
+pub mod api {
+    use crate::*;
+
+    /// 解析結果
+    #[derive(Debug)]
+    pub struct AnalysisResult<'src> {
+        pub ast: Vec<Statement>,
+        pub diagnostics: Vec<Diagnostic>,
+        pub source: &'src str,
+        pub line_index: LineIndex,
+    }
+
+    /// 変換結果
+    #[derive(Debug)]
+    pub struct ConversionResult {
+        pub sql: String,
+        pub warnings: Vec<Diagnostic>,
+        pub source_map: Option<SourceMap>,  // 将来用
+    }
+
+    /// インデックス結果
+    #[derive(Debug)]
+    pub struct IndexResult {
+        pub symbols: Vec<Symbol>,
+        pub references: Vec<Reference>,
+        pub scopes: Vec<Scope>,
+        pub dependencies: Vec<Dependency>,
+        pub diagnostics: Vec<Diagnostic>,
+    }
+
+    // ==================== Core API ====================
+
+    /// ソースコードをパース
+    /// 
+    /// # Example
+    /// ```
+    /// let result = tsqlremaker::parse("SELECT * FROM users")?;
+    /// assert!(result.diagnostics.is_empty());
+    /// ```
+    pub fn parse(source: &str) -> Result<AnalysisResult<'_>> {
+        let lexer = Lexer::new(source);
+        let tokens: Vec<_> = lexer.collect::<Result<_, _>>()?;
+        let mut parser = Parser::new(&tokens);
+        let parse_result = parser.parse();
+        
+        Ok(AnalysisResult {
+            ast: parse_result.statements,
+            diagnostics: parse_result.diagnostics,
+            source,
+            line_index: LineIndex::new(source),
+        })
+    }
+
+    /// AST を Common IR に変換（lower）
+    pub fn lower(ast: &[Statement]) -> Result<Vec<IrStatement>> {
+        let mut lowerer = Lowerer::new();
+        ast.iter()
+            .map(|stmt| lowerer.lower_statement(stmt))
+            .collect()
+    }
+
+    /// AST/IR からインデックスを構築
+    pub fn index(ast: &[Statement]) -> Result<IndexResult> {
+        let mut indexer = Indexer::new();
+        indexer.index_statements(ast)?;
+        Ok(indexer.into_result())
+    }
+
+    /// IR をターゲットSQLに出力
+    pub fn emit(ir: &[IrStatement], target: Target) -> Result<ConversionResult> {
+        match target {
+            Target::MySQL => {
+                let mut emitter = MySqlEmitter::new();
+                let sql = emitter.emit_statements(ir)?;
+                Ok(ConversionResult {
+                    sql,
+                    warnings: emitter.warnings,
+                    source_map: None,
+                })
+            }
+            Target::PostgreSQL => {
+                todo!("PostgreSQL emitter not yet implemented")
+            }
+        }
+    }
+
+    /// 一括変換（parse → lower → emit）
+    pub fn convert(source: &str, target: Target) -> Result<FullConversionResult> {
+        let analysis = parse(source)?;
+        
+        // エラーがあっても継続（警告として扱う）
+        let has_errors = analysis.diagnostics.iter()
+            .any(|d| d.severity == Severity::Error);
+        
+        let ir = lower(&analysis.ast)?;
+        let conversion = emit(&ir, target)?;
+        
+        Ok(FullConversionResult {
+            sql: conversion.sql,
+            diagnostics: analysis.diagnostics,
+            warnings: conversion.warnings,
+            has_errors,
+        })
+    }
+
+    /// 完全な変換結果
+    #[derive(Debug)]
+    pub struct FullConversionResult {
+        pub sql: String,
+        pub diagnostics: Vec<Diagnostic>,  // パース時のエラー/警告
+        pub warnings: Vec<Diagnostic>,     // 変換時の警告
+        pub has_errors: bool,
+    }
+
+    /// ターゲット方言
+    #[derive(Debug, Clone, Copy)]
+    pub enum Target {
+        MySQL,
+        PostgreSQL,
+    }
+}
+```
+
+#### 9.5.2 CLI インターフェース
+
+```rust
+// tsql-cli/src/main.rs
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(name = "tsqlremaker")]
+#[command(about = "SAP ASE T-SQL to MySQL/PostgreSQL converter")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Parse and check syntax
+    Check {
+        /// Input SQL file
+        #[arg(short, long)]
+        input: PathBuf,
+        
+        /// Output format (text, json)
+        #[arg(short, long, default_value = "text")]
+        format: OutputFormat,
+    },
+    
+    /// Convert SQL to target dialect
+    Convert {
+        /// Input SQL file
+        #[arg(short, long)]
+        input: PathBuf,
+        
+        /// Output SQL file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        
+        /// Target dialect
+        #[arg(short, long, default_value = "mysql")]
+        target: Target,
+        
+        /// Continue on errors (emit warnings as comments)
+        #[arg(long)]
+        continue_on_error: bool,
+    },
+    
+    /// Build symbol index
+    Index {
+        /// Input SQL file or directory
+        #[arg(short, long)]
+        input: PathBuf,
+        
+        /// Output format (json, protobuf)
+        #[arg(short, long, default_value = "json")]
+        format: IndexFormat,
+        
+        /// Output file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    
+    /// Dump AST/IR for debugging
+    Dump {
+        /// Input SQL file
+        #[arg(short, long)]
+        input: PathBuf,
+        
+        /// Output format (ast, ir, tokens)
+        #[arg(short, long, default_value = "ast")]
+        format: DumpFormat,
+    },
+}
+```
+
+---
+
+### 9.6 変換器の要件（変換不能時の挙動）【MVP - Must】
+
+#### 9.6.1 変換モード
+
+```rust
+/// 変換オプション
+#[derive(Debug, Clone)]
+pub struct EmitOptions {
+    /// エラー時の動作
+    pub on_error: ErrorBehavior,
+    
+    /// キーワードの大文字/小文字
+    pub keyword_case: KeywordCase,
+    
+    /// インデント文字列
+    pub indent: String,
+    
+    /// コメント保持
+    pub preserve_comments: bool,
+    
+    /// 警告をSQLコメントとして出力
+    pub embed_warnings: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ErrorBehavior {
+    /// エラーで即座に停止
+    Strict,
+    /// 警告コメントを埋めて継続
+    Lenient,
+}
+
+impl Default for EmitOptions {
+    fn default() -> Self {
+        Self {
+            on_error: ErrorBehavior::Lenient,
+            keyword_case: KeywordCase::Upper,
+            indent: "    ".to_string(),
+            preserve_comments: true,
+            embed_warnings: true,
+        }
+    }
+}
+```
+
+#### 9.6.2 変換不能時の出力例
+
+```sql
+-- 入力 (ASE)
+SELECT TOP 10 PERCENT WITH TIES *
+FROM users
+WHERE PATINDEX('%test%', name) > 0
+
+-- 出力 (MySQL, Lenient mode)
+/* [E001] TOP PERCENT WITH TIES cannot be directly converted to MySQL.
+   Suggestion: Use subquery with window function for equivalent behavior.
+   Manual review required. */
+SELECT *
+FROM users
+WHERE
+/* [E002] PATINDEX is not available in MySQL.
+   Suggestion: Use LOCATE() or REGEXP for pattern matching. */
+LOCATE('test', name) > 0
+LIMIT 10
+```
+
+---
+
+### 9.7 動的SQLの扱い【Post-MVP - Should】
+
+#### 9.7.1 動的SQL検出
+
+```rust
+/// 動的SQLの種類
+#[derive(Debug, Clone)]
+pub enum DynamicSqlKind {
+    /// EXEC(@sql)
+    ExecVariable { variable: String },
+    
+    /// EXEC('SELECT ...')
+    ExecLiteral { sql: String },
+    
+    /// 文字列連結による構築
+    StringConcatenation { 
+        template: Option<String>,  // 推定されたテンプレート
+        variables: Vec<String>,    // 使用変数
+    },
+}
+
+/// 動的SQL情報
+#[derive(Debug, Clone)]
+pub struct DynamicSqlInfo {
+    pub kind: DynamicSqlKind,
+    pub span: Span,
+    pub estimated_dependencies: Vec<String>,  // 推定される依存
+    pub confidence: Confidence,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Confidence {
+    High,    // 定数部分から確実に推定
+    Medium,  // パターンから推定
+    Low,     // ほぼ推定不可
+}
+```
+
+#### 9.7.2 動的SQLの警告
+
+```rust
+impl Indexer {
+    fn handle_dynamic_sql(&mut self, info: &DynamicSqlInfo) {
+        self.diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            code: DiagnosticCode { 
+                category: DiagnosticCategory::Sem, 
+                number: 100 
+            },
+            message: format!(
+                "Dynamic SQL detected. Dependencies may be incomplete. \
+                 Confidence: {:?}",
+                info.confidence
+            ),
+            span: info.span,
+            suggestion: Some(Suggestion {
+                message: "Consider adding explicit dependency comments \
+                          or using static SQL where possible.".to_string(),
+                replacement: None,
+                span: info.span,
+            }),
+            related: vec![],
+        });
+        
+        // 推定依存をマーク
+        for dep in &info.estimated_dependencies {
+            self.add_dependency(Dependency {
+                source_object: self.current_object.clone(),
+                target_object: dep.clone(),
+                kind: DependencyKind::Unknown,
+                is_dynamic: true,
+            });
+        }
+    }
+}
+```
+
+---
+
+### 9.8 意味解析（名前解決）【Post-MVP - Should】
+
+#### 9.8.1 MVP範囲の名前解決
+
+| 対象 | 解決レベル | 例 |
+|------|-----------|-----|
+| ローカル変数 `@x` | 完全解決 | `DECLARE @x INT; SELECT @x` |
+| テーブル別名 | 完全解決 | `SELECT t.col FROM tbl t` |
+| 一時テーブル `#t` | 完全解決 | `CREATE TABLE #t ...; SELECT * FROM #t` |
+| 列参照 | 別名スコープ内 | `SELECT t.col` → テーブル別名から解決 |
+| DBオブジェクト | 未解決許容 | `dbo.users` → カタログ連携時に解決 |
+
+#### 9.8.2 スコープ管理
+
+```rust
+pub struct ScopeManager {
+    scopes: Vec<Scope>,
+    current: ScopeId,
+}
+
+impl ScopeManager {
+    /// スコープに入る
+    pub fn enter_scope(&mut self, kind: ScopeKind, span: Span) -> ScopeId {
+        let id = ScopeId::new();
+        self.scopes.push(Scope {
+            id,
+            kind,
+            span,
+            parent: Some(self.current),
+            symbols: HashMap::new(),
+        });
+        self.current = id;
+        id
+    }
+    
+    /// スコープから出る
+    pub fn leave_scope(&mut self) {
+        if let Some(scope) = self.scopes.iter().find(|s| s.id == self.current) {
+            if let Some(parent) = scope.parent {
+                self.current = parent;
+            }
+        }
+    }
+    
+    /// シンボル定義
+    pub fn define(&mut self, name: &str, symbol: Symbol) -> Result<(), SemanticError> {
+        let scope = self.current_scope_mut();
+        if scope.symbols.contains_key(name) {
+            return Err(SemanticError::DuplicateDefinition {
+                name: name.to_string(),
+                span: symbol.span,
+            });
+        }
+        scope.symbols.insert(name.to_string(), symbol);
+        Ok(())
+    }
+    
+    /// シンボル解決（現在スコープから親へ遡る）
+    pub fn resolve(&self, name: &str) -> Option<&Symbol> {
+        let mut scope_id = Some(self.current);
+        while let Some(id) = scope_id {
+            if let Some(scope) = self.scopes.iter().find(|s| s.id == id) {
+                if let Some(symbol) = scope.symbols.get(name) {
+                    return Some(symbol);
+                }
+                scope_id = scope.parent;
+            } else {
+                break;
+            }
+        }
+        None
+    }
+}
+```
+
+---
+
+### 9.9 性能・テスト要件【MVP - Must】
+
+#### 9.9.1 コーパステスト
+
+```rust
+// tests/corpus_test.rs
+
+use std::fs;
+use walkdir::WalkDir;
+
+/// コーパステスト：実SQLファイルの解析成功率を計測
+#[test]
+fn test_sql_corpus() {
+    let corpus_dir = "tests/corpus/";
+    let mut stats = CorpusStats::default();
+    
+    for entry in WalkDir::new(corpus_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "sql"))
+    {
+        let sql = fs::read_to_string(entry.path()).unwrap();
+        stats.total += 1;
+        
+        match tsqlremaker::parse(&sql) {
+            Ok(result) => {
+                let has_errors = result.diagnostics.iter()
+                    .any(|d| d.severity == Severity::Error);
+                
+                if has_errors {
+                    stats.parse_with_errors += 1;
+                } else {
+                    stats.parse_success += 1;
+                }
+                
+                // 変換テスト
+                match tsqlremaker::convert(&sql, Target::MySQL) {
+                    Ok(conv) => {
+                        if conv.has_errors {
+                            stats.convert_with_warnings += 1;
+                        } else {
+                            stats.convert_success += 1;
+                        }
+                    }
+                    Err(_) => stats.convert_failure += 1,
+                }
+            }
+            Err(_) => stats.parse_failure += 1,
+        }
+    }
+    
+    // 成功率の検証
+    let parse_rate = stats.parse_success as f64 / stats.total as f64 * 100.0;
+    let convert_rate = stats.convert_success as f64 / stats.total as f64 * 100.0;
+    
+    println!("Corpus Stats:");
+    println!("  Total files: {}", stats.total);
+    println!("  Parse success: {} ({:.1}%)", stats.parse_success, parse_rate);
+    println!("  Convert success: {} ({:.1}%)", stats.convert_success, convert_rate);
+    
+    // MVP目標: パース成功率 95%以上
+    assert!(
+        parse_rate >= 95.0,
+        "Parse success rate ({:.1}%) below MVP target (95%)",
+        parse_rate
+    );
+}
+
+#[derive(Default)]
+struct CorpusStats {
+    total: u32,
+    parse_success: u32,
+    parse_with_errors: u32,
+    parse_failure: u32,
+    convert_success: u32,
+    convert_with_warnings: u32,
+    convert_failure: u32,
+}
+```
+
+#### 9.9.2 スナップショットテスト
+
+```rust
+// tests/snapshot_test.rs
+
+use insta::{assert_snapshot, assert_debug_snapshot};
+
+#[test]
+fn snapshot_simple_select() {
+    let sql = "SELECT id, name FROM users WHERE active = 1";
+    let result = tsqlremaker::parse(sql).unwrap();
+    
+    // AST のスナップショット
+    assert_debug_snapshot!("simple_select_ast", &result.ast);
+    
+    // 変換結果のスナップショット
+    let converted = tsqlremaker::convert(sql, Target::MySQL).unwrap();
+    assert_snapshot!("simple_select_mysql", &converted.sql);
+}
+
+#[test]
+fn snapshot_complex_join() {
+    let sql = r#"
+        SELECT 
+            u.id,
+            u.name,
+            COUNT(o.id) as order_count
+        FROM users u
+        LEFT JOIN orders o ON u.id = o.user_id
+        WHERE u.status = 'active'
+        GROUP BY u.id, u.name
+        HAVING COUNT(o.id) > 5
+        ORDER BY order_count DESC
+    "#;
+    
+    let result = tsqlremaker::parse(sql).unwrap();
+    assert_debug_snapshot!("complex_join_ast", &result.ast);
+    
+    let converted = tsqlremaker::convert(sql, Target::MySQL).unwrap();
+    assert_snapshot!("complex_join_mysql", &converted.sql);
+}
+
+#[test]
+fn snapshot_ase_specific() {
+    let sql = r#"
+        SELECT TOP 10 
+            GETDATE() as current_date,
+            DATEADD(day, 7, created_at) as next_week,
+            ISNULL(nickname, name) as display_name
+        FROM users
+        WHERE LEN(name) > 5
+    "#;
+    
+    let converted = tsqlremaker::convert(sql, Target::MySQL).unwrap();
+    assert_snapshot!("ase_specific_mysql", &converted.sql);
+    assert_debug_snapshot!("ase_specific_warnings", &converted.warnings);
+}
+```
+
+#### 9.9.3 ベンチマーク
+
+```rust
+// benches/parse_bench.rs
+
+use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+
+fn bench_lexer(c: &mut Criterion) {
+    let small_sql = "SELECT * FROM users WHERE id = 1";
+    let medium_sql = include_str!("fixtures/medium_query.sql");
+    let large_sql = include_str!("fixtures/large_procedure.sql");
+    
+    let mut group = c.benchmark_group("lexer");
+    
+    for (name, sql) in [
+        ("small", small_sql),
+        ("medium", medium_sql),
+        ("large", large_sql),
+    ] {
+        group.bench_with_input(
+            BenchmarkId::new("tokenize", name),
+            sql,
+            |b, sql| {
+                b.iter(|| {
+                    let lexer = Lexer::new(sql);
+                    let _tokens: Vec<_> = lexer.collect::<Result<_, _>>().unwrap();
+                });
+            },
+        );
+    }
+    
+    group.finish();
+}
+
+fn bench_parser(c: &mut Criterion) {
+    // similar structure
+}
+
+fn bench_convert(c: &mut Criterion) {
+    // similar structure
+}
+
+criterion_group!(benches, bench_lexer, bench_parser, bench_convert);
+criterion_main!(benches);
+```
+
+---
+
+### 9.10 差分ツール（sqldef相当）【Post-MVP - Could】
+
+> **注**: この機能はPost-MVPとして将来実装を検討。
+
+#### 9.10.1 DDL正規化
+
+```rust
+/// DDL正規化オプション
+pub struct NormalizeOptions {
+    /// 列の並び順を名前でソート
+    pub sort_columns: bool,
+    /// 制約名を正規化（自動生成名を統一）
+    pub normalize_constraint_names: bool,
+    /// デフォルト値の正規化
+    pub normalize_defaults: bool,
+}
+
+/// 正規化されたDDL表現
+pub struct NormalizedDdl {
+    pub tables: Vec<NormalizedTable>,
+    pub indexes: Vec<NormalizedIndex>,
+    pub procedures: Vec<NormalizedProcedure>,
+}
+```
+
+#### 9.10.2 差分検出
+
+```rust
+/// DDL差分
+pub struct DdlDiff {
+    pub added_tables: Vec<TableDef>,
+    pub dropped_tables: Vec<String>,
+    pub altered_tables: Vec<TableDiff>,
+    pub added_indexes: Vec<IndexDef>,
+    pub dropped_indexes: Vec<String>,
+}
+
+/// テーブル差分
+pub struct TableDiff {
+    pub table_name: String,
+    pub added_columns: Vec<ColumnDef>,
+    pub dropped_columns: Vec<String>,
+    pub altered_columns: Vec<ColumnDiff>,
+    pub added_constraints: Vec<ConstraintDef>,
+    pub dropped_constraints: Vec<String>,
+}
+
+/// 列差分
+pub struct ColumnDiff {
+    pub column_name: String,
+    pub old_type: Option<DataType>,
+    pub new_type: Option<DataType>,
+    pub old_nullable: Option<bool>,
+    pub new_nullable: Option<bool>,
+    pub old_default: Option<String>,
+    pub new_default: Option<String>,
+}
+```
+
+---
+
+### 9.11 要件の優先度まとめ
+
+| プロンプト | 要件 | 優先度 | フェーズ |
+|-----------|------|--------|----------|
+| **Rust制約** | panic禁止、Result統一 | **MANDATORY** | Phase 1 |
+| **#1** | IR/Protobufスキーマ | **MVP-Must** | Phase 2 |
+| **#2** | Protobuf分割（IR/Index） | **MVP-Must** | Phase 2 |
+| **#3** | Span全工程適用 | **MVP-Must** | Phase 1 |
+| **#4** | エラー回復 | **MVP-Must** | Phase 2 |
+| **#5** | 意味解析（名前解決） | Post-MVP | Phase 3 |
+| **#6** | 動的SQL扱い | Post-MVP | Phase 4 |
+| **#7** | 共通API | **MVP-Must** | Phase 2 |
+| **#8** | 変換器要件 | **MVP-Must** | Phase 3 |
+| **#9** | 差分ツール | Could | Phase 5+ |
+| **#10** | 性能・コーパステスト | **MVP-Must** | Phase 1-4 |
+
+---
+
+### 9.12 更新されたCrate構成
+
+```
+tsqlremaker/
+├── Cargo.toml                          # Workspace root
+├── proto/
+│   ├── common.proto                    # 共通定義
+│   ├── tsqlremaker_ir.proto            # 変換パイプライン用
+│   └── tsqlremaker_index.proto         # インデックス用
+│
+├── crates/
+│   ├── tsql-token/                     # Token定義
+│   ├── tsql-lexer/                     # 字句解析（panic禁止、Result<T, LexError>）
+│   ├── tsql-parser/                    # 構文解析（エラー回復対応）
+│   ├── common-sql/                     # 共通AST/IR定義
+│   ├── proto-mapper/                   # Rust ⇄ Protobuf変換
+│   ├── tsql-indexer/                   # シンボルインデックス
+│   ├── mysql-emitter/                  # MySQL出力
+│   ├── postgres-emitter/               # PostgreSQL出力（将来）
+│   └── tsql-cli/                       # CLIバイナリ
+│
+├── tests/
+│   ├── corpus/                         # 実SQLコーパス
+│   ├── snapshots/                      # スナップショット
+│   └── fixtures/                       # テストデータ
+│
+└── benches/                            # ベンチマーク
+```
 
 ---
 
