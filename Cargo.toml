@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.dependencies]
+# 共通バージョン管理
+once_cell = "1.19"
+thiserror = "1.0"
+rstest = "0.18"
+proptest = "1.4"
+criterion = "0.5"
+
+[workspace.metadata.cargo-semver-check]
+# セマンティックバージョニングのチェック

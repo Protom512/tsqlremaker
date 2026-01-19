@@ -1,0 +1,24 @@
+[package]
+name = "tsql-lexer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Token 型定義
+tsql-token = { path = "../tsql-token" }
+
+# 静的 HashMap の構築
+once_cell = { workspace = true }
+
+# エラー型の定義
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# ユニットテストフレームワーク
+rstest = { workspace = true }
+
+# プロパティベーステスト（トークン化の検証）
+proptest = { workspace = true }
+
+# ベンチマーク
+criterion = { workspace = true }
