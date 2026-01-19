@@ -1,3 +1,0 @@
-[workspace]
-members = [ "tsql-lexer","tsql-token"]
-resolver = "2"
