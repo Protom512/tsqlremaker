@@ -129,7 +129,7 @@ impl<'src> Lexer<'src> {
             '-' => self.read_minus(),
             '*' => self.read_star(),
             '/' => self.read_slash(),
-            '%' => Ok(Token::new(TokenKind::Percent, "%", start_pos)),
+            '%' => self.read_percent(),
             '=' => Ok(Token::new(TokenKind::Assign, "=", start_pos)),
             '<' => self.read_less_than(),
             '>' => self.read_greater_than(),
@@ -145,6 +145,7 @@ impl<'src> Lexer<'src> {
             ')' => Ok(Token::new(TokenKind::RParen, ")", start_pos)),
             '{' => Ok(Token::new(TokenKind::LBrace, "{", start_pos)),
             '}' => Ok(Token::new(TokenKind::RBrace, "}", start_pos)),
+            ']' => Ok(Token::new(TokenKind::RBracket, "]", start_pos)),
             ',' => Ok(Token::new(TokenKind::Comma, ",", start_pos)),
             ';' => Ok(Token::new(TokenKind::Semicolon, ";", start_pos)),
             ':' => Ok(Token::new(TokenKind::Colon, ":", start_pos)),
@@ -195,41 +196,421 @@ impl<'src> Lexer<'src> {
         Ok(Token::new(kind, text, start_pos))
     }
 
-    // プレースホルダー実装（後のタスクで実装）
+    // Task 4.1: ブロックコメントの読み取り（ネスト対応）
     fn read_block_comment(&mut self) -> Result<Token<'src>, LexError> {
-        todo!("Implement Task 4.1")
+        let start_pos = self.cursor.position();
+        let start_offset = self.cursor.position().offset as usize;
+
+        self.cursor.bump(); // '/'
+        self.cursor.bump(); // '*'
+
+        let mut depth = 1;
+
+        while !self.cursor.is_eof() {
+            match (self.cursor.current(), self.cursor.peek()) {
+                (Some('/'), Some('*')) => {
+                    // ネスト開始
+                    depth += 1;
+                    self.cursor.bump();
+                    self.cursor.bump();
+                }
+                (Some('*'), Some('/')) => {
+                    // ネスト終了
+                    depth -= 1;
+                    self.cursor.bump();
+                    self.cursor.bump();
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {
+                    self.cursor.bump();
+                }
+            }
+        }
+
+        if depth > 0 {
+            return Err(LexError::UnterminatedBlockComment {
+                start: start_pos,
+                depth,
+            });
+        }
+
+        let end_offset = self.cursor.position().offset as usize;
+        let text = &self.input[start_offset..end_offset];
+
+        if self.preserve_comments {
+            Ok(Token::new(TokenKind::BlockComment, text, start_pos))
+        } else {
+            // コメントをスキップして次のトークンを返す
+            self.next_token()
+        }
     }
 
+    // Task 4.2: ラインコメントの読み取り
     fn read_line_comment(&mut self) -> Result<Token<'src>, LexError> {
-        todo!("Implement Task 4.2")
+        let start_pos = self.cursor.position();
+        let start_offset = self.cursor.position().offset as usize;
+
+        self.cursor.bump(); // first '-'
+        self.cursor.bump(); // second '-'
+
+        while !self.cursor.is_eof() && self.cursor.current() != Some('\n') {
+            self.cursor.bump();
+        }
+
+        let end_offset = self.cursor.position().offset as usize;
+        let text = &self.input[start_offset..end_offset];
+
+        if self.preserve_comments {
+            Ok(Token::new(TokenKind::LineComment, text, start_pos))
+        } else {
+            // 改行を消費して次のトークンを返す
+            if self.cursor.current() == Some('\n') {
+                self.cursor.bump();
+            }
+            self.next_token()
+        }
     }
 
+    // Task 5.1: @ 変数プレフィックスの読み取り
     fn read_at_variable(&mut self) -> Result<Token<'src>, LexError> {
-        todo!("Implement Task 5.1")
+        let start_pos = self.cursor.position();
+        let start_offset = self.cursor.position().offset as usize;
+
+        self.cursor.bump(); // '@'
+
+        let is_global = self.cursor.current() == Some('@');
+        if is_global {
+            self.cursor.bump(); // second '@'
+        }
+
+        // 識別子部分を読み取る
+        while let Some(ch) = self.cursor.current() {
+            if ch.is_alphanumeric() || ch == '_' || ch == '$' {
+                self.cursor.bump();
+            } else {
+                break;
+            }
+        }
+
+        let end_offset = self.cursor.position().offset as usize;
+        let text = &self.input[start_offset..end_offset];
+
+        let kind = if is_global {
+            TokenKind::GlobalVar
+        } else {
+            TokenKind::LocalVar
+        };
+
+        Ok(Token::new(kind, text, start_pos))
     }
 
+    // Task 5.2: # 一時テーブルプレフィックスの読み取り
     fn read_hash_temp(&mut self) -> Result<Token<'src>, LexError> {
-        todo!("Implement Task 5.2")
+        let start_pos = self.cursor.position();
+        let start_offset = self.cursor.position().offset as usize;
+
+        self.cursor.bump(); // '#'
+
+        let is_global = self.cursor.current() == Some('#');
+        if is_global {
+            self.cursor.bump(); // second '#'
+        }
+
+        // 識別子部分を読み取る
+        while let Some(ch) = self.cursor.current() {
+            if ch.is_alphanumeric() || ch == '_' || ch == '$' {
+                self.cursor.bump();
+            } else {
+                break;
+            }
+        }
+
+        let end_offset = self.cursor.position().offset as usize;
+        let text = &self.input[start_offset..end_offset];
+
+        let kind = if is_global {
+            TokenKind::GlobalTempTable
+        } else {
+            TokenKind::TempTable
+        };
+
+        Ok(Token::new(kind, text, start_pos))
     }
 
+    // Task 9.1: 角括弧付き識別子の読み取り
     fn read_bracket_ident(&mut self) -> Result<Token<'src>, LexError> {
-        todo!("Implement Task 9.1")
+        let start_pos = self.cursor.position();
+
+        self.cursor.bump(); // '['
+
+        // Check if this is actually a quoted identifier or just a lone bracket
+        // If the next char is ']' immediately, or we're at EOF, treat '[' as a delimiter
+        match self.cursor.current() {
+            None => {
+                // EOF after '[', just return LBracket
+                Ok(Token::new(TokenKind::LBracket, "[", start_pos))
+            }
+            Some(']') => {
+                // Empty brackets [], treat '[' as a delimiter
+                // The ']' will be parsed as RBracket in the next call
+                Ok(Token::new(TokenKind::LBracket, "[", start_pos))
+            }
+            _ => {
+                // Has content after '[', this is a quoted identifier
+                let start_offset = start_pos.offset as usize;
+                let mut found_closing = false;
+
+                while !self.cursor.is_eof() {
+                    match self.cursor.current() {
+                        Some(']') => {
+                            if self.cursor.peek() == Some(']') {
+                                // エスケープ ]]
+                                self.cursor.bump();
+                                self.cursor.bump();
+                            } else {
+                                self.cursor.bump();
+                                found_closing = true;
+                                break;
+                            }
+                        }
+                        _ => {
+                            self.cursor.bump();
+                        }
+                    }
+                }
+
+                if !found_closing {
+                    return Err(LexError::UnterminatedIdentifier {
+                        start: start_pos,
+                        bracket_type: crate::error::BracketType::Square,
+                    });
+                }
+
+                let end_offset = self.cursor.position().offset as usize;
+                let text = &self.input[start_offset..end_offset];
+
+                Ok(Token::new(TokenKind::QuotedIdent, text, start_pos))
+            }
+        }
     }
 
+    // Task 9.2: 二重引用符付き識別子の読み取り
     fn read_quoted_ident(&mut self) -> Result<Token<'src>, LexError> {
-        todo!("Implement Task 9.2")
+        let start_pos = self.cursor.position();
+        let start_offset = self.cursor.position().offset as usize;
+
+        self.cursor.bump(); // '"'
+
+        let mut found_closing = false;
+
+        while !self.cursor.is_eof() {
+            match self.cursor.current() {
+                Some('"') => {
+                    if self.cursor.peek() == Some('"') {
+                        // エスケープ ""
+                        self.cursor.bump();
+                        self.cursor.bump();
+                    } else {
+                        self.cursor.bump();
+                        found_closing = true;
+                        break;
+                    }
+                }
+                _ => {
+                    self.cursor.bump();
+                }
+            }
+        }
+
+        if !found_closing {
+            return Err(LexError::UnterminatedIdentifier {
+                start: start_pos,
+                bracket_type: crate::error::BracketType::DoubleQuote,
+            });
+        }
+
+        let end_offset = self.cursor.position().offset as usize;
+        let text = &self.input[start_offset..end_offset];
+
+        Ok(Token::new(TokenKind::QuotedIdent, text, start_pos))
     }
 
+    // Task 6.1: 通常文字列リテラルの読み取り
     fn read_string(&mut self) -> Result<Token<'src>, LexError> {
-        todo!("Implement Task 6.1")
+        let start_pos = self.cursor.position();
+        let start_offset = self.cursor.position().offset as usize;
+
+        self.cursor.bump(); // opening quote
+
+        let mut found_closing_quote = false;
+
+        while !self.cursor.is_eof() {
+            match self.cursor.current() {
+                Some('\'') => {
+                    // エスケープチェック（''）
+                    if self.cursor.peek() == Some('\'') {
+                        self.cursor.bump();
+                        self.cursor.bump();
+                    } else {
+                        // 終了
+                        self.cursor.bump();
+                        found_closing_quote = true;
+                        break;
+                    }
+                }
+                _ => {
+                    self.cursor.bump();
+                }
+            }
+        }
+
+        if !found_closing_quote {
+            return Err(LexError::UnterminatedString {
+                start: start_pos,
+                quote_char: '\'',
+            });
+        }
+
+        let end_offset = self.cursor.position().offset as usize;
+        let text = &self.input[start_offset..end_offset];
+
+        Ok(Token::new(TokenKind::String, text, start_pos))
     }
 
+    // Task 7.1: 数値リテラルの読み取り
     fn read_number(&mut self) -> Result<Token<'src>, LexError> {
-        todo!("Implement Task 7.1")
+        let start_pos = self.cursor.position();
+        let start_offset = self.cursor.position().offset as usize;
+
+        // 16進数チェック
+        if self.cursor.current() == Some('0')
+            && self.cursor.peek() == Some('x')
+        {
+            return self.read_hex_number(start_pos, start_offset);
+        }
+
+        let mut has_dot = false;
+        let mut has_exponent = false;
+
+        while let Some(ch) = self.cursor.current() {
+            if ch.is_ascii_digit() {
+                self.cursor.bump();
+            } else if ch == '.' && !has_dot {
+                has_dot = true;
+                self.cursor.bump();
+                // ドットの後に数字がない場合は範囲演算子
+                if !self.cursor.current().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                    // ドットを戻して整数として処理
+                    break;
+                }
+            } else if (ch == 'e' || ch == 'E') && !has_exponent {
+                has_exponent = true;
+                self.cursor.bump();
+                // 符号を許容
+                if self.cursor.current() == Some('+') || self.cursor.current() == Some('-') {
+                    self.cursor.bump();
+                }
+            } else {
+                break;
+            }
+        }
+
+        let end_offset = self.cursor.position().offset as usize;
+        let text = &self.input[start_offset..end_offset];
+
+        let kind = if has_dot || has_exponent {
+            TokenKind::FloatLiteral
+        } else {
+            TokenKind::Number
+        };
+
+        Ok(Token::new(kind, text, start_pos))
     }
 
+    // 16進数リテラルの読み取り（Task 7.1 の一部）
+    fn read_hex_number(
+        &mut self,
+        start_pos: Position,
+        start_offset: usize,
+    ) -> Result<Token<'src>, LexError> {
+        self.cursor.bump(); // '0'
+        self.cursor.bump(); // 'x'
+
+        while let Some(ch) = self.cursor.current() {
+            if ch.is_ascii_hexdigit() {
+                self.cursor.bump();
+            } else {
+                break;
+            }
+        }
+
+        let end_offset = self.cursor.position().offset as usize;
+        let text = &self.input[start_offset..end_offset];
+
+        Ok(Token::new(TokenKind::HexString, text, start_pos))
+    }
+
+    // Task 6.2: Unicode 文字列の読み取り (U&'...')
     fn read_unicode_string(&mut self) -> Result<Token<'src>, LexError> {
-        todo!("Implement Task 6.2")
+        let start_pos = self.cursor.position();
+        let start_offset = self.cursor.position().offset as usize;
+
+        self.cursor.bump(); // 'U' or 'u'
+        self.cursor.bump(); // '&'
+
+        let quote = self.cursor.current().ok_or(LexError::UnexpectedEof {
+            position: self.cursor.position(),
+            expected: "quote".to_string(),
+        })?;
+
+        if quote != '\'' && quote != '"' {
+            return Err(LexError::InvalidCharacter {
+                ch: quote,
+                position: self.cursor.position(),
+            });
+        }
+
+        self.cursor.bump(); // opening quote
+
+        while !self.cursor.is_eof() {
+            match self.cursor.current() {
+                Some(q) if q == quote => {
+                    if self.cursor.peek() != Some(q) {
+                        self.cursor.bump();
+                        break;
+                    }
+                    // エスケープ
+                    self.cursor.bump();
+                    self.cursor.bump();
+                }
+                Some('\\') => {
+                    // Unicode エスケープシーケンス
+                    self.cursor.bump();
+                    if self.cursor.current() == Some('+') {
+                        self.cursor.bump();
+                        // \+XXXXXX (6 hex digits)
+                        for _ in 0..6 {
+                            self.cursor.bump();
+                        }
+                    } else {
+                        // \XXXX (4 hex digits)
+                        for _ in 0..4 {
+                            self.cursor.bump();
+                        }
+                    }
+                }
+                _ => {
+                    self.cursor.bump();
+                }
+            }
+        }
+
+        let end_offset = self.cursor.position().offset as usize;
+        let text = &self.input[start_offset..end_offset];
+
+        Ok(Token::new(TokenKind::UnicodeString, text, start_pos))
     }
 
     fn read_plus(&mut self) -> Result<Token<'src>, LexError> {
@@ -346,6 +727,13 @@ impl<'src> Lexer<'src> {
         } else {
             Ok(Token::new(TokenKind::Dot, ".", pos))
         }
+    }
+
+    fn read_percent(&mut self) -> Result<Token<'src>, LexError> {
+        let pos = self.cursor.position();
+        self.cursor.bump();
+        // %= is not a valid SQL operator, so we just return Percent
+        Ok(Token::new(TokenKind::Percent, "%", pos))
     }
 }
 

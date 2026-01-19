@@ -5,7 +5,49 @@
 /// トークン種別の列挙型
 ///
 /// SAP ASE T-SQL のすべての予約語、識別子、演算子、リテラルを表す。
+///
+/// # Variants
+///
+/// キーワード:
+/// - DML: Select, Insert, Update, Delete, Merge, From, Where, etc.
+/// - DDL: Create, Alter, Drop, Truncate, Table, Index, View, etc.
+/// - 制御フロー: If, Else, Begin, End, While, Return, etc.
+/// - トランザクション: Commit, Rollback, Transaction, Tran, etc.
+/// - 型: Int, Varchar, Date, Datetime, etc.
+///
+/// リテラル:
+/// - Ident: 通常の識別子
+/// - QuotedIdent: 引用符付き識別子
+/// - Number: 整数リテラル
+/// - FloatLiteral: 浮動小数点リテラル
+/// - String/NString/UnicodeString: 文字列リテラル
+/// - HexString: 16進数リテラル
+///
+/// 演算子:
+/// - 比較: Eq, Ne, Lt, Gt, Le, Ge, etc.
+/// - 算術: Plus, Minus, Star, Slash, Percent
+/// - ビット: Ampersand, Pipe, Caret, Tilde
+/// - その他: Assign, Concat, DotDot
+///
+/// 区切り文字:
+/// - LParen/RParen, LBracket/RBracket, LBrace/RBrace
+/// - Comma, Semicolon, Colon
+///
+/// 変数・一時テーブル:
+/// - LocalVar (@variable)
+/// - GlobalVar (@@variable)
+/// - TempTable (#table)
+/// - GlobalTempTable (##table)
+///
+/// コメント・空白:
+/// - Whitespace, Newline
+/// - LineComment, BlockComment (コメント保持モード時)
+///
+/// その他:
+/// - Eof: 入力の終わり
+/// - Unknown: 不明なトークン
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(missing_docs)]  // 各バリアントのドキュメントは上記コメントを参照
 pub enum TokenKind {
     // ==================== Keywords ====================
     // DML
