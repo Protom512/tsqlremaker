@@ -17,36 +17,8 @@
 
 pub mod cursor;
 pub mod error;
+pub mod lexer;
 
 pub use error::{BracketType, LexError};
+pub use lexer::{Lexer, Token};
 pub use tsql_token::{Position, Span, TokenKind};
-
-/// 字句解析器
-///
-/// ソースコードをトークンストリームに変換する。
-pub struct Lexer<'src> {
-    _input: &'src str,
-}
-
-impl<'src> Lexer<'src> {
-    /// 新しい Lexer を作成する
-    ///
-    /// # Arguments
-    ///
-    /// * `input` - 字句解析するソースコード
-    #[must_use]
-    pub const fn new(input: &'src str) -> Self {
-        Self { _input: input }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_lexer_creation() {
-        let lexer = Lexer::new("SELECT * FROM users");
-        assert_eq!(lexer._input, "SELECT * FROM users");
-    }
-}
