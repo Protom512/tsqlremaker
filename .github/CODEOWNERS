@@ -1,0 +1,40 @@
+# Code Owners Definition
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# ==================== Global Owner ====================
+# 全ファイルのデフォルトオーナー
+* @protom512
+
+# ==================== Lexer ====================
+# トークン・字句解析関連
+/crates/tsql-token/ @protom512
+/crates/tsql-lexer/ @protom512
+
+# ==================== Parser ====================
+# 構文解析関連
+/crates/tsql-parser/ @protom512
+
+# ==================== AST ====================
+# 抽象構文木関連
+/crates/common-sql/ @protom512
+
+# ==================== Emitters ====================
+# 各方言のコード生成
+/crates/mysql-emitter/ @protom512
+/crates/postgres-emitter/ @protom512
+
+# ==================== Infrastructure ====================
+# CI/CD、開発ツール関連
+.github/ @protom512
+.claude/ @protom512
+.kiro/ @protom512
+
+# ==================== Documentation ====================
+# ドキュメント関連
+*.md @protom512
+/docs/ @protom512
+
+# ==================== Tests ====================
+# テスト関連
+/crates/*/tests/ @protom512
+**/tests/*.rs @protom512

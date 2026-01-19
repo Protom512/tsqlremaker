@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions
+    url: https://github.com/protom512/tsqlremaker/discussions
+    about: 質問や不明点がある場合は Discussions をご利用ください
+  - name: Documentation
+    url: https://github.com/protom512/tsqlremaker/wiki
+    about: ドキュメントは Wiki をご確認ください
