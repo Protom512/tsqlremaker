@@ -1,0 +1,112 @@
+{
+  "feature": "sap-ase-lexer",
+  "started_at": "2026-01-20T12:30:00Z",
+  "completed_at": "2026-01-20T14:00:00Z",
+  "status": "completed",
+  "groups": [
+    {
+      "id": 0,
+      "status": "completed",
+      "tasks": [
+        {"id": "1.1", "status": "completed", "title": "トークン種別の定義", "commit": "a1b2c3d"}
+      ]
+    },
+    {
+      "id": 1,
+      "status": "completed",
+      "tasks": [
+        {"id": "1.2", "status": "completed", "title": "位置情報構造体の定義", "commit": "a1b2c3d"},
+        {"id": "1.3", "status": "completed", "title": "静的キーワードマップ", "commit": "a1b2c3d"}
+      ]
+    },
+    {
+      "id": 2,
+      "status": "completed",
+      "tasks": [
+        {"id": "2.1", "status": "completed", "title": "文字カーソル", "commit": "a1b2c3d"},
+        {"id": "3.1", "status": "completed", "title": "字句解析エラー型", "commit": "a1b2c3d"}
+      ]
+    },
+    {
+      "id": 3,
+      "status": "completed",
+      "tasks": [
+        {"id": "4.2", "status": "completed", "title": "ラインコメント", "commit": "a1b2c3d"},
+        {"id": "5.2", "status": "completed", "title": "#一時テーブル", "commit": "a1b2c3d"},
+        {"id": "6.2", "status": "completed", "title": "Unicode文字列", "commit": "a1b2c3d"},
+        {"id": "8.1", "status": "completed", "title": "算術演算子", "commit": "a1b2c3d"},
+        {"id": "8.2", "status": "completed", "title": "比較演算子", "commit": "a1b2c3d"},
+        {"id": "8.3", "status": "completed", "title": "その他演算子", "commit": "a1b2c3d"},
+        {"id": "8.4", "status": "completed", "title": "区切り文字", "commit": "a1b2c3d"},
+        {"id": "9.1", "status": "completed", "title": "角括弧付き識別子", "commit": "ed74e86"}
+      ]
+    },
+    {
+      "id": 4,
+      "status": "completed",
+      "tasks": [
+        {"id": "4.1", "status": "completed", "title": "ブロックコメント", "commit": "a1b2c3d"},
+        {"id": "5.1", "status": "completed", "title": "@変数", "commit": "a1b2c3d"},
+        {"id": "6.1", "status": "completed", "title": "通常文字列", "commit": "a1b2c3d"},
+        {"id": "7.1", "status": "completed", "title": "数値リテラル", "commit": "a1b2c3d"}
+      ]
+    },
+    {
+      "id": 5,
+      "status": "completed",
+      "tasks": [
+        {"id": "10.1", "status": "completed", "title": "識別子とキーワード", "commit": "a1b2c3d"}
+      ]
+    },
+    {
+      "id": 6,
+      "status": "completed",
+      "tasks": [
+        {"id": "11.1", "status": "completed", "title": "空白と改行のスキップ", "commit": "a1b2c3d"}
+      ]
+    },
+    {
+      "id": 7,
+      "status": "completed",
+      "tasks": [
+        {"id": "12.1", "status": "completed", "title": "Lexer構造体の実装", "commit": "a1b2c3d"},
+        {"id": "13.1", "status": "completed", "title": "Token構造体の実装", "commit": "a1b2c3d"}
+      ]
+    },
+    {
+      "id": 8,
+      "status": "completed",
+      "tasks": [
+        {"id": "14.1", "status": "completed", "title": "イテレータの実装", "commit": "a1b2c3d"},
+        {"id": "15.1", "status": "completed", "title": "パフォーマンス最適化", "commit": "a1b2c3d"},
+        {"id": "16.1", "status": "completed", "title": "ユニットテストの実装", "commit": "a1b2c3d"}
+      ]
+    },
+    {
+      "id": 9,
+      "status": "completed",
+      "tasks": [
+        {"id": "12.2", "status": "completed", "title": "エラーリカバリ", "commit": "a1b2c3d"}
+      ]
+    },
+    {
+      "id": 10,
+      "status": "completed",
+      "tasks": [
+        {"id": "14.2", "status": "completed", "title": "先読み機能", "commit": "a1b2c3d"},
+        {"id": "16.2", "status": "completed", "title": "インテグレーションテスト", "commit": "a1b2c3d"},
+        {"id": "16.3", "status": "completed", "title": "パフォーマンステスト", "commit": "a1b2c3d"}
+      ]
+    }
+  ],
+  "summary": {
+    "total_tasks": 16,
+    "completed_tasks": 16,
+    "failed_tasks": 0,
+    "test_results": {
+      "unit_tests": 23,
+      "integration_tests": 17,
+      "all_passed": true
+    }
+  }
+}

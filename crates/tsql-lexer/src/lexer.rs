@@ -764,15 +764,35 @@ mod tests {
     }
 
     #[test]
-    fn test_lexer_new() {
-        let lexer = Lexer::new("SELECT * FROM users");
-        assert!(!lexer.cursor.is_eof());
+    fn test_lexer_consuming_input() {
+        // 公開API経由でLexerが入力を消費することを検証
+        let mut lexer = Lexer::new("SELECT");
+        let token = lexer.next_token().unwrap();
+
+        // 入力が正しくトークン化されていることを確認
+        assert_eq!(token.kind, TokenKind::Select);
+        assert_eq!(token.text, "SELECT");
+
+        // 全て消費した後にEOFになることを検証
+        let eof_token = lexer.next_token().unwrap();
+        assert_eq!(eof_token.kind, TokenKind::Eof);
     }
 
     #[test]
-    fn test_lexer_with_comments() {
-        let lexer = Lexer::new("SELECT * FROM users").with_comments(true);
-        assert!(lexer.preserve_comments);
+    fn test_lexer_with_comments_preserves_comment_tokens() {
+        // コメント保持モードの振る舞いを検証
+        let sql = "/* comment */ SELECT";
+
+        // デフォルトではコメントはスキップされる
+        let mut lexer_default = Lexer::new(sql);
+        let first = lexer_default.next_token().unwrap();
+        assert_eq!(first.kind, TokenKind::Select);
+
+        // with_comments(true) でコメントが保持されることを検証
+        let mut lexer_preserve = Lexer::new(sql).with_comments(true);
+        let comment = lexer_preserve.next_token().unwrap();
+        assert_eq!(comment.kind, TokenKind::BlockComment);
+        assert_eq!(comment.text, "/* comment */");
     }
 
     #[test]
