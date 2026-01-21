@@ -1,0 +1,5 @@
+config:
+  branch: true
+  paths:
+    - crates/*
+  prefix_dir: /home/runner/work/tsqlremaker/tsqlremaker
