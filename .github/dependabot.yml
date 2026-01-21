@@ -27,3 +27,9 @@ updates:
     commit-message:
       prefix: "ci"
       include: "scope"
+
+  # ==================== DevContainers ====================
+  - package-ecosystem: "devcontainers"
+    directory: "/"
+    schedule:
+      interval: weekly
