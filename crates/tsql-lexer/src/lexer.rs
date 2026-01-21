@@ -153,8 +153,26 @@ impl<'src> Lexer<'src> {
             // Unicode 文字列プレフィックス
             'U' | 'u' if self.cursor.peek() == Some('&') => self.read_unicode_string(),
 
+            // National 文字列プレフィックス N'...' (キーワードより優先)
+            'N' | 'n' if self.cursor.peek() == Some('\'') => self.read_national_string(),
+
             // 識別子またはキーワード
-            c if is_ident_start(c) => self.read_ident_or_keyword(start_offset, start_pos),
+            // 注意: 'n' で始まるが 'n"' ではない場合を識別子として処理
+            c if is_ident_start(c) && !(c == 'N' || c == 'n') => {
+                self.read_ident_or_keyword(start_offset, start_pos)
+            }
+            c if is_ident_start(c) && (c == 'N' || c == 'n') => {
+                // 'n' または 'N' の場合、次の文字が "'" でなければ識別子
+                if self.cursor.peek() != Some('\'') {
+                    self.read_ident_or_keyword(start_offset, start_pos)
+                } else {
+                    // これは上の N'... パターンで処理される
+                    Err(LexError::UnexpectedEof {
+                        position: start_pos,
+                        expected: "identifier or N'...'".to_string(),
+                    })
+                }
+            }
 
             // 不正な文字
             c => Err(LexError::InvalidCharacter {
@@ -550,6 +568,48 @@ impl<'src> Lexer<'src> {
         let text = &self.input[start_offset..end_offset];
 
         Ok(Token::new(TokenKind::HexString, text, start_pos))
+    }
+
+    // Task 6.2: National 文字列の読み取り (N'...')
+    fn read_national_string(&mut self) -> Result<Token<'src>, LexError> {
+        let start_pos = self.cursor.position();
+        let start_offset = self.cursor.position().offset as usize;
+
+        self.cursor.bump(); // 'N' or 'n'
+
+        let mut found_closing_quote = false;
+
+        while !self.cursor.is_eof() {
+            match self.cursor.current() {
+                Some('\'') => {
+                    // エスケープチェック（''）
+                    if self.cursor.peek() == Some('\'') {
+                        self.cursor.bump();
+                        self.cursor.bump();
+                    } else {
+                        // 終了
+                        self.cursor.bump();
+                        found_closing_quote = true;
+                        break;
+                    }
+                }
+                _ => {
+                    self.cursor.bump();
+                }
+            }
+        }
+
+        if !found_closing_quote {
+            return Err(LexError::UnterminatedString {
+                start: start_pos,
+                quote_char: '\'',
+            });
+        }
+
+        let end_offset = self.cursor.position().offset as usize;
+        let text = &self.input[start_offset..end_offset];
+
+        Ok(Token::new(TokenKind::NString, text, start_pos))
     }
 
     // Task 6.2: Unicode 文字列の読み取り (U&'...')
