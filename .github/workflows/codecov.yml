@@ -32,19 +32,13 @@ jobs:
         RUSTFLAGS: '-C instrument-coverage'
         RUSTDOCFLAGS: '-C instrument-coverage'
         LLVM_PROFILE_FILE: 'coverage-%p-%m.profraw'
-    - name: Generate coverage data
-      run: |
-        # Find all profraw files
-        find . -name '*.profraw' -type f
-        # Convert profraw to profdata
-        $(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-profdata merge \
-          -sparse $(find . -name '*.profraw' -printf '%p:') -o coverage.profdata
-        # Show what was generated
-        ls -la coverage.profdata
-    - name: rust-grcov
-      uses: actions-rs/grcov@v0.1
+    - name: Generate coverage report
+      uses: mozilla-actions/grcov@v0.1
       with:
-        config: .github/actions-rs/grcov.yml
+        paths: |
+          crates/
+        output-types: lcov
+        output-path: ./lcov.info
     - name: Codecov
       uses: codecov/codecov-action@v4
       env:
