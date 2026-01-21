@@ -32,13 +32,18 @@ jobs:
         RUSTFLAGS: '-C instrument-coverage'
         RUSTDOCFLAGS: '-C instrument-coverage'
         LLVM_PROFILE_FILE: 'coverage-%p-%m.profraw'
+    - name: Install grcov
+      run: cargo install grcov
     - name: Generate coverage report
-      uses: mozilla/grcov@v0.1
-      with:
-        paths: |
-          crates/
-        output-types: lcov
-        output-path: ./lcov.info
+      run: |
+        grcov . --binary-path ./target/debug/ \
+          -s . \
+          -t lcov \
+          --branch \
+          --ignore-not-existing \
+          --ignore '../*' \
+          --ignore "/*" \
+          -o lcov.info
     - name: Codecov
       uses: codecov/codecov-action@v4
       env:
