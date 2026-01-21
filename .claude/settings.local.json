@@ -1,11 +1,24 @@
 {
-  "enableAllProjectMcpServers": true,
-  "enabledMcpjsonServers": [
-    "claude-flow"
-  ],
   "permissions": {
     "allow": [
-      "Skill(kiro:spec-tasks)"
+      "Skill(kiro:spec-tasks)",
+      "Bash(git commit:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(gh run:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo test:*)",
+      "Bash(git add:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh api:*)",
+      "Bash(bash:*)",
+      "Bash(git push:*)",
+      "Bash(cargo doc:*)",
+      "Bash(gh run list:*)"
     ]
+  },
+  "enableAllProjectMcpServers": true,
+  "hooks": {
+    "commandStartHook": ".claude/hooks/pre-commit-check.sh"
   }
 }
