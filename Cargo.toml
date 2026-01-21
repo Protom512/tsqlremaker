@@ -12,3 +12,10 @@ criterion = "0.5"
 
 [workspace.metadata.cargo-semver-check]
 # セマンティックバージョニングのチェック
+
+[workspace.lints.clippy]
+# panic/expect/unwrap をライブラリコードで禁止
+panic = "deny"
+expect_used = "deny"
+# テストコードでの使用は許可（個別クレートで #[cfg(test)] で設定）
+unwrap_used = "deny"

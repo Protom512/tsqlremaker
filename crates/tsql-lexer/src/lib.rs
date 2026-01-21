@@ -50,6 +50,8 @@
 //! ```
 
 #![warn(missing_docs)]
+// workspace.lints から clippy 設定を継承
+// （ライブラリ内で使用されていない場合は警告のみ）
 #![warn(clippy::unwrap_used)]
 #![warn(clippy::expect_used)]
 #![warn(clippy::panic)]

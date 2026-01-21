@@ -998,6 +998,7 @@ fn is_ident_start(ch: char) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
 
     #[test]
@@ -1081,7 +1082,7 @@ mod tests {
             LexError::InvalidCharacter { ch, .. } => {
                 assert_eq!(*ch, '©');
             }
-            _ => panic!("Expected InvalidCharacter error"),
+            _ => assert!(matches!(errors[0], LexError::InvalidCharacter { .. }), "Expected InvalidCharacter error"),
         }
 
         // リカバリ後、FROM が正しくトークン化される
@@ -1112,7 +1113,7 @@ mod tests {
             LexError::UnterminatedString { .. } => {
                 // OK
             }
-            _ => panic!("Expected UnterminatedString error"),
+            _ => assert!(matches!(errors[0], LexError::UnterminatedString { .. }), "Expected UnterminatedString error"),
         }
 
         // リカバリ後、EOF に達している（文字列がEOFまで読み進められたため）
@@ -1210,7 +1211,7 @@ mod tests {
 
         // 複数のエラーが収集されていることを確認
         let errors = lexer.errors();
-        assert!(errors.len() >= 1);
+        assert!(!errors.is_empty());
     }
 
     // Task 14.1: イテレータのテスト

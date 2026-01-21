@@ -1,5 +1,7 @@
 //! 字句解析器の統合テスト
 
+#![allow(clippy::unwrap_used)]
+
 use tsql_lexer::{LexError, Lexer, TokenKind};
 
 /// 単純な SELECT クエリのテスト
