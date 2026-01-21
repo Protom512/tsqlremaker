@@ -1082,7 +1082,10 @@ mod tests {
             LexError::InvalidCharacter { ch, .. } => {
                 assert_eq!(*ch, '©');
             }
-            _ => assert!(matches!(errors[0], LexError::InvalidCharacter { .. }), "Expected InvalidCharacter error"),
+            _ => assert!(
+                matches!(errors[0], LexError::InvalidCharacter { .. }),
+                "Expected InvalidCharacter error"
+            ),
         }
 
         // リカバリ後、FROM が正しくトークン化される
@@ -1113,7 +1116,10 @@ mod tests {
             LexError::UnterminatedString { .. } => {
                 // OK
             }
-            _ => assert!(matches!(errors[0], LexError::UnterminatedString { .. }), "Expected UnterminatedString error"),
+            _ => assert!(
+                matches!(errors[0], LexError::UnterminatedString { .. }),
+                "Expected UnterminatedString error"
+            ),
         }
 
         // リカバリ後、EOF に達している（文字列がEOFまで読み進められたため）
