@@ -1,0 +1,81 @@
+name: SQL Dialect Support
+description: 新しいSQL方言のサポートを提案する
+title: "[Dialect] "
+labels: ["dialect", "enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## SQL方言サポートの要望ありがとうございます
+
+        TSQLRemaker は、SAP ASE T-SQL を他のデータベース方言に変換するツールです。
+        新しい方言のサポート要望を提出する場合は、以下の情報を記載してください。
+
+  - type: dropdown
+    id: dialect_type
+    attributes:
+      label: 方言の種類
+      description: サポートしたい方言はどれですか？
+      options:
+        - MySQL / MariaDB
+        - PostgreSQL
+        - Oracle
+        - SQL Server
+        - SQLite
+        - Snowflake
+        - BigQuery
+        - Redshift
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: dialect_version
+    attributes:
+      label: データベースバージョン
+      description: 対象とするデータベースのバージョン
+      placeholder: MySQL 8.0, PostgreSQL 15, etc.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 説明
+      description: どのような変換が必要ですか？
+      placeholder: SAP ASE T-SQL のどの構文を、どのように変換したいですか？
+    validations:
+      required: true
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: 変換例
+      description: 具体的な変換例を記載してください
+      placeholder: |
+        **入力（SAP ASE T-SQL）:**
+        ```sql
+        SELECT TOP 10 * FROM users
+        ```
+
+        **期待する出力:**
+        ```sql
+        SELECT * FROM users LIMIT 10
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: unsupported_features
+    attributes:
+      label: サポートされていない構文
+      description: 変換が必要なASE固有の構文を列挙してください
+      placeholder: |
+        - TOP句
+        - ネストされたブロックコメント
+        - @@IDENTITY変数
+        - etc.
+
+  - type: textarea
+    id: additional_info
+    attributes:
+      label: 追加情報
+      description: その他、考慮すべき情報があれば記載してください

@@ -1,0 +1,51 @@
+name: Feature Request
+description: 新機能を提案する
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 機能要望ありがとうございます
+
+        機能要望を提出する前に、以下を確認してください：
+        - [ ] 同ような要望のIssueが既に登録されていないか確認
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 機能の概要
+      description: 提案する機能を簡潔に説明してください
+      placeholder: どのような機能が必要ですか？
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: 動機/背景
+      description: この機能が必要な理由を説明してください
+      placeholder: なぜこの機能が必要ですか？現在どのような問題がありますか？
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案
+      description: 機能の実装方法についてのアイデアがあれば記載してください
+      placeholder: どのように実現するか、アイデアがあれば教えてください
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 代替案
+      description: 他の解決方法を検討した場合、記載してください
+      placeholder: 他にどのような方法で解決できると考えましたか？
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: 使用例
+      description: 機能の使用例を記載してください
+      placeholder: どのように使用するか、具体的な例を教えてください

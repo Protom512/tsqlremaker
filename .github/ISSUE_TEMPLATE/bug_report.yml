@@ -1,0 +1,87 @@
+name: Bug Report
+description: バグを報告する
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## バグ報告ありがとうございます
+
+        バグを報告する前に、以下を確認してください：
+        - [ ] 同じバグのIssueが既に登録されていないか確認
+        - [ ] 最新バージョンでも再現するか確認
+
+  - type: textarea
+    id: description
+    attributes:
+      label: バグの説明
+      description: バグの内容を簡潔に説明してください
+      placeholder: 何が起きましたか？
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 再現手順
+      description: バグを再現する手順を記載してください
+      placeholder: |
+        1. '...' を実行
+        2. '...' をクリック
+        3. エラーが発生
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する動作
+      description: 本来どのように動作すべきだったか
+      placeholder: 期待していた動作を記載してください
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の動作
+      description: 実際にどのように動作したか
+      placeholder: 実際の動作を記載してください
+    validations:
+      required: true
+
+  - type: textarea
+    id: sql
+    attributes:
+      label: 問題のSQL（もしあれば）
+      description: 問題が発生したSQLコードを記載してください
+      render: sql
+
+  - type: input
+    id: version
+    attributes:
+      label: バージョン
+      description: 使用しているバージョン
+      placeholder: v0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ/エラーメッセージ
+      description: 関連するログやエラーメッセージを貼り付けてください
+      render: shell
