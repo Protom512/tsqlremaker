@@ -127,3 +127,4 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/rust,nvim,macOs,windows,emacs,vscode
+.claude/settings.local.json
