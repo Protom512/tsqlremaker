@@ -174,14 +174,39 @@ impl TokenKind {
     /// # Returns
     ///
     /// 対応するキーワードの `TokenKind`、または `TokenKind::Ident`
+    ///
+    /// # Performance
+    ///
+    /// キーワードは最大で17文字（"uniqueidentifier"）なので、
+    /// スタック上のバッファを使用してヒープ割り当てを回避します。
+    /// これにより、大多数のケースでゼロアロケーションを実現しています。
     #[must_use]
     pub fn from_ident(s: &str) -> Self {
-        // 小文字に変換して検索（大文字小文字非区別）
-        let lower = s.to_ascii_lowercase();
-        KEYWORDS
-            .get(lower.as_str())
-            .copied()
-            .unwrap_or(TokenKind::Ident)
+        // キーワードの最大長は "uniqueidentifier" の17文字
+        // スタック上のバッファを使用してヒープ割り当てを回避
+        const MAX_KEYWORD_LEN: usize = 32;
+
+        let bytes = s.as_bytes();
+
+        // 長い識別子（キーワードではない可能性が高い）は早期リターン
+        if bytes.len() > MAX_KEYWORD_LEN {
+            return TokenKind::Ident;
+        }
+
+        // スタック上のバッファにコピーして小文字化
+        let mut buf = [0u8; MAX_KEYWORD_LEN];
+        for (i, &b) in bytes.iter().enumerate() {
+            buf[i] = b.to_ascii_lowercase();
+        }
+
+        // キーワード検索（借用スコープを制限）
+        // UTF-8検証が失敗した場合は識別子として扱う
+        let lower_str = match std::str::from_utf8(&buf[..bytes.len()]) {
+            Ok(s) => s,
+            Err(_) => return TokenKind::Ident,
+        };
+
+        KEYWORDS.get(lower_str).copied().unwrap_or(TokenKind::Ident)
     }
 }
 

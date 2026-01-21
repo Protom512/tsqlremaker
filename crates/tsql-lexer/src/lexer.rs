@@ -178,6 +178,7 @@ impl<'src> Lexer<'src> {
             return Err(LexError::UnterminatedBlockComment {
                 start: start_pos,
                 depth,
+                source_excerpt: None,
             });
         }
 
@@ -330,6 +331,7 @@ impl<'src> Lexer<'src> {
                     return Err(LexError::UnterminatedIdentifier {
                         start: start_pos,
                         bracket_type: crate::error::BracketType::Square,
+                        source_excerpt: None,
                     });
                 }
 
@@ -373,6 +375,7 @@ impl<'src> Lexer<'src> {
             return Err(LexError::UnterminatedIdentifier {
                 start: start_pos,
                 bracket_type: crate::error::BracketType::DoubleQuote,
+                source_excerpt: None,
             });
         }
 
@@ -415,6 +418,7 @@ impl<'src> Lexer<'src> {
             return Err(LexError::UnterminatedString {
                 start: start_pos,
                 quote_char: '\'',
+                source_excerpt: None,
             });
         }
 
@@ -533,6 +537,7 @@ impl<'src> Lexer<'src> {
             return Err(LexError::UnterminatedString {
                 start: start_pos,
                 quote_char: '\'',
+                source_excerpt: None,
             });
         }
 
@@ -553,12 +558,14 @@ impl<'src> Lexer<'src> {
         let quote = self.cursor.current().ok_or(LexError::UnexpectedEof {
             position: self.cursor.position(),
             expected: "quote".to_string(),
+            source_excerpt: None,
         })?;
 
         if quote != '\'' && quote != '"' {
             return Err(LexError::InvalidCharacter {
                 ch: quote,
                 position: self.cursor.position(),
+                source_excerpt: None,
             });
         }
 
@@ -693,6 +700,7 @@ impl<'src> Lexer<'src> {
             _ => Err(LexError::InvalidCharacter {
                 ch: '!',
                 position: pos,
+                source_excerpt: None,
             }),
         }
     }
@@ -835,6 +843,7 @@ impl<'src> Lexer<'src> {
         let ch = self.cursor.current().ok_or(LexError::UnexpectedEof {
             position: start_pos,
             expected: "token".to_string(),
+            source_excerpt: None,
         })?;
 
         let result = match ch {
@@ -938,6 +947,7 @@ impl<'src> Lexer<'src> {
                     Err(LexError::UnexpectedEof {
                         position: start_pos,
                         expected: "identifier or N'...'".to_string(),
+                        source_excerpt: None,
                     })
                 }
             }
@@ -946,6 +956,7 @@ impl<'src> Lexer<'src> {
             c => Err(LexError::InvalidCharacter {
                 ch: c,
                 position: start_pos,
+                source_excerpt: None,
             }),
         };
 
