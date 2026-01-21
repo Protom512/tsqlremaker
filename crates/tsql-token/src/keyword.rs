@@ -178,7 +178,10 @@ impl TokenKind {
     pub fn from_ident(s: &str) -> Self {
         // 小文字に変換して検索（大文字小文字非区別）
         let lower = s.to_ascii_lowercase();
-        KEYWORDS.get(lower.as_str()).copied().unwrap_or(TokenKind::Ident)
+        KEYWORDS
+            .get(lower.as_str())
+            .copied()
+            .unwrap_or(TokenKind::Ident)
     }
 }
 

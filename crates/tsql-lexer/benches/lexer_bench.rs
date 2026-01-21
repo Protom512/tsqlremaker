@@ -2,7 +2,7 @@
 //
 // 1MB の SQL ファイルを 100ms 以下で処理するベンチマーク
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use tsql_lexer::Lexer;
 
 /// 基本的な SELECT クエリのベンチマーク

@@ -47,7 +47,7 @@
 /// - Eof: 入力の終わり
 /// - Unknown: 不明なトークン
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[allow(missing_docs)]  // 各バリアントのドキュメントは上記コメントを参照
+#[allow(missing_docs)] // 各バリアントのドキュメントは上記コメントを参照
 pub enum TokenKind {
     // ==================== Keywords ====================
     // DML

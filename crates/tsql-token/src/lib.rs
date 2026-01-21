@@ -14,8 +14,8 @@
 #![warn(clippy::expect_used)]
 #![warn(clippy::panic)]
 
-pub mod kind;
 pub mod keyword;
+pub mod kind;
 pub mod position;
 
 pub use kind::TokenKind;

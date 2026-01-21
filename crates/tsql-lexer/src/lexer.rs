@@ -430,9 +430,7 @@ impl<'src> Lexer<'src> {
         let start_offset = self.cursor.position().offset as usize;
 
         // 16進数チェック
-        if self.cursor.current() == Some('0')
-            && self.cursor.peek() == Some('x')
-        {
+        if self.cursor.current() == Some('0') && self.cursor.peek() == Some('x') {
             return self.read_hex_number(start_pos, start_offset);
         }
 
@@ -446,7 +444,12 @@ impl<'src> Lexer<'src> {
                 has_dot = true;
                 self.cursor.bump();
                 // ドットの後に数字がない場合は範囲演算子
-                if !self.cursor.current().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                if !self
+                    .cursor
+                    .current()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+                {
                     // ドットを戻して整数として処理
                     break;
                 }
@@ -1222,18 +1225,26 @@ mod tests {
 
         // EOF は含まれない
         assert!(!tokens.iter().any(|t| {
-            t.as_ref().map(|t| t.kind == TokenKind::Eof).unwrap_or(false)
+            t.as_ref()
+                .map(|t| t.kind == TokenKind::Eof)
+                .unwrap_or(false)
         }));
 
         // 期待するトークンが含まれている
         assert!(tokens.iter().any(|t| {
-            t.as_ref().map(|t| t.kind == TokenKind::Select).unwrap_or(false)
+            t.as_ref()
+                .map(|t| t.kind == TokenKind::Select)
+                .unwrap_or(false)
         }));
         assert!(tokens.iter().any(|t| {
-            t.as_ref().map(|t| t.kind == TokenKind::Star).unwrap_or(false)
+            t.as_ref()
+                .map(|t| t.kind == TokenKind::Star)
+                .unwrap_or(false)
         }));
         assert!(tokens.iter().any(|t| {
-            t.as_ref().map(|t| t.kind == TokenKind::From).unwrap_or(false)
+            t.as_ref()
+                .map(|t| t.kind == TokenKind::From)
+                .unwrap_or(false)
         }));
     }
 
@@ -1281,7 +1292,9 @@ mod tests {
 
         // Unknown トークンが含まれる
         assert!(tokens.iter().any(|t| {
-            t.as_ref().map(|t| t.kind == TokenKind::Unknown).unwrap_or(false)
+            t.as_ref()
+                .map(|t| t.kind == TokenKind::Unknown)
+                .unwrap_or(false)
         }));
     }
 

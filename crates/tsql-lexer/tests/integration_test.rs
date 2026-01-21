@@ -231,7 +231,10 @@ fn test_unterminated_string_error() {
 
     // エラーが記録されていることを確認
     assert!(lexer.has_errors());
-    assert!(matches!(lexer.errors()[0], LexError::UnterminatedString { .. }));
+    assert!(matches!(
+        lexer.errors()[0],
+        LexError::UnterminatedString { .. }
+    ));
 }
 
 /// 終了していないブロックコメントのエラーテスト
@@ -248,7 +251,10 @@ fn test_unterminated_block_comment_error() {
 
     // エラーが記録されていることを確認
     assert!(lexer.has_errors());
-    assert!(matches!(lexer.errors()[0], LexError::UnterminatedBlockComment { .. }));
+    assert!(matches!(
+        lexer.errors()[0],
+        LexError::UnterminatedBlockComment { .. }
+    ));
 }
 
 /// 複合代入演算子のテスト
@@ -453,7 +459,9 @@ fn test_tokenize_various_number_literals() {
     }
 
     assert!(text.iter().any(|t| t.contains("123")));
-    assert!(text.iter().any(|t| t.contains("45.67") || t.contains("1.5e10")));
+    assert!(text
+        .iter()
+        .any(|t| t.contains("45.67") || t.contains("1.5e10")));
     assert!(text.iter().any(|t| t.contains("0xABCD")));
 }
 

@@ -133,8 +133,7 @@ impl Position {
             },
             '\t' => {
                 // タブ幅を考慮して列位置を計算
-                let next_tab_stop =
-                    ((self.column - 1 + tab_width) / tab_width) * tab_width + 1;
+                let next_tab_stop = ((self.column - 1 + tab_width) / tab_width) * tab_width + 1;
                 Self {
                     line: self.line,
                     column: next_tab_stop,

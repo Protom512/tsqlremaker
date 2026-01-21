@@ -79,8 +79,8 @@ impl<'src> Cursor<'src> {
             self.position.column = 1;
         } else if ch == '\t' {
             // タブ幅を8スペースとして計算
-            let next_tab = ((self.position.column - 1 + self.tab_width) / self.tab_width)
-                * self.tab_width + 1;
+            let next_tab =
+                ((self.position.column - 1 + self.tab_width) / self.tab_width) * self.tab_width + 1;
             self.position.column = next_tab;
         } else {
             self.position.column += 1;
