@@ -589,7 +589,8 @@ impl<'src> Parser<'src> {
     /// CREATE TABLEを解析
     fn parse_create_table(&mut self, start: u32) -> ParseResult<Statement> {
         let name = self.parse_identifier()?;
-        let temporary = name.name.starts_with('#') || name.name.starts_with('[');
+        // 一時テーブルは `#` または `##` で始まる識別子
+        let temporary = name.name.starts_with('#');
 
         self.buffer.consume()?; // LEFT PAREN
 
@@ -734,9 +735,15 @@ impl<'src> Parser<'src> {
             TokenKind::Varchar => {
                 if self.buffer.check(TokenKind::LParen) {
                     self.buffer.consume()?;
-                    // 数値を解析（簡易版）
                     let len = if self.buffer.check(TokenKind::Number) {
-                        let n = self.buffer.current()?.text.parse().unwrap_or(255);
+                        let token = self.buffer.current()?;
+                        let num_str = token.text;
+                        let n = num_str.parse::<u32>().map_err(|_| {
+                            ParseError::invalid_syntax(
+                                format!("Invalid number for VARCHAR length: {}", num_str),
+                                token.span,
+                            )
+                        })?;
                         self.buffer.consume()?;
                         Some(n)
                     } else {
@@ -761,9 +768,16 @@ impl<'src> Parser<'src> {
                 let len = if self.buffer.check(TokenKind::LParen) {
                     self.buffer.consume()?;
                     let n = if self.buffer.check(TokenKind::Number) {
-                        let n = self.buffer.current()?.text.parse().unwrap_or(1);
+                        let token = self.buffer.current()?;
+                        let num_str = token.text;
+                        let parsed = num_str.parse::<u32>().map_err(|_| {
+                            ParseError::invalid_syntax(
+                                format!("Invalid number for CHAR length: {}", num_str),
+                                token.span,
+                            )
+                        })?;
                         self.buffer.consume()?;
-                        n
+                        parsed
                     } else {
                         1
                     };
@@ -785,18 +799,32 @@ impl<'src> Parser<'src> {
                 let (precision, scale) = if self.buffer.check(TokenKind::LParen) {
                     self.buffer.consume()?;
                     let p = if self.buffer.check(TokenKind::Number) {
-                        let p = self.buffer.current()?.text.parse().unwrap_or(18) as u8;
+                        let token = self.buffer.current()?;
+                        let num_str = token.text;
+                        let parsed = num_str.parse::<u8>().map_err(|_| {
+                            ParseError::invalid_syntax(
+                                format!("Invalid number for DECIMAL precision: {}", num_str),
+                                token.span,
+                            )
+                        })?;
                         self.buffer.consume()?;
-                        Some(p)
+                        Some(parsed)
                     } else {
                         None
                     };
                     let scale = if self.buffer.check(TokenKind::Comma) {
                         self.buffer.consume()?;
                         if self.buffer.check(TokenKind::Number) {
-                            let s = self.buffer.current()?.text.parse().unwrap_or(0) as u8;
+                            let token = self.buffer.current()?;
+                            let num_str = token.text;
+                            let parsed = num_str.parse::<u8>().map_err(|_| {
+                                ParseError::invalid_syntax(
+                                    format!("Invalid number for DECIMAL scale: {}", num_str),
+                                    token.span,
+                                )
+                            })?;
                             self.buffer.consume()?;
-                            Some(s)
+                            Some(parsed)
                         } else {
                             None
                         }
@@ -988,13 +1016,16 @@ impl<'src> Parser<'src> {
     }
 
     /// パラメータ定義を解析
+    ///
+    /// T-SQL構文: @parameter_name [AS] data_type [ = default_value ] [OUTPUT]
     fn parse_parameter_definition(&mut self) -> ParseResult<ParameterDefinition> {
         let name = self.parse_identifier()?;
         let data_type = self.parse_data_type()?;
         let mut default_value = None;
         let mut is_output = false;
 
-        if self.buffer.check(TokenKind::Eq) || self.buffer.check(TokenKind::Default) {
+        // T-SQLでは DEFAULT キーワードは使用せず、直接 = でデフォルト値を指定
+        if self.buffer.check(TokenKind::Eq) || self.buffer.check(TokenKind::Assign) {
             self.buffer.consume()?;
             let mut expr_parser = ExpressionParser::new(&mut self.buffer);
             default_value = Some(expr_parser.parse()?);
