@@ -236,4 +236,129 @@ mod tests {
 
         assert_eq!(error.span(), Some(span));
     }
+
+    #[test]
+    fn test_error_position() {
+        let span = Span::new(100, 105);
+        let error = ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, span);
+
+        let pos = error.position();
+        assert_eq!(pos.offset, 100);
+    }
+
+    #[test]
+    fn test_error_span_for_eof() {
+        let pos = Position::new(5, 10, 100);
+        let error = ParseError::unexpected_eof("statement".to_string(), pos);
+
+        let span = error.span();
+        assert_eq!(
+            span,
+            Some(Span {
+                start: 100,
+                end: 100
+            })
+        );
+    }
+
+    #[test]
+    fn test_error_position_for_eof() {
+        let pos = Position::new(5, 10, 100);
+        let error = ParseError::unexpected_eof("statement".to_string(), pos);
+
+        let error_pos = error.position();
+        assert_eq!(error_pos, pos);
+    }
+
+    #[test]
+    fn test_error_span_for_recursion_limit() {
+        let pos = Position::new(100, 1, 5000);
+        let error = ParseError::recursion_limit(1000, pos);
+
+        let span = error.span();
+        assert_eq!(
+            span,
+            Some(Span {
+                start: 5000,
+                end: 5000
+            })
+        );
+    }
+
+    #[test]
+    fn test_error_position_for_recursion_limit() {
+        let pos = Position::new(100, 1, 5000);
+        let error = ParseError::recursion_limit(1000, pos);
+
+        let error_pos = error.position();
+        assert_eq!(error_pos, pos);
+    }
+
+    #[test]
+    fn test_batch_error_span() {
+        let span = Span::new(10, 15);
+        let inner = ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, span);
+        let error = ParseError::BatchError {
+            batch_number: 1,
+            error: Box::new(inner),
+        };
+
+        assert_eq!(error.span(), Some(span));
+    }
+
+    #[test]
+    fn test_batch_error_position() {
+        let span = Span::new(10, 15);
+        let inner = ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, span);
+        let error = ParseError::BatchError {
+            batch_number: 1,
+            error: Box::new(inner),
+        };
+
+        let pos = error.position();
+        assert_eq!(pos.offset, 10);
+    }
+
+    #[test]
+    fn test_display_unexpected_eof() {
+        let pos = Position::new(5, 10, 100);
+        let error = ParseError::unexpected_eof("SELECT statement".to_string(), pos);
+
+        let display = format!("{}", error);
+        assert!(display.contains("unexpected EOF"));
+        assert!(display.contains("SELECT statement"));
+    }
+
+    #[test]
+    fn test_display_invalid_syntax() {
+        let span = Span::new(0, 10);
+        let error = ParseError::invalid_syntax("missing FROM clause".to_string(), span);
+
+        let display = format!("{}", error);
+        assert!(display.contains("invalid syntax"));
+        assert!(display.contains("missing FROM clause"));
+    }
+
+    #[test]
+    fn test_display_recursion_limit() {
+        let pos = Position::new(100, 1, 5000);
+        let error = ParseError::recursion_limit(1000, pos);
+
+        let display = format!("{}", error);
+        assert!(display.contains("recursion limit exceeded"));
+        assert!(display.contains("1000"));
+    }
+
+    #[test]
+    fn test_display_batch_error() {
+        let span = Span::new(10, 15);
+        let inner = ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, span);
+        let error = ParseError::BatchError {
+            batch_number: 2,
+            error: Box::new(inner),
+        };
+
+        let display = format!("{}", error);
+        assert!(display.contains("batch 2"));
+    }
 }
