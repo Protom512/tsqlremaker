@@ -105,6 +105,7 @@ pub fn parse_one(input: &str) -> ParseResult<Statement> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

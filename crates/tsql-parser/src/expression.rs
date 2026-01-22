@@ -485,6 +485,9 @@ impl<'a, 'src> ExpressionParser<'a, 'src> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
+#[allow(clippy::panic)]
+#[allow(clippy::unwrap_in_result)]
 mod tests {
     use super::*;
     use tsql_lexer::Lexer;
