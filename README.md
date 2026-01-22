@@ -44,7 +44,7 @@
 | Component | Status | Coverage |
 |-----------|--------|----------|
 | **Lexer** | ✅ Implemented | 90%+ |
-| **Parser** | 🚧 In Progress | - |
+| **Parser** | ✅ Implemented | 90%+ |
 | **Common SQL AST** | 🚧 In Progress | - |
 | **MySQL Emitter** | 📝 Planned | - |
 | **PostgreSQL Emitter** | 📝 Planned | - |
@@ -117,6 +117,7 @@ Add to your `Cargo.toml`:
 [dependencies]
 tsql-lexer = "0.1"
 tsql-token = "0.1"
+tsql-parser = "0.1"
 ```
 
 ---
@@ -165,6 +166,52 @@ let lexer = Lexer::new(sql).with_comments(true);
 // Comments will be included in the token stream
 ```
 
+#### Parser Usage
+
+```rust
+use tsql_parser::{parse, Parser, ParserMode};
+
+// Parse SQL using the helper function
+let sql = "SELECT * FROM users WHERE id = 1";
+let statements = parse(sql).unwrap();
+
+// Or use the Parser directly for more control
+let sql = "SELECT TOP 10 * FROM users WHERE @status = 'active'";
+let mut parser = Parser::new(sql);
+
+// Parse in single statement mode (GO is treated as identifier)
+let mut parser = Parser::new(sql).with_mode(ParserMode::SingleStatement);
+let stmt = parser.parse_statement().unwrap();
+
+// Access parsed AST
+match stmt {
+    Statement::Select(select_stmt) => {
+        println!("Found SELECT with {} columns", select_stmt.columns.len());
+    }
+    _ => println!("Not a SELECT statement"),
+}
+```
+
+#### Batch Processing
+
+```rust
+use tsql_parser::Parser;
+
+let sql = r#"
+    SELECT * FROM users
+    GO
+    SELECT * FROM orders
+"#;
+
+let mut parser = Parser::new(sql);
+let statements = parser.parse().unwrap();
+
+// Returns 3 statements: SELECT, BatchSeparator, SELECT
+for stmt in statements {
+    println!("{:?}", stmt);
+}
+```
+
 ---
 
 ## Development
@@ -201,7 +248,7 @@ tsqlremaker/
 ├── crates/
 │   ├── tsql-token/        # Token definitions (TokenKind, Span, Position)
 │   ├── tsql-lexer/        # SAP ASE T-SQL lexer
-│   ├── tsql-parser/       # Parser (planned)
+│   ├── tsql-parser/       # T-SQL parser with AST
 │   ├── common-sql/        # Common SQL AST (planned)
 │   └── mysql-emitter/     # MySQL code generator (planned)
 ├── .github/
@@ -236,17 +283,40 @@ tsqlremaker/
 | Hex numbers | `0xABCD` | ✅ |
 | TOP clause | `SELECT TOP 10` | ✅ |
 | Comparison operators | `!<`, `!>`, `<>` | ✅ |
+| SELECT statements | Full syntax | ✅ |
+| INSERT statements | VALUES, INSERT-SELECT | ✅ |
+| UPDATE statements | SET, FROM, WHERE | ✅ |
+| DELETE statements | FROM, WHERE | ✅ |
+| CREATE TABLE | Column defs, constraints | ✅ |
+| Control flow | IF...ELSE, WHILE, BEGIN...END | ✅ |
+| Variables | DECLARE, SET | ✅ |
+| Batch separator | GO | ✅ |
+| Expressions | All operators with precedence | ✅ |
+| CASE expressions | WHEN...THEN...ELSE...END | ✅ |
 
 ### Token Examples
 
 ```sql
--- All of these are correctly tokenized
+-- All of these are correctly tokenized and parsed
 
 SELECT * FROM [table-name]        -- Quoted identifier
 DECLARE @counter INT                -- Local variable
 SELECT @@identity                   -- Global variable
 CREATE TABLE #temp (id INT)         -- Temp table
 /* /* Nested comment */ */          -- Nested block comment
+
+-- Parser examples
+SELECT TOP 10 * FROM users
+WHERE @status = 'active'
+ORDER BY name DESC
+
+IF @x = 1
+    SELECT * FROM users
+GO
+
+UPDATE users
+SET name = 'test'
+WHERE id = 1
 ```
 
 ---
