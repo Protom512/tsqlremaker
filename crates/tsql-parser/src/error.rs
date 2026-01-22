@@ -1,0 +1,239 @@
+//! パーサーエラー型の定義
+//!
+//! 構文解析中に発生するエラーを表現する。
+
+use std::fmt;
+
+use tsql_token::{Position, Span, TokenKind};
+
+/// パース結果型エイリアス
+pub type ParseResult<T> = Result<T, ParseError>;
+
+/// パースエラー
+///
+/// 構文解析中に発生するエラーを表す。
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParseError {
+    /// 予期しないトークン
+    UnexpectedToken {
+        /// 期待されるトークン種別のリスト
+        expected: Vec<TokenKind>,
+        /// 見つかったトークン種別
+        found: TokenKind,
+        /// 位置情報
+        span: Span,
+    },
+    /// 予期しないEOF
+    UnexpectedEof {
+        /// 期待されていた内容の説明
+        expected: String,
+        /// 位置情報
+        position: Position,
+    },
+    /// 無効な構文
+    InvalidSyntax {
+        /// エラーメッセージ
+        message: String,
+        /// 位置情報
+        span: Span,
+    },
+    /// 再帰深度制限超過
+    RecursionLimitExceeded {
+        /// 制限値
+        limit: usize,
+        /// 位置情報
+        position: Position,
+    },
+    /// バッチエラー
+    BatchError {
+        /// バッチ番号
+        batch_number: usize,
+        /// 元のエラー
+        error: Box<ParseError>,
+    },
+}
+
+impl ParseError {
+    /// 予期しないトークンエラーを作成
+    #[must_use]
+    pub const fn unexpected_token(expected: Vec<TokenKind>, found: TokenKind, span: Span) -> Self {
+        Self::UnexpectedToken {
+            expected,
+            found,
+            span,
+        }
+    }
+
+    /// 予期しないEOFエラーを作成
+    #[must_use]
+    pub const fn unexpected_eof(expected: String, position: Position) -> Self {
+        Self::UnexpectedEof { expected, position }
+    }
+
+    /// 無効な構文エラーを作成
+    #[must_use]
+    pub const fn invalid_syntax(message: String, span: Span) -> Self {
+        Self::InvalidSyntax { message, span }
+    }
+
+    /// 再帰制限超過エラーを作成
+    #[must_use]
+    pub const fn recursion_limit(limit: usize, position: Position) -> Self {
+        Self::RecursionLimitExceeded { limit, position }
+    }
+
+    /// エラーの位置情報を返す
+    #[must_use]
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            Self::UnexpectedToken { span, .. } | Self::InvalidSyntax { span, .. } => Some(*span),
+            Self::UnexpectedEof { position, .. }
+            | Self::RecursionLimitExceeded { position, .. } => Some(Span {
+                start: position.offset,
+                end: position.offset,
+            }),
+            Self::BatchError { error, .. } => error.span(),
+        }
+    }
+
+    /// エラーの開始位置を返す
+    #[must_use]
+    pub fn position(&self) -> Position {
+        match self {
+            Self::UnexpectedToken { span, .. } | Self::InvalidSyntax { span, .. } => Position {
+                line: 0, // 行番号はSpanからは取得できない
+                column: 0,
+                offset: span.start,
+            },
+            Self::UnexpectedEof { position, .. }
+            | Self::RecursionLimitExceeded { position, .. } => *position,
+            Self::BatchError { error, .. } => error.position(),
+        }
+    }
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnexpectedToken {
+                expected,
+                found,
+                span,
+            } => {
+                write!(f, "unexpected token at offset {}: expected ", span.start)?;
+                for (i, kind) in expected.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{:?}", kind)?;
+                }
+                write!(f, ", found {:?}", found)
+            }
+            Self::UnexpectedEof { expected, position } => write!(
+                f,
+                "unexpected EOF at offset {}: expected {}",
+                position.offset, expected
+            ),
+            Self::InvalidSyntax { message, span } => {
+                write!(f, "invalid syntax at offset {}: {}", span.start, message)
+            }
+            Self::RecursionLimitExceeded { limit, position } => write!(
+                f,
+                "recursion limit exceeded at offset {}: maximum depth is {}",
+                position.offset, limit
+            ),
+            Self::BatchError {
+                batch_number,
+                error,
+            } => write!(f, "error in batch {}: {}", batch_number, error),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unexpected_token_error() {
+        let span = Span::new(10, 15);
+        let error = ParseError::unexpected_token(
+            vec![TokenKind::Select, TokenKind::From],
+            TokenKind::Ident,
+            span,
+        );
+
+        assert_eq!(
+            error,
+            ParseError::UnexpectedToken {
+                expected: vec![TokenKind::Select, TokenKind::From],
+                found: TokenKind::Ident,
+                span
+            }
+        );
+    }
+
+    #[test]
+    fn test_unexpected_eof_error() {
+        let pos = Position::new(5, 10, 100);
+        let error = ParseError::unexpected_eof("SELECT statement".to_string(), pos);
+
+        assert_eq!(
+            error,
+            ParseError::UnexpectedEof {
+                expected: "SELECT statement".to_string(),
+                position: pos
+            }
+        );
+    }
+
+    #[test]
+    fn test_invalid_syntax_error() {
+        let span = Span::new(0, 10);
+        let error = ParseError::invalid_syntax("missing FROM clause".to_string(), span);
+
+        assert_eq!(
+            error,
+            ParseError::InvalidSyntax {
+                message: "missing FROM clause".to_string(),
+                span
+            }
+        );
+    }
+
+    #[test]
+    fn test_recursion_limit_error() {
+        let pos = Position::new(100, 1, 5000);
+        let error = ParseError::recursion_limit(1000, pos);
+
+        assert_eq!(
+            error,
+            ParseError::RecursionLimitExceeded {
+                limit: 1000,
+                position: pos
+            }
+        );
+    }
+
+    #[test]
+    fn test_error_display() {
+        let span = Span::new(10, 15);
+        let error =
+            ParseError::unexpected_token(vec![TokenKind::Semicolon], TokenKind::Ident, span);
+
+        let display = format!("{}", error);
+        assert!(display.contains("unexpected token"));
+        assert!(display.contains("expected"));
+        assert!(display.contains("Semicolon"));
+    }
+
+    #[test]
+    fn test_error_span() {
+        let span = Span::new(10, 15);
+        let error = ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, span);
+
+        assert_eq!(error.span(), Some(span));
+    }
+}

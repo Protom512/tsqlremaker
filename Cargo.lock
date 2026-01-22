@@ -809,6 +809,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tsql-parser"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "once_cell",
+ "rstest",
+ "thiserror",
+ "tsql-lexer",
+ "tsql-token",
+]
+
+[[package]]
 name = "tsql-token"
 version = "0.1.0"
 dependencies = [
