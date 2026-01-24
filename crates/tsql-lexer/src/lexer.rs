@@ -6,6 +6,12 @@ use crate::cursor::Cursor;
 use crate::error::LexError;
 use tsql_token::{Position, Span, TokenKind};
 
+/// Unicodeエスケープシーケンスの16進桁数（\+XXXXXX形式）
+const UNICODE_ESCAPE_HEX_DIGITS: u32 = 6;
+
+/// Unicodeエスケープシーケンスの16進桁数（\XXXX形式）
+const UNICODE_ESCAPE_SHORT_HEX_DIGITS: u32 = 4;
+
 /// トークン
 ///
 /// Zero-copy でソースコードへの参照を保持するトークン。
@@ -588,12 +594,12 @@ impl<'src> Lexer<'src> {
                     if self.cursor.current() == Some('+') {
                         self.cursor.bump();
                         // \+XXXXXX (6 hex digits)
-                        for _ in 0..6 {
+                        for _ in 0..UNICODE_ESCAPE_HEX_DIGITS {
                             self.cursor.bump();
                         }
                     } else {
                         // \XXXX (4 hex digits)
-                        for _ in 0..4 {
+                        for _ in 0..UNICODE_ESCAPE_SHORT_HEX_DIGITS {
                             self.cursor.bump();
                         }
                     }

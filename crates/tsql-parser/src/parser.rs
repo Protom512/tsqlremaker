@@ -9,6 +9,9 @@ use crate::expression::ExpressionParser;
 use tsql_lexer::Lexer;
 use tsql_token::{Span, TokenKind};
 
+/// デフォルトの最大再帰深度
+const DEFAULT_MAX_DEPTH: usize = 1000;
+
 /// パーサーモード
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ParserMode {
@@ -48,7 +51,7 @@ impl<'src> Parser<'src> {
             mode: ParserMode::default(),
             errors: Vec::new(),
             depth: 0,
-            max_depth: 1000,
+            max_depth: DEFAULT_MAX_DEPTH,
         }
     }
 
@@ -189,13 +192,7 @@ impl<'src> Parser<'src> {
         }
 
         // カラムリスト
-        let mut columns = Vec::new();
-        loop {
-            columns.push(self.parse_select_item()?);
-            if !self.buffer.consume_if(TokenKind::Comma)? {
-                break;
-            }
-        }
+        let columns = self.parse_comma_separated(|this| this.parse_select_item())?;
 
         // FROM
         let from = if self.buffer.check(TokenKind::From) {
@@ -214,8 +211,7 @@ impl<'src> Parser<'src> {
         };
 
         // GROUP BY
-        let mut group_by = Vec::new();
-        if self.buffer.check(TokenKind::Group) {
+        let group_by = if self.buffer.check(TokenKind::Group) {
             self.buffer.consume()?;
             if !self.buffer.check(TokenKind::By) {
                 return Err(ParseError::unexpected_token(
@@ -225,14 +221,13 @@ impl<'src> Parser<'src> {
                 ));
             }
             self.buffer.consume()?;
-            loop {
-                let mut expr_parser = ExpressionParser::new(&mut self.buffer);
-                group_by.push(expr_parser.parse()?);
-                if !self.buffer.consume_if(TokenKind::Comma)? {
-                    break;
-                }
-            }
-        }
+            self.parse_comma_separated(|this| {
+                let mut expr_parser = ExpressionParser::new(&mut this.buffer);
+                expr_parser.parse()
+            })?
+        } else {
+            Vec::new()
+        };
 
         // HAVING
         let having = if self.buffer.check(TokenKind::Having) {
@@ -244,8 +239,7 @@ impl<'src> Parser<'src> {
         };
 
         // ORDER BY
-        let mut order_by = Vec::new();
-        if self.buffer.check(TokenKind::Order) {
+        let order_by = if self.buffer.check(TokenKind::Order) {
             self.buffer.consume()?;
             if !self.buffer.check(TokenKind::By) {
                 return Err(ParseError::unexpected_token(
@@ -255,13 +249,10 @@ impl<'src> Parser<'src> {
                 ));
             }
             self.buffer.consume()?;
-            loop {
-                order_by.push(self.parse_order_by_item()?);
-                if !self.buffer.consume_if(TokenKind::Comma)? {
-                    break;
-                }
-            }
-        }
+            self.parse_comma_separated(|this| this.parse_order_by_item())?
+        } else {
+            Vec::new()
+        };
 
         let end_span = self.buffer.current()?.span;
         Ok(Statement::Select(Box::new(SelectStatement {
@@ -1676,6 +1667,29 @@ impl<'src> Parser<'src> {
             ));
         }
         Ok(())
+    }
+
+    /// カンマ区切りのリストをパース
+    ///
+    /// # Arguments
+    ///
+    /// * `parse_item` - 各アイテムをパースするクロージャ
+    ///
+    /// # Returns
+    ///
+    /// パースされたアイテムのベクター
+    fn parse_comma_separated<T, F>(&mut self, mut parse_item: F) -> ParseResult<Vec<T>>
+    where
+        F: FnMut(&mut Self) -> ParseResult<T>,
+    {
+        let mut items = Vec::new();
+        loop {
+            items.push(parse_item(self)?);
+            if !self.buffer.consume_if(TokenKind::Comma)? {
+                break;
+            }
+        }
+        Ok(items)
     }
 
     /// 収集されたエラーを返す
