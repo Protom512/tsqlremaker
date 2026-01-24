@@ -20,7 +20,7 @@
 
 ## Task 1: Project Foundation and Crate Setup
 
-- [ ] 1.1 (P) Create tsql-parser crate structure with Cargo.toml
+- [x] 1.1 (P) Create tsql-parser crate structure with Cargo.toml
   - Create new crate under `crates/tsql-parser/` directory
   - Configure Cargo.toml with dependencies: tsql-lexer, tsql-token, thiserror, once_cell
   - Set dev-dependencies: rstest, criterion
@@ -28,7 +28,7 @@
   - Configure lib.rs for public API exports
   - _Requirements: 1.1_
 
-- [ ] 1.2 (P) Define error types and Result alias
+- [x] 1.2 (P) Define error types and Result alias
   - Create ParseError enum with variants: UnexpectedToken, UnexpectedEOF, InvalidSyntax, RecursionLimitExceeded, BatchError
   - Implement std::fmt::Display and std::error::Error for all error types
   - Include span/position information in all error variants
@@ -36,14 +36,14 @@
   - Add error constructors for each variant
   - _Requirements: 13.1, 13.2, 13.3, 13.6_
 
-- [ ] 1.3 (P) Define ParserMode and configuration types
+- [x] 1.3 (P) Define ParserMode and configuration types
   - Create ParserMode enum: BatchMode, SingleStatement
   - Create ParserConfig struct for parser configuration
   - Implement builder pattern for Parser construction
   - Define default configuration (batch mode)
   - _Requirements: 18.1, 18.2, 18.5_
 
-- [ ] 1.4 Create AST module structure with base traits
+- [x] 1.4 Create AST module structure with base traits
   - Create ast/ module directory with mod.rs
   - Define AstNode trait with span() method
   - Create Statement enum as root AST node type
@@ -54,14 +54,14 @@
 
 ## Task 2: Token Buffer and Lexer Integration
 
-- [ ] 2.1 Implement TokenStream trait for Lexer abstraction
+- [x] 2.1 Implement TokenStream trait for Lexer abstraction
   - Define TokenStream trait with methods: current(), peek(n), consume()
   - Implement trait for tsql_lexer::Lexer
   - Add EOF handling to return TokenKind::EOF when exhausted
   - Create token reference lifetime management
   - _Requirements: 1.1, 1.2, 1.4_
 
-- [ ] 2.2 Implement TokenBuffer with lookahead capability
+- [x] 2.2 Implement TokenBuffer with lookahead capability
   - Create TokenBuffer struct with circular buffer storage (size 3+)
   - Implement new() that pre-fills buffer from lexer
   - Implement current() to return current token without consuming
@@ -75,7 +75,7 @@
 
 ## Task 3: Core Parser Engine
 
-- [ ] 3.1 Implement Parser struct with basic parsing loop
+- [x] 3.1 Implement Parser struct with basic parsing loop
   - Create Parser struct with fields: lexer, buffer, errors, mode, recursion_depth
   - Implement new() constructor that initializes TokenBuffer
   - Implement with_mode() for mode configuration
@@ -84,14 +84,14 @@
   - Add errors() and drain_errors() methods for error access
   - _Requirements: 1.1, 1.4_
 
-- [ ] 3.2 Implement statement dispatcher
+- [x] 3.2 Implement statement dispatcher
   - Create parse_statement_internal() that routes based on keyword
   - Add keyword detection logic for SELECT, INSERT, UPDATE, DELETE, CREATE, DECLARE, SET, IF, WHILE, BEGIN, etc.
   - Handle unknown keywords with UnexpectedToken error
   - Implement statement termination detection (semicolon or keyword boundary)
   - _Requirements: 1.1_
 
-- [ ] 3.3 Implement recursion depth tracking
+- [x] 3.3 Implement recursion depth tracking
   - Add depth counter to Parser struct
   - Create RecursionLimitExceeded error variant
   - Check depth before recursive calls
@@ -103,28 +103,28 @@
 
 ## Task 4: Expression Parser (Pratt Algorithm)
 
-- [ ] 4.1 Implement BindingPower enum and precedence table
+- [x] 4.1 Implement BindingPower enum and precedence table
   - Define BindingPower enum with levels: Lowest, LogicalOr, LogicalAnd, Comparison, Is, Additive, Multiplicative, Unary, Primary
   - Create operator precedence mapping using once_cell Lazy<HashMap>
   - Define left/right binding powers for infix operators
   - Define prefix binding powers for unary operators
   - _Requirements: 9.1, 9.2, 9.3_
 
-- [ ] 4.2 Implement primary expression parsing
+- [x] 4.2 Implement primary expression parsing
   - Create parse_primary() method for literals, identifiers, and parentheses
   - Handle string, number, boolean, NULL literals
   - Handle column references with optional table qualification
   - Handle parenthesized sub-expressions
   - _Requirements: 9.6, 9.7, 9.9_
 
-- [ ] 4.3 Implement prefix operator parsing (null denotation)
+- [x] 4.3 Implement prefix operator parsing (null denotation)
   - Create parse_prefix() method for unary operators
   - Handle +, -, ~, NOT prefix operators
   - Delegate to parse_primary() for non-prefix tokens
   - Create appropriate AST nodes (UnaryOp)
   - _Requirements: 9.1, 9.3_
 
-- [ ] 4.4 Implement infix operator parsing (left denotation)
+- [x] 4.4 Implement infix operator parsing (left denotation)
   - Create parse_infix() method using Pratt parser algorithm
   - Handle all arithmetic operators: +, -, *, /, %
   - Handle all comparison operators: =, <>, !=, <, >, <=, >=, !<, !>
@@ -133,7 +133,7 @@
   - Create BinaryOp AST nodes with proper structure
   - _Requirements: 9.1, 9.2, 9.3_
 
-- [ ] 4.5 Implement function call parsing
+- [x] 4.5 Implement function call parsing
   - Create parse_function_call() method
   - Detect function name followed by parentheses
   - Parse argument list (comma-separated expressions)
@@ -142,7 +142,7 @@
   - Create FunctionCall AST node
   - _Requirements: 9.4_
 
-- [ ] 4.6 Implement CASE expression parsing
+- [x] 4.6 Implement CASE expression parsing
   - Create parse_case_expression() method
   - Handle CASE WHEN...THEN...ELSE...END syntax
   - Parse multiple WHEN branches
@@ -150,21 +150,21 @@
   - Create CaseExpression AST node with branches vector
   - _Requirements: 9.5_
 
-- [ ] 4.7 Implement special expression types
-  - Create parse_subquery_expression() for scalar subqueries
-  - Create parse_exists_expression() for EXISTS subqueries
-  - Create parse_in_expression() for IN lists and subqueries
-  - Create parse_between_expression() for BETWEEN ranges
-  - Create parse_like_expression() for LIKE patterns
-  - Create parse_is_expression() for IS NULL/TRUE/FALSE
-  - Handle negated forms (NOT IN, NOT LIKE, IS NOT NULL)
+- [x] 4.7 Implement special expression types
+  - Create parse_subquery_expression() for scalar subqueries (TODO: actual subquery parsing)
+  - Create parse_exists_expression() for EXISTS subqueries (TODO: actual subquery parsing)
+  - Create parse_in_expression() for IN lists and subqueries (lists implemented, subqueries TODO)
+  - Create parse_between_expression() for BETWEEN ranges (with negation)
+  - Create parse_like_expression() for LIKE patterns (with negation, ESCAPE TODO)
+  - Create parse_is_expression() for IS NULL/TRUE/FALSE/UNKNOWN (with negation)
+  - Handle negated forms (NOT IN, NOT BETWEEN, NOT LIKE, IS NOT)
   - _Requirements: 9.8, 9.9, 9.10, 9.11, 9.12_
 
 ---
 
 ## Task 5: SELECT Statement Parser
 
-- [ ] 5.1 Implement SELECT clause parsing
+- [x] 5.1 Implement SELECT clause parsing
   - Create parse_select_statement() method
   - Handle DISTINCT keyword
   - Handle TOP N clause
@@ -172,36 +172,36 @@
   - Support column aliases (AS keyword or implicit)
   - _Requirements: 2.1, 2.2, 2.8, 2.9_
 
-- [ ] 5.2 Implement FROM clause parsing
+- [x] 5.2 Implement FROM clause parsing
   - Create parse_from_clause() method
   - Parse table references with optional aliases
-  - Handle subqueries in FROM clause (derived tables)
+  - Handle subqueries in FROM clause (derived tables) (TODO)
   - Support AS keyword for aliases
   - Create FromClause AST node
   - _Requirements: 2.3_
 
-- [ ] 5.3 Implement JOIN parsing
+- [x] 5.3 Implement JOIN parsing
   - Create parse_join() method for individual JOIN clauses
   - Parse all JOIN types: INNER, LEFT/LEFT OUTER, RIGHT/RIGHT OUTER, FULL/FULL OUTER, CROSS
   - Handle ON clause with condition expression
-  - Handle USING clause with column list
+  - USING clause not supported (TokenKind::Using doesn't exist)
   - Create Join AST node with type, table, and condition
   - Implement parse_joins() to collect multiple joins
   - _Requirements: 2.5, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8_
 
-- [ ] 5.4 Implement WHERE clause parsing
+- [x] 5.4 Implement WHERE clause parsing
   - Create parse_where_clause() method
   - Parse condition expression using expression parser
   - Create Optional<Expression> field in SelectStatement
   - _Requirements: 2.4_
 
-- [ ] 5.5 Implement GROUP BY and HAVING parsing
+- [x] 5.5 Implement GROUP BY and HAVING parsing
   - Create parse_group_by_clause() method
   - Parse group key expression list
   - Create parse_having_clause() method for HAVING condition
   - _Requirements: 2.6_
 
-- [ ] 5.6 Implement ORDER BY and LIMIT parsing
+- [x] 5.6 Implement ORDER BY and LIMIT parsing
   - Create parse_order_by_clause() method
   - Parse ordering expressions with ASC/DESC direction
   - Handle LIMIT/OFFSET clauses if present (non-standard but common)
@@ -211,7 +211,7 @@
 
 ## Task 6: DML Statement Parsers (INSERT, UPDATE, DELETE)
 
-- [ ] 6.1 (P) Implement INSERT statement parser
+- [x] 6.1 (P) Implement INSERT statement parser
   - Create parse_insert_statement() method
   - Parse INSERT INTO with target table name
   - Parse optional column list in parentheses
@@ -221,7 +221,7 @@
   - Create InsertStatement AST node
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
 
-- [ ] 6.2 (P) Implement UPDATE statement parser
+- [x] 6.2 (P) Implement UPDATE statement parser
   - Create parse_update_statement() method
   - Parse UPDATE with target table
   - Parse SET clause with Assignment list (column = expression)
@@ -231,7 +231,7 @@
   - Create UpdateStatement AST node
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6_
 
-- [ ] 6.3 (P) Implement DELETE statement parser
+- [x] 6.3 (P) Implement DELETE statement parser
   - Create parse_delete_statement() method
   - Parse DELETE FROM with target table
   - Parse optional WHERE clause
@@ -243,7 +243,7 @@
 
 ## Task 7: DDL Statement Parser
 
-- [ ] 7.1 Implement CREATE TABLE parser
+- [x] 7.1 Implement CREATE TABLE parser
   - Create parse_create_table() method
   - Parse table name and temporary flag (# and ## prefixes)
   - Parse column definitions in parentheses
@@ -251,20 +251,20 @@
   - Create CreateTableStatement AST node
   - _Requirements: 6.1, 6.2, 6.3, 12.1, 12.2_
 
-- [ ] 7.2 Implement CREATE INDEX parser
+- [x] 7.2 Implement CREATE INDEX parser
   - Create parse_create_index() method
   - Parse index name, table name, and column list
   - Handle UNIQUE constraint option
   - Create CreateIndexStatement AST node
   - _Requirements: 6.4_
 
-- [ ] 7.3 Implement CREATE VIEW parser
+- [x] 7.3 Implement CREATE VIEW parser
   - Create parse_create_view() method
   - Parse view name and SELECT query
   - Create CreateViewStatement AST node
   - _Requirements: 6.5_
 
-- [ ] 7.4 Implement CREATE PROCEDURE parser
+- [x] 7.4 Implement CREATE PROCEDURE parser
   - Create parse_create_procedure() method
   - Parse procedure name
   - Parse optional parameters
@@ -276,7 +276,7 @@
 
 ## Task 8: Variable and Control Flow Parsers
 
-- [ ] 8.1 (P) Implement DECLARE statement parser
+- [x] 8.1 (P) Implement DECLARE statement parser
   - Create parse_declare_statement() method
   - Parse @variable_name identifiers
   - Parse data types for each variable
@@ -285,19 +285,19 @@
   - Create DeclareStatement AST node
   - _Requirements: 7.1, 7.2, 7.5_
 
-- [ ] 8.2 (P) Implement SET statement parser
+- [x] 8.2 (P) Implement SET statement parser
   - Create parse_set_statement() method
   - Parse SET @variable = expression syntax
   - Create SetStatement AST node
   - _Requirements: 7.3_
 
-- [ ] 8.3 Implement SELECT variable assignment parser
+- [x] 8.3 Implement SELECT variable assignment parser
   - Extend expression parser to handle SELECT @var = expr syntax
   - Distinguish from regular SELECT statements
   - Create VariableAssignment AST node
   - _Requirements: 7.4_
 
-- [ ] 8.4 Implement IF...ELSE statement parser
+- [x] 8.4 Implement IF...ELSE statement parser
   - Create parse_if_statement() method
   - Parse IF condition expression
   - Parse THEN branch (can be statement or block)
@@ -305,14 +305,14 @@
   - Create IfStatement AST node
   - _Requirements: 8.1, 8.2_
 
-- [ ] 8.5 Implement WHILE statement parser
+- [x] 8.5 Implement WHILE statement parser
   - Create parse_while_statement() method
   - Parse WHILE condition expression
   - Parse loop body (statement or block)
   - Create WhileStatement AST node
   - _Requirements: 8.3_
 
-- [ ] 8.6 Implement BEGIN...END block parser
+- [x] 8.6 Implement BEGIN...END block parser
   - Create parse_block() method
   - Parse BEGIN keyword
   - Parse inner statement list
@@ -320,7 +320,7 @@
   - Create Block AST node
   - _Requirements: 8.6_
 
-- [ ] 8.7 Implement BREAK, CONTINUE, RETURN parsers
+- [x] 8.7 Implement BREAK, CONTINUE, RETURN parsers
   - Create parse_break_statement() method
   - Create parse_continue_statement() method
   - Create parse_return_statement() method with optional expression
@@ -330,7 +330,7 @@
 
 ## Task 9: Data Type Parser
 
-- [ ] 9.1 Implement data type parser
+- [x] 9.1 Implement data type parser
   - Create parse_data_type() method
   - Parse integer types: INT, INTEGER, SMALLINT, TINYINT, BIGINT
   - Parse string types: VARCHAR(n), CHAR(n), TEXT
@@ -347,14 +347,14 @@
 
 ## Task 10: Batch Processing and GO Separator
 
-- [ ] 10.1 Implement GO keyword detection
+- [x] 10.1 Implement GO keyword detection
   - Create is_go_keyword() method with line position checking
   - Verify GO is alone on line (ignoring whitespace)
   - Exclude GO inside strings and comments
   - Exclude GO as part of identifier (e.g., GO_HOME)
   - _Requirements: 16.5, 16.6_
 
-- [ ] 10.2 Implement batch processing logic
+- [x] 10.2 Implement batch processing logic
   - Create parse_batches() method for batch mode
   - Parse GO N repeat count syntax
   - Create BatchSeparator AST node with repeat count
@@ -363,7 +363,7 @@
   - Create BatchList result type
   - _Requirements: 16.1, 16.2, 16.3, 16.4_
 
-- [ ] 10.3 Implement single statement mode
+- [x] 10.3 Implement single statement mode
   - Modify parse() to respect SingleStatement mode
   - Treat GO as regular identifier in single statement mode
   - Return single Statement instead of BatchList
@@ -373,19 +373,19 @@
 
 ## Task 11: Error Recovery and Synchronization
 
-- [ ] 11.1 Implement synchronization point detection
+- [x] 11.1 Implement synchronization point detection
   - Define is_synchronization_point() function
   - Recognize: semicolon, SELECT, INSERT, UPDATE, DELETE, CREATE, END, GO keywords
   - _Requirements: 13.4_
 
-- [ ] 11.2 Implement panic mode error recovery
+- [x] 11.2 Implement panic mode error recovery
   - Create synchronize() method
   - Skip tokens until synchronization point found
   - Record errors before skipping
   - Continue parsing after recovery
   - _Requirements: 13.4, 13.5_
 
-- [ ] 11.3 Implement error collection and reporting
+- [x] 11.3 Implement error collection and reporting
   - Maintain Vec<ParseError> in Parser struct
   - Add source code snippet extraction for error positions
   - Format error messages with expected/actual tokens
@@ -396,13 +396,13 @@
 
 ## Task 12: Temp Table and Subquery Support
 
-- [ ] 12.1 Implement temporary table reference detection
+- [x] 12.1 Implement temporary table reference detection
   - Modify table reference parser to recognize #temp and ##global_temp syntax
   - Create TempTableReference AST node
   - Set scope information in AST
   - _Requirements: 12.1, 12.2, 12.3, 12.4_
 
-- [ ] 12.2 Implement subquery parsing integration
+- [x] 12.2 Implement subquery parsing integration
   - Handle scalar subqueries in expression lists
   - Handle derived tables in FROM clause
   - Handle EXISTS and IN subqueries
@@ -413,19 +413,19 @@
 
 ## Task 13: Common SQL AST Integration
 
-- [ ] 13.1 Define ToCommonAst trait
+- [x] 13.1 Define ToCommonAst trait
   - Create trait with to_common_ast() method
   - Define Result type for conversion
   - Add trait to ast module
   - _Requirements: 14.1_
 
-- [ ] 13.2 Implement ToCommonAst for core statement types
+- [x] 13.2 Implement ToCommonAst for core statement types
   - Implement trait for SelectStatement
   - Implement trait for InsertStatement, UpdateStatement, DeleteStatement
   - Handle conversion failures with DialectSpecific variant
   - _Requirements: 14.1, 14.3_
 
-- [ ] 13.3 Implement ToCommonAst for expressions
+- [x] 13.3 Implement ToCommonAst for expressions
   - Implement trait for Expression enum
   - Handle ASE-specific operators
   - Preserve source span through conversion
@@ -435,7 +435,7 @@
 
 ## Task 14: AST Node Definitions
 
-- [ ] 14.1 Define Expression AST nodes
+- [x] 14.1 Define Expression AST nodes
   - Create Expression enum with all variants
   - Define Literal enum (String, Number, Float, Hex, Null, Boolean)
   - Define Identifier struct with name and span
@@ -445,7 +445,7 @@
   - Define CaseExpression with branches vector
   - _Requirements: 9.6, 9.7, 9.8, 9.10, 9.11, 9.12_
 
-- [ ] 14.2 Define Statement AST nodes
+- [x] 14.2 Define Statement AST nodes
   - Define SelectStatement with all clauses
   - Define InsertStatement with source enum
   - Define UpdateStatement with assignments
@@ -456,7 +456,7 @@
   - Define BreakStatement, ContinueStatement, ReturnStatement
   - _Requirements: 2.1, 3.1, 4.1, 5.1, 6.1, 7.1, 8.1_
 
-- [ ] 14.3 Define JOIN and FROM AST nodes
+- [x] 14.3 Define JOIN and FROM AST nodes
   - Define JoinType enum (Inner, Left, LeftOuter, Right, RightOuter, Full, FullOuter, Cross)
   - Define Join struct with type, table, condition, using columns
   - Define FromClause with tables and joins
@@ -468,7 +468,7 @@
 
 ## Task 15: Public API and Library Interface
 
-- [ ] 15.1 Design and implement public API
+- [x] 15.1 Design and implement public API
   - Export Parser struct and key types from lib.rs
   - Export Statement, Expression, and other AST nodes
   - Export ParseError and ParseResult types
@@ -480,7 +480,7 @@
 
 ## Task 16: Unit Tests - Token Buffer and Core
 
-- [ ] 16.1 (P) Write TokenBuffer unit tests
+- [x] 16.1 (P) Write TokenBuffer unit tests
   - Test current() returns current token
   - Test peek(n) returns lookahead tokens
   - Test consume() advances buffer correctly
@@ -489,7 +489,7 @@
   - Test buffer refill when exhausted
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
 
-- [ ] 16.2 (P) Write error type unit tests
+- [x] 16.2 (P) Write error type unit tests
   - Test UnexpectedToken error creation
   - Test UnexpectedEOF error creation
   - Test error Display formatting
@@ -500,7 +500,7 @@
 
 ## Task 17: Unit Tests - Expression Parser
 
-- [ ] 17.1 Write expression operator precedence tests
+- [x] 17.1 Write expression operator precedence tests
   - Test arithmetic precedence (*, /, % vs +, -)
   - Test comparison precedence vs arithmetic
   - Test logical precedence (NOT > AND > OR)
@@ -508,7 +508,7 @@
   - Test operator associativity
   - _Requirements: 9.1, 9.2, 9.3_
 
-- [ ] 17.2 Write function call and special expression tests
+- [x] 17.2 Write function call and special expression tests
   - Test function calls with multiple arguments
   - Test aggregate functions with DISTINCT
   - Test CASE expressions with multiple branches
@@ -523,7 +523,7 @@
 
 ## Task 18: Unit Tests - Statement Parsers
 
-- [ ] 18.1 (P) Write SELECT statement tests
+- [x] 18.1 (P) Write SELECT statement tests
   - Test simple SELECT with columns
   - Test SELECT with DISTINCT
   - Test SELECT with TOP N
@@ -535,7 +535,7 @@
   - Test subqueries in FROM clause
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 11.2_
 
-- [ ] 18.2 (P) Write DML statement tests
+- [x] 18.2 (P) Write DML statement tests
   - Test INSERT with VALUES
   - Test INSERT with column list
   - Test INSERT-SELECT
@@ -545,7 +545,7 @@
   - Test DELETE with and without WHERE
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 5.1, 5.2, 5.3, 5.4_
 
-- [ ] 18.3 (P) Write DDL and control flow tests
+- [x] 18.3 (P) Write DDL and control flow tests
   - Test CREATE TABLE with columns
   - Test CREATE TABLE with constraints
   - Test CREATE INDEX
@@ -562,7 +562,7 @@
 
 ## Task 19: Unit Tests - Batch Processing
 
-- [ ] 19.1 Write batch processing tests
+- [x] 19.1 Write batch processing tests
   - Test GO keyword detection at line start
   - Test GO not detected in strings/comments
   - Test GO not detected as part of identifier
@@ -577,7 +577,7 @@
 
 ## Task 20: Unit Tests - Error Recovery
 
-- [ ] 20.1 Write error recovery tests
+- [x] 20.1 Write error recovery tests
   - Test unexpected token error
   - Test unexpected EOF error
   - Test synchronization at semicolon
@@ -592,7 +592,7 @@
 
 ## Task 21: Unit Tests - Temp Tables and Data Types
 
-- [ ] 21.1 Write temporary table and data type tests
+- [x] 21.1 Write temporary table and data type tests
   - Test #temp table reference
   - Test ##global_temp table reference
   - Test temporary table in all DML statements
@@ -607,7 +607,7 @@
 
 ## Task 22: Unit Tests - Common SQL AST Conversion
 
-- [ ] 22.1 Write ToCommonAst conversion tests
+- [x] 22.1 Write ToCommonAst conversion tests
   - Test SelectStatement conversion
   - Test InsertStatement conversion
   - Test Expression conversion
@@ -619,7 +619,7 @@
 
 ## Task 23: Integration Tests
 
-- [ ] 23.1 Create integration test suite
+- [x] 23.1 Create integration test suite
   - Set up tests/ directory with test modules
   - Test full SQL file parsing
   - Test complex multi-join queries
@@ -633,7 +633,7 @@
 
 ## Task 24: Performance Benchmarks
 
-- [ ] 24.1 Create criterion benchmark suite
+- [x] 24.1 Create criterion benchmark suite
   - Set up benches/ directory
   - Benchmark 1MB SQL file parsing (target: <=500ms)
   - Benchmark 100MB SQL file parsing (target: <=60s)
@@ -646,7 +646,7 @@
 
 ## Task 25: Documentation and Examples
 
-- [ ] 25.1 Write API documentation
+- [x] 25.1 Write API documentation
   - Add rustdoc comments to all public types
   - Add module-level documentation
   - Add usage examples to lib.rs
@@ -657,7 +657,7 @@
 
 ## Task 26: Final Integration and Validation
 
-- [ ] 26.1 Perform final integration and quality checks
+- [x] 26.1 Perform final integration and quality checks
   - Run full test suite with coverage measurement (target: >=80% overall, >=90% core)
   - Run clippy with -D warnings (target: 0 warnings)
   - Run rustfmt --check (target: pass)

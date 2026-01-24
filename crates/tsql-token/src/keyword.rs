@@ -160,6 +160,7 @@ static KEYWORDS: Lazy<HashMap<&'static str, TokenKind>> = Lazy::new(|| {
     m.insert("waitfor", TokenKind::Waitfor);
     m.insert("goto", TokenKind::Goto);
     m.insert("label", TokenKind::Label);
+    m.insert("go", TokenKind::Go);
 
     m
 });

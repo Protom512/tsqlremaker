@@ -833,6 +833,15 @@ impl<'src> Lexer<'src> {
     fn next_token_impl(&mut self) -> Result<Token<'src>, LexError> {
         self.skip_whitespace();
 
+        // 改行をスキップ（改行はトークンとして意味を持たない）
+        while let Some(ch) = self.cursor.current() {
+            if ch == '\n' || ch == '\r' || ch.is_whitespace() {
+                self.cursor.bump();
+            } else {
+                break;
+            }
+        }
+
         if self.cursor.is_eof() {
             return Ok(Token::eof());
         }

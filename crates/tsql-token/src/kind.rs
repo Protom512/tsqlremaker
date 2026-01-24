@@ -199,6 +199,7 @@ pub enum TokenKind {
     Waitfor,
     Goto,
     Label,
+    Go,
 
     // ==================== Literals ====================
     Ident,
@@ -368,6 +369,7 @@ impl TokenKind {
                 | Self::Tran
                 | Self::Save
                 | Self::Savepoint
+                | Self::Go
         )
     }
 }
