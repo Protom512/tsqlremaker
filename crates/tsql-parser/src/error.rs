@@ -153,6 +153,9 @@ impl fmt::Display for ParseError {
 impl std::error::Error for ParseError {}
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
+#[allow(clippy::panic)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 

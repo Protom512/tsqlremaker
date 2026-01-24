@@ -17,6 +17,15 @@ once_cell = { workspace = true }
 rstest = { workspace = true }
 criterion = { workspace = true }
 
-# [[bench]]
-# name = "parser_bench"
-# harness = false
+[lints]
+# workspace.lintsを継承しつつ、テストコードでは一部警告を許可
+workspace = true
+
+[[bench]]
+name = "parser_bench"
+harness = false
+
+# テストコードではunwrap/panicを許可
+#[lints.clippy]
+#unwrap_used = "warn"
+#panic = "warn"

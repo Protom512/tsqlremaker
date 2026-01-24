@@ -36,6 +36,7 @@
 
 pub mod ast;
 pub mod buffer;
+pub mod common;
 pub mod error;
 pub mod expression;
 pub mod parser;
@@ -48,6 +49,10 @@ pub use ast::{
     JoinType, Literal, OrderByItem, ParameterDefinition, ProcedureDefinition, ReturnStatement,
     SelectItem, SelectStatement, SetStatement, Statement, TableConstraint, TableDefinition,
     UnaryOperator, UpdateStatement, VariableDeclaration, WhileStatement,
+};
+pub use common::{
+    CommonDeleteStatement, CommonExpression, CommonInsertStatement, CommonSelectItem,
+    CommonSelectStatement, CommonStatement, CommonUpdateStatement, ToCommonAst,
 };
 pub use error::{ParseError, ParseResult};
 pub use expression::ExpressionParser;
@@ -106,6 +111,8 @@ pub fn parse_one(input: &str) -> ParseResult<Statement> {
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
+#[allow(clippy::panic)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 

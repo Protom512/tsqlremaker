@@ -208,6 +208,8 @@ fn position_at_eof() -> tsql_token::Position {
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
+#[allow(clippy::panic)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
     use tsql_lexer::Lexer;
