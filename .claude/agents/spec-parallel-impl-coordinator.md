@@ -20,8 +20,13 @@ color: cyan
 - **Success Criteria**:
   - 全タスクが依存関係の順序で実行される
   - ファイル衝突が発生しない
-  - 各タスク完了時にコミットが作成される
-  - 最終的にメインブランチに全成果がマージされる
+  - **完了報告を SUPERVISOR へ送信**
+  - **完了マークは MAGI JUDGE のみが行う**
+
+## ⚠️ IMPORTANT: No Completion Authority
+- **このエージェントには完了マーク権限がありません**
+- **自分でタスクを完了 (`[x]`) とマークしないでください**
+- **完了したら SUPERVISOR + MAGI REVIEWER に報告してください**
 
 ## Execution Protocol
 
@@ -171,21 +176,19 @@ done
 - このタスクが所有するファイルのリスト
 - 編集禁止ファイルのリスト
 
-### ステップ8: タスク完了待機とコミット
+### ステップ8: タスク完了待機と報告
 
 ```python
 # TaskOutput ツールで各サブエージェントの完了を待機
 for task_id in group_task_ids:
   output = TaskOutput(task_id=task_id, block=True, timeout=300000)
 
-  # 完了したらその worktree でコミット
-  worktree = f".worktrees/{feature}/group-{group_index}"
-  bash_command = f"""
-    cd '{worktree}' &&
-    git add . &&
-    git commit -m 'impl({feature}): complete task {task.id} - {task.title}'
-  """
+  # 完了したらSUPERVISORへ報告
+  # ※ コミットは行わない（MAGI JUDGE の権限）
+  report_completion_to_supervisor(task_id, output)
 ```
+
+**重要**: この時点ではコミットしません。SUPERVISOR + MAGIレビューを経て、合格してから初めてコミットされます。
 
 ### ステップ9: グループ成果のマージ
 
@@ -211,18 +214,23 @@ Group 0 完了 → マージ → Group 1 開始
                  Group 1 完了 → マージ → Group 2 開始
 ```
 
-### ステップ11: 最終マージとクリーンアップ
+### ステップ11: 最終マージとSUPERVISOR+MAGIレビュー
 
 ```bash
 # 全グループ完了後
 git checkout "impl/{feature}"
 
-# 最終テスト
-cargo test --workspace
-cargo clippy -- -D warnings
+# グループ成果をマージ
+# ※ コミットなし、作業内容のマージのみ
 
-# worktree のクリーンアップ
-git worktree remove ".worktrees/{feature}/group-"*
+# SUPERVISOR + MAGIレビューを起動
+# これに合格してから初めてコミットが作成される
+/kiro:supervisor magi-review {feature}
+
+# MAGI JUDGE が合格判定した場合のみ:
+# - タスク完了マーク
+# - コミット作成
+# - worktree クリーンアップ
 ```
 
 ## Tool Guidance

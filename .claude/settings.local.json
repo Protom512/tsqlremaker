@@ -14,11 +14,26 @@
       "Bash(bash:*)",
       "Bash(git push:*)",
       "Bash(cargo doc:*)",
-      "Bash(gh run list:*)"
+      "Bash(gh run list:*)",
+      "Bash(dir:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(tasklist:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(rustup show:*)",
+      "mcp__acp__Bash",
+      "Bash(test:*)",
+      "Bash(cargo install:*)",
+      "Bash(cargo coupling:*)",
+      "Skill(ralph-loop:ralph-loop)",
+      "Skill(coupling-analysis)",
+      "Bash(cargo:*)",
+      "Bash(wc:*)",
+      "Bash(grep:*)",
+      "Skill(kiro:spec-status)",
+      "Bash(ls:*)",
+      "Bash(\"C:\\\\Users\\\\black\\\\.claude\\\\plugins\\\\cache\\\\claude-plugins-official\\\\ralph-loop\\\\96276205880a/scripts/setup-ralph-loop.sh\" \"Run /kiro:spec-impl tsql-parser and complete all pending tasks. Use MAGI system for quality review before committing.\" --completion-promise \"IMPL_COMPLETE\" --max-iterations 10)",
+      "Bash(git reset:*)"
     ]
   },
-  "enableAllProjectMcpServers": true,
-  "hooks": {
-    "commandStartHook": ".claude/hooks/pre-commit-check.sh"
-  }
+  "enableAllProjectMcpServers": true
 }

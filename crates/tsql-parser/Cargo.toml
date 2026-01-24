@@ -1,0 +1,31 @@
+[package]
+name = "tsql-parser"
+version = "0.1.0"
+edition = "2021"
+authors = ["TSQL Remaker Contributors"]
+description = "T-SQL Parser for SAP ASE dialect"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Protom512/tsqlremaker"
+
+[dependencies]
+tsql-lexer = { path = "../tsql-lexer" }
+tsql-token = { path = "../tsql-token" }
+thiserror = { workspace = true }
+once_cell = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+criterion = { workspace = true }
+
+[lints]
+# workspace.lintsを継承しつつ、テストコードでは一部警告を許可
+workspace = true
+
+[[bench]]
+name = "parser_bench"
+harness = false
+
+# テストコードではunwrap/panicを許可
+#[lints.clippy]
+#unwrap_used = "warn"
+#panic = "warn"
