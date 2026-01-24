@@ -31,9 +31,22 @@
   - Unicode strings (`N'string'`, `U&'string'`)
   - All ASE keywords and operators
 
+- **Complete T-SQL Parser** - Recursive descent parser with:
+  - Pratt expression parsing for proper operator precedence
+  - Modular AST architecture (base, batch, select, ddl, control_flow, data_modification)
+  - Support for all DML (SELECT, INSERT, UPDATE, DELETE) and DDL (CREATE TABLE/INDEX/VIEW/PROCEDURE)
+  - Control flow statements (IF...ELSE, WHILE, BEGIN...END, BREAK, CONTINUE, RETURN)
+  - Special expressions (CASE, BETWEEN, IN, LIKE, IS NULL, EXISTS)
+  - Error recovery with synchronization points
+
+- **Common SQL AST** - Dialect-agnostic intermediate representation:
+  - Convert SAP ASE syntax to common SQL constructs
+  - Enables target dialect emitters (MySQL, PostgreSQL, etc.)
+  - Preserves semantic meaning across dialect conversions
+
 - **High Performance** - Zero-copy tokenization, processes 1MB+ SQL files in <100ms
 
-- **Type-Safe** - Written in Rust with comprehensive error handling
+- **Type-Safe** - Written in Rust with comprehensive error handling (305+ tests)
 
 - **Architecture** - Clean separation of concerns with modular crate design
 
@@ -41,13 +54,13 @@
 
 ## Project Status
 
-| Component | Status | Coverage |
-|-----------|--------|----------|
-| **Lexer** | ✅ Implemented | 90%+ |
-| **Parser** | ✅ Implemented | 90%+ |
-| **Common SQL AST** | 🚧 In Progress | - |
-| **MySQL Emitter** | 📝 Planned | - |
-| **PostgreSQL Emitter** | 📝 Planned | - |
+| Component | Status | Tests | Coverage |
+|-----------|--------|-------|----------|
+| **Lexer** | ✅ Implemented | 76 | 90%+ |
+| **Parser** | ✅ Implemented | 305+ | 90%+ |
+| **Common SQL AST** | ✅ Implemented | 22 | - |
+| **MySQL Emitter** | 📝 Planned | - | - |
+| **PostgreSQL Emitter** | 📝 Planned | - | - |
 
 ---
 
@@ -212,6 +225,23 @@ for stmt in statements {
 }
 ```
 
+#### Common SQL AST Conversion
+
+```rust
+use tsql_parser::{parse, ast::ToCommon};
+
+let sql = "SELECT TOP 10 * FROM users WHERE id = 1";
+let statements = parse(sql).unwrap();
+
+// Convert to dialect-agnostic Common SQL AST
+for stmt in statements {
+    if let Some(common_ast) = stmt.to_common() {
+        println!("Common AST: {:?}", common_ast);
+        // Can be used with MySQL/PostgreSQL emitters
+    }
+}
+```
+
 ---
 
 ## Development
@@ -239,6 +269,9 @@ cargo fmt
 
 # Lint
 cargo clippy --workspace -- -D warnings
+
+# Run benchmarks
+cargo bench -p tsql-parser
 ```
 
 ### Project Structure
@@ -248,13 +281,20 @@ tsqlremaker/
 ├── crates/
 │   ├── tsql-token/        # Token definitions (TokenKind, Span, Position)
 │   ├── tsql-lexer/        # SAP ASE T-SQL lexer
-│   ├── tsql-parser/       # T-SQL parser with AST
+│   ├── tsql-parser/       # T-SQL parser with modular AST
+│   │   ├── src/
+│   │   │   ├── ast/       # AST modules (base, batch, select, ddl, etc.)
+│   │   │   ├── expression/ # Expression parsing (binary, function, prefix, special)
+│   │   │   ├── common/    # Common SQL AST conversion
+│   │   │   └── parser.rs  # Main recursive descent parser
+│   │   └── benches/       # Criterion benchmarks
 │   ├── common-sql/        # Common SQL AST (planned)
 │   └── mysql-emitter/     # MySQL code generator (planned)
 ├── .github/
 │   ├── workflows/         # CI/CD configurations
 │   └── ISSUE_TEMPLATE/    # Issue templates
 ├── .claude/
+│   ├── agents/            # MAGI multi-agent quality judgment system
 │   └── rules/             # Development guidelines
 ├── .kiro/
 │   ├── specs/             # Feature specifications
@@ -293,6 +333,18 @@ tsqlremaker/
 | Batch separator | GO | ✅ |
 | Expressions | All operators with precedence | ✅ |
 | CASE expressions | WHEN...THEN...ELSE...END | ✅ |
+| BETWEEN expressions | `x BETWEEN a AND b` | ✅ |
+| IN expressions | `x IN (1, 2, 3)` | ✅ |
+| LIKE expressions | `pattern LIKE '%foo%'` | ✅ |
+| IS NULL expressions | `x IS NULL`, `IS NOT NULL` | ✅ |
+| EXISTS expressions | `EXISTS (subquery)` | ✅ |
+| Aggregate functions | COUNT, SUM, AVG, MIN, MAX | ✅ |
+| JOIN types | INNER, LEFT, RIGHT, CROSS, FULL | ✅ |
+| Subqueries | Nested in FROM, WHERE, EXISTS | ✅ |
+| Qualified columns | `table.column`, `schema.table.column` | ✅ |
+| CREATE INDEX | With column specifications | ✅ |
+| CREATE VIEW | With SELECT statements | ✅ |
+| CREATE PROCEDURE | With parameters | ✅ |
 
 ### Token Examples
 
