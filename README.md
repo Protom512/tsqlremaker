@@ -182,7 +182,7 @@ let lexer = Lexer::new(sql).with_comments(true);
 #### Parser Usage
 
 ```rust
-use tsql_parser::{parse, Parser, ParserMode};
+use tsql_parser::{parse, Parser, ParserMode, Statement};
 
 // Parse SQL using the helper function
 let sql = "SELECT * FROM users WHERE id = 1";
@@ -191,10 +191,11 @@ let statements = parse(sql).unwrap();
 // Or use the Parser directly for more control
 let sql = "SELECT TOP 10 * FROM users WHERE @status = 'active'";
 let mut parser = Parser::new(sql);
-
-// Parse in single statement mode (GO is treated as identifier)
-let mut parser = Parser::new(sql).with_mode(ParserMode::SingleStatement);
 let stmt = parser.parse_statement().unwrap();
+
+// For single statement mode (GO is treated as identifier):
+// let mut parser = Parser::new(sql).with_mode(ParserMode::SingleStatement);
+// let stmt = parser.parse_statement().unwrap();
 
 // Access parsed AST
 match stmt {

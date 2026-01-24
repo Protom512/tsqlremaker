@@ -56,7 +56,7 @@ pub enum ParseError {
 impl ParseError {
     /// 予期しないトークンエラーを作成
     #[must_use]
-    pub const fn unexpected_token(expected: Vec<TokenKind>, found: TokenKind, span: Span) -> Self {
+    pub fn unexpected_token(expected: Vec<TokenKind>, found: TokenKind, span: Span) -> Self {
         Self::UnexpectedToken {
             expected,
             found,
@@ -66,19 +66,19 @@ impl ParseError {
 
     /// 予期しないEOFエラーを作成
     #[must_use]
-    pub const fn unexpected_eof(expected: String, position: Position) -> Self {
+    pub fn unexpected_eof(expected: String, position: Position) -> Self {
         Self::UnexpectedEof { expected, position }
     }
 
     /// 無効な構文エラーを作成
     #[must_use]
-    pub const fn invalid_syntax(message: String, span: Span) -> Self {
+    pub fn invalid_syntax(message: String, span: Span) -> Self {
         Self::InvalidSyntax { message, span }
     }
 
     /// 再帰制限超過エラーを作成
     #[must_use]
-    pub const fn recursion_limit(limit: usize, position: Position) -> Self {
+    pub fn recursion_limit(limit: usize, position: Position) -> Self {
         Self::RecursionLimitExceeded { limit, position }
     }
 

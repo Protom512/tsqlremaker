@@ -349,9 +349,13 @@ fn test_large_input_performance() {
 }
 
 /// NULL と論理値のリテラル
+///
+/// SAP ASEではTRUE/FALSEはキーワードではなく識別子として扱われるため、
+/// ブール値にはbit型の0/1を使用します
 #[test]
 fn test_null_and_boolean_literals() {
-    let sql = "SELECT NULL, TRUE, FALSE FROM t";
+    // ASE互換のブール値表現（bit型のリテラル）
+    let sql = "SELECT NULL, 1, 0 FROM t";
 
     let stmt = parse_one(sql).unwrap();
     match stmt {

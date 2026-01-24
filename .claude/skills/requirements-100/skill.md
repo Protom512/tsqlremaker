@@ -4,7 +4,7 @@
 
 ### 完全な要件定義書の構造
 
-```
+```text
 1. FRONT MATTER
    ├── Document Information (version, status, classification)
    ├── Change Log (version history with approvers)
@@ -100,7 +100,7 @@
 
 ### EARS形式完全遵守
 
-```
+```text
 Pattern 1: Event-Driven
   When [specific event], the [system] shall [specific response]
 
@@ -119,7 +119,7 @@ Pattern 5: Ubiquitous
 
 ### 受入基準の完全な形式
 
-```
+```text
 AC-[ID]: [Short Title]
   Given: [precondition]
   When: [trigger/action]

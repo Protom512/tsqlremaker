@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Set up Dependabot for dependency updates
 
 ### Testing
-- 44 unit tests passing (parser: 44, lexer: 21)
+- 65 unit tests passing (parser: 44, lexer: 21)
 - Table-driven tests for keyword recognition
 - Error case tests for unterminated literals
 - Expression parsing tests with operator precedence

@@ -575,6 +575,13 @@ impl<'src> Parser<'src> {
             self.buffer.consume()?;
             let mut rows = Vec::new();
             loop {
+                if !self.buffer.check(TokenKind::LParen) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::LParen],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
                 self.buffer.consume()?; // LEFT PAREN
                 let mut values = Vec::new();
                 while !self.buffer.check(TokenKind::RParen) {
@@ -783,6 +790,13 @@ impl<'src> Parser<'src> {
         // 一時テーブルは `#` または `##` で始まる識別子
         let temporary = name.name.starts_with('#');
 
+        if !self.buffer.check(TokenKind::LParen) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::LParen],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
         self.buffer.consume()?; // LEFT PAREN
 
         let mut columns = Vec::new();
@@ -1110,7 +1124,12 @@ impl<'src> Parser<'src> {
             TokenKind::Uniqueidentifier => DataType::UniqueIdentifier,
             TokenKind::Money => DataType::Money,
             TokenKind::Smallmoney => DataType::SmallMoney,
-            _ => DataType::Int,
+            _ => {
+                return Err(ParseError::invalid_syntax(
+                    format!("Unknown data type: {:?}", self.buffer.current()?.kind),
+                    self.buffer.current()?.span,
+                ))
+            }
         })
     }
 
@@ -1128,6 +1147,13 @@ impl<'src> Parser<'src> {
         self.buffer.consume()?;
 
         let table = self.parse_identifier()?;
+        if !self.buffer.check(TokenKind::LParen) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::LParen],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
         self.buffer.consume()?; // LEFT PAREN
 
         let mut columns = Vec::new();
