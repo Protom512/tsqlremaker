@@ -322,7 +322,11 @@ fn test_error_recovery() {
 }
 
 /// 大きな入力ファイル（パフォーマンス）
+///
+/// 注意: このテストは wall-clock タイミングを使用しているため、CI ではスキップされます。
+/// 手動で実行するには: `cargo test --package tsql-parser --test integration_test test_large_input_performance -- --ignored`
 #[test]
+#[ignore]
 fn test_large_input_performance() {
     // UNION ALL の代わりに複数の文を使用
     let mut sql = String::new();
@@ -335,7 +339,8 @@ fn test_large_input_performance() {
     let duration = start.elapsed();
 
     assert!(result.is_ok(), "大きな入力もパースできること");
-    // パフォーマンス要件: 100文を5秒以内にパース
+    // パフォーマンス要件: 100文を10秒以内にパース（CI負荷考慮）
+    // 注: 本当なパフォーマンス検証は benches/parser_bench.rs を使用してください
     assert!(
         duration.as_secs() < 10,
         "パフォーマンス要件を満たすこと: {:?}",
