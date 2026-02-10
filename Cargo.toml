@@ -8,7 +8,7 @@ once_cell = "1.19"
 thiserror = "2.0"
 rstest = "0.26"
 proptest = "1.4"
-criterion = "0.5"
+criterion = "0.8"
 
 [workspace.metadata.cargo-semver-check]
 # セマンティックバージョニングのチェック
