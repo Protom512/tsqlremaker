@@ -117,7 +117,7 @@ jobs:
         run: cargo llvm-cov --workspace --html --output-dir coverage
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage/
@@ -151,7 +151,7 @@ jobs:
         run: cargo doc --workspace --no-deps --all-features
 
       - name: Upload documentation
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: docs
           path: target/doc/
