@@ -73,6 +73,7 @@ pub enum TokenKind {
     Exists,
     Between,
     Like,
+    Escape,
     Is,
     Null,
     Order,

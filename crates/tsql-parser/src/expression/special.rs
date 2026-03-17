@@ -279,8 +279,18 @@ impl super::ExpressionParser<'_, '_> {
         let pattern_span = AstNode::span(&pattern);
 
         // ESCAPE句の解析
-        // Note: ESCAPEトークンがまだ定義されていないため、後で実装
-        let escape = None;
+        let escape = if self.buffer.check(TokenKind::Escape) {
+            self.buffer.consume()?; // ESCAPE
+            Some(Box::new(self.parse()?))
+        } else {
+            None
+        };
+
+        let end_span = if let Some(ref esc) = escape {
+            esc.as_ref().span()
+        } else {
+            pattern_span
+        };
 
         Ok(Expression::Like {
             expr: Box::new(left),
@@ -289,7 +299,7 @@ impl super::ExpressionParser<'_, '_> {
             negated,
             span: Span {
                 start,
-                end: pattern_span.end,
+                end: end_span.end,
             },
         })
     }

@@ -392,6 +392,84 @@ fn test_like_pattern() {
     match stmt {
         tsql_parser::Statement::Select(select) => {
             assert!(select.where_clause.is_some());
+            if let Some(where_expr) = &select.where_clause {
+                // ESCAPE句が正しくパースされていることを確認
+                match where_expr {
+                    tsql_parser::Expression::Like { escape, .. } => {
+                        assert!(escape.is_some(), "ESCAPE句があること");
+                    }
+                    _ => panic!("LIKE式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// LIKE ESCAPE 句のパース（バックスラッシュ）
+#[test]
+fn test_like_escape_backslash() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT * FROM t WHERE col LIKE '%\\_%' ESCAPE '\\'";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::Like { escape, .. } => {
+                        assert!(escape.is_some(), "ESCAPE句があること");
+                    }
+                    _ => panic!("LIKE式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// LIKE ESCAPE 句のパース（他のエスケープ文字）
+#[test]
+fn test_like_escape_other_char() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT * FROM t WHERE col LIKE '%#_%' ESCAPE '#'";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::Like { escape, .. } => {
+                        assert!(escape.is_some(), "ESCAPE句があること");
+                    }
+                    _ => panic!("LIKE式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// LIKE ESCAPE 句なし（通常のLIKE）
+#[test]
+fn test_like_without_escape() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT * FROM t WHERE col LIKE '%test%'";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::Like { escape, .. } => {
+                        assert!(escape.is_none(), "ESCAPE句がないこと");
+                    }
+                    _ => panic!("LIKE式であること"),
+                }
+            }
         }
         _ => panic!("SELECT文であること"),
     }
