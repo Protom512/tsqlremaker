@@ -369,8 +369,41 @@ impl<'src> Parser<'src> {
             None
         };
 
-        // USINGはT-SQLの標準構文ではないため未実装
-        let using_columns = Vec::new();
+        // USING句のパース
+        let using_columns = if self.buffer.check(TokenKind::Using) {
+            self.buffer.consume()?; // USING
+            // USING (col1, col2, ...)
+            if !self.buffer.check(TokenKind::LParen) {
+                return Err(ParseError::unexpected_token(
+                    vec![TokenKind::LParen],
+                    self.buffer.current()?.kind,
+                    self.buffer.current()?.span,
+                ));
+            }
+            self.buffer.consume()?; // LParen
+
+            let mut columns = Vec::new();
+            loop {
+                columns.push(self.parse_identifier()?);
+
+                if !self.buffer.consume_if(TokenKind::Comma)? {
+                    break;
+                }
+            }
+
+            if !self.buffer.check(TokenKind::RParen) {
+                return Err(ParseError::unexpected_token(
+                    vec![TokenKind::RParen],
+                    self.buffer.current()?.kind,
+                    self.buffer.current()?.span,
+                ));
+            }
+            self.buffer.consume()?; // RParen
+
+            columns
+        } else {
+            Vec::new()
+        };
 
         let end_span = self.buffer.current()?.span;
         Ok(Join {

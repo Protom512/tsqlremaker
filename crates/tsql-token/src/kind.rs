@@ -66,6 +66,7 @@ pub enum TokenKind {
     Full,
     Cross,
     On,
+    Using,
     And,
     Or,
     Not,

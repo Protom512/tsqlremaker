@@ -767,6 +767,94 @@ fn test_cross_join() {
     }
 }
 
+/// USING句のテスト - 単一カラム
+#[test]
+fn test_join_using_single_column() {
+    let sql = "SELECT * FROM users INNER JOIN orders USING (user_id)";
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            let from = select.from.as_ref().unwrap();
+            assert!(!from.joins.is_empty());
+            assert_eq!(from.joins[0].using_columns.len(), 1);
+            assert_eq!(from.joins[0].using_columns[0].name, "user_id");
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// USING句のテスト - 複数カラム
+#[test]
+fn test_join_using_multiple_columns() {
+    let sql = "SELECT * FROM orders INNER JOIN items USING (order_id, product_id)";
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            let from = select.from.as_ref().unwrap();
+            assert!(!from.joins.is_empty());
+            assert_eq!(from.joins[0].using_columns.len(), 2);
+            assert_eq!(from.joins[0].using_columns[0].name, "order_id");
+            assert_eq!(from.joins[0].using_columns[1].name, "product_id");
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// USING句のテスト - LEFT JOIN
+#[test]
+fn test_left_join_using() {
+    let sql = "SELECT * FROM users LEFT JOIN orders USING (id)";
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            let from = select.from.as_ref().unwrap();
+            assert!(!from.joins.is_empty());
+            assert_eq!(from.joins[0].using_columns.len(), 1);
+            assert_eq!(from.joins[0].using_columns[0].name, "id");
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// USING句のテスト - USINGなし（ON条件のみ）
+#[test]
+fn test_join_on_without_using() {
+    let sql = "SELECT * FROM users INNER JOIN orders ON users.id = orders.user_id";
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            let from = select.from.as_ref().unwrap();
+            assert!(!from.joins.is_empty());
+            assert_eq!(from.joins[0].using_columns.len(), 0);
+            assert!(from.joins[0].on_condition.is_some());
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// USING句のテスト - 3つのカラム
+#[test]
+fn test_join_using_three_columns() {
+    let sql = "SELECT * FROM table1 INNER JOIN table2 USING (col1, col2, col3)";
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            let from = select.from.as_ref().unwrap();
+            assert!(!from.joins.is_empty());
+            assert_eq!(from.joins[0].using_columns.len(), 3);
+            assert_eq!(from.joins[0].using_columns[0].name, "col1");
+            assert_eq!(from.joins[0].using_columns[1].name, "col2");
+            assert_eq!(from.joins[0].using_columns[2].name, "col3");
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
 /// 複数のORDER BY条件
 #[test]
 fn test_multiple_order_by() {
