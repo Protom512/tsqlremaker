@@ -62,9 +62,31 @@ impl super::ExpressionParser<'_, '_> {
     /// EXISTS式を解析
     pub(super) fn parse_exists_expression(&mut self) -> ParseResult<Expression> {
         self.buffer.consume()?; // EXISTS
-                                // TODO: サブクエリの解析を実装
-                                // Call parse_prefix to handle all the prefix options
-        self.parse_prefix()
+
+        // 括弧をチェック
+        if !self.buffer.check(TokenKind::LParen) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::LParen],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // LParen
+
+        // サブクエリを解析
+        let select_stmt = self.parse_subquery_select()?;
+
+        // 閉じ括弧
+        if !self.buffer.check(TokenKind::RParen) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::RParen],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // RParen
+
+        Ok(Expression::Exists(Box::new(select_stmt)))
     }
 
     /// IS式を解析
@@ -159,8 +181,9 @@ impl super::ExpressionParser<'_, '_> {
             self.buffer.consume()?; // LEFT PAREN
 
             let list = if self.buffer.check(TokenKind::Select) {
-                // サブクエリ（未実装）
-                InList::Values(Vec::new())
+                // サブクエリ
+                let select_stmt = self.parse_subquery_select()?;
+                InList::Subquery(Box::new(select_stmt))
             } else {
                 // 値リスト
                 let mut values = Vec::new();
@@ -255,10 +278,14 @@ impl super::ExpressionParser<'_, '_> {
         let pattern = self.parse()?;
         let pattern_span = AstNode::span(&pattern);
 
+        // ESCAPE句の解析
+        // Note: ESCAPEトークンがまだ定義されていないため、後で実装
+        let escape = None;
+
         Ok(Expression::Like {
             expr: Box::new(left),
             pattern: Box::new(pattern),
-            escape: None, // ESCAPE 句は未実装
+            escape,
             negated,
             span: Span {
                 start,

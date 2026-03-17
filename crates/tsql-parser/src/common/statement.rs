@@ -64,13 +64,25 @@ pub enum CommonSelectItem {
 
 /// テーブル参照
 #[derive(Debug, Clone, PartialEq)]
-pub struct CommonTableReference {
-    /// テーブル名
-    pub name: String,
-    /// 別名
-    pub alias: Option<String>,
-    /// 位置情報
-    pub span: Span,
+pub enum CommonTableReference {
+    /// 通常のテーブル参照
+    Table {
+        /// テーブル名
+        name: String,
+        /// 別名
+        alias: Option<String>,
+        /// 位置情報
+        span: Span,
+    },
+    /// 導出テーブル（サブクエリ）
+    Derived {
+        /// サブクエリ
+        subquery: Box<CommonSelectStatement>,
+        /// 別名
+        alias: Option<String>,
+        /// 位置情報
+        span: Span,
+    },
 }
 
 /// ORDER BY アイテム

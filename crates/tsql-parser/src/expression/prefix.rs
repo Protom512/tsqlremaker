@@ -53,10 +53,27 @@ impl super::ExpressionParser<'_, '_> {
                     span,
                 })
             }
-            // 括弧式
+            // 括弧式またはスカラサブクエリ
             TokenKind::LParen => {
-                let _start = current.span.start;
                 self.buffer.consume()?;
+
+                // 先読きしてSELECTの場合はサブクエリとして処理
+                if self.buffer.check(TokenKind::Select) {
+                    let stmt = self.parse_subquery_select()?;
+
+                    if !self.buffer.check(TokenKind::RParen) {
+                        return Err(ParseError::unexpected_token(
+                            vec![TokenKind::RParen],
+                            self.buffer.current()?.kind,
+                            self.buffer.current()?.span,
+                        ));
+                    }
+                    self.buffer.consume()?;
+
+                    return Ok(Expression::Subquery(Box::new(stmt)));
+                }
+
+                // 通常の括弧式
                 let expr = self.parse()?;
 
                 if !self.buffer.check(TokenKind::RParen) {

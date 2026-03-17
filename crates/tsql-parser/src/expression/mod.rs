@@ -12,10 +12,10 @@ mod tests;
 
 pub use binary::BindingPower;
 
-use crate::ast::{AstNode, BinaryOperator, Expression};
+use crate::ast::{AstNode, BinaryOperator, Expression, SelectItem, SelectStatement};
 use crate::buffer::TokenBuffer;
 use crate::error::{ParseError, ParseResult};
-use tsql_token::TokenKind;
+use tsql_token::{Span, TokenKind};
 
 /// 式パーサー
 pub struct ExpressionParser<'a, 'src> {
@@ -162,5 +162,223 @@ impl<'a, 'src> ExpressionParser<'a, 'src> {
             ));
         }
         Ok(())
+    }
+
+    /// サブクエリとしてSELECT文を解析
+    ///
+    /// スカラサブクエリ、EXISTS、INサブクエリなどで使用されます。
+    fn parse_subquery_select(&mut self) -> ParseResult<SelectStatement> {
+        let start = self.buffer.current()?.span.start;
+        self.buffer.consume()?; // SELECT
+
+        let mut distinct = false;
+
+        // DISTINCT
+        if self.buffer.consume_if(TokenKind::Distinct)? {
+            distinct = true;
+        }
+
+        // カラムリスト
+        let mut columns = Vec::new();
+        loop {
+            columns.push(self.parse_subquery_select_item()?);
+
+            if !self.buffer.consume_if(TokenKind::Comma)? {
+                break;
+            }
+        }
+
+        // FROM
+        let from = if self.buffer.check(TokenKind::From) {
+            Some(self.parse_subquery_from_clause()?)
+        } else {
+            None
+        };
+
+        // WHERE
+        let where_clause = if self.buffer.check(TokenKind::Where) {
+            self.buffer.consume()?;
+            Some(self.parse()?)
+        } else {
+            None
+        };
+
+        // GROUP BY
+        let group_by = if self.buffer.check(TokenKind::Group) {
+            self.buffer.consume()?;
+            if !self.buffer.check(TokenKind::By) {
+                return Err(ParseError::unexpected_token(
+                    vec![TokenKind::By],
+                    self.buffer.current()?.kind,
+                    self.buffer.current()?.span,
+                ));
+            }
+            self.buffer.consume()?;
+
+            let mut items = Vec::new();
+            loop {
+                items.push(self.parse()?);
+                if !self.buffer.consume_if(TokenKind::Comma)? {
+                    break;
+                }
+            }
+            items
+        } else {
+            Vec::new()
+        };
+
+        // HAVING
+        let having = if self.buffer.check(TokenKind::Having) {
+            self.buffer.consume()?;
+            Some(self.parse()?)
+        } else {
+            None
+        };
+
+        // ORDER BY (サブクエリでは通常使用されないが、実装)
+        let order_by = if self.buffer.check(TokenKind::Order) {
+            self.buffer.consume()?;
+            if !self.buffer.check(TokenKind::By) {
+                return Err(ParseError::unexpected_token(
+                    vec![TokenKind::By],
+                    self.buffer.current()?.kind,
+                    self.buffer.current()?.span,
+                ));
+            }
+            self.buffer.consume()?;
+
+            let mut items = Vec::new();
+            loop {
+                let expr = self.parse()?;
+                let asc = if self.buffer.check(TokenKind::Asc) {
+                    self.buffer.consume()?;
+                    true
+                } else if self.buffer.check(TokenKind::Desc) {
+                    self.buffer.consume()?;
+                    false
+                } else {
+                    true
+                };
+                items.push(crate::ast::OrderByItem { expr, asc });
+
+                if !self.buffer.consume_if(TokenKind::Comma)? {
+                    break;
+                }
+            }
+            items
+        } else {
+            Vec::new()
+        };
+
+        let end_span = self.buffer.current()?.span;
+        Ok(SelectStatement {
+            span: Span {
+                start,
+                end: end_span.end,
+            },
+            distinct,
+            top: None, // サブクエリではTOPは非対応
+            columns,
+            from,
+            where_clause,
+            group_by,
+            having,
+            order_by,
+            limit: None,
+        })
+    }
+
+    /// サブクエリ内のSELECTアイテムを解析
+    fn parse_subquery_select_item(&mut self) -> ParseResult<SelectItem> {
+        // ワイルドカード
+        if self.buffer.check(TokenKind::Star) {
+            self.buffer.consume()?;
+            return Ok(SelectItem::Wildcard);
+        }
+
+        let expr = self.parse()?;
+
+        // オプションの別名
+        let alias = if self.buffer.check(TokenKind::As) {
+            self.buffer.consume()?;
+            let text = self.buffer.current()?.text;
+            let span = self.buffer.current()?.span;
+            self.buffer.consume()?;
+            Some(crate::ast::Identifier {
+                name: text.to_string(),
+                span,
+            })
+        } else if self.buffer.check(TokenKind::Ident) {
+            let text = self.buffer.current()?.text;
+            let span = self.buffer.current()?.span;
+            self.buffer.consume()?;
+            Some(crate::ast::Identifier {
+                name: text.to_string(),
+                span,
+            })
+        } else {
+            None
+        };
+
+        Ok(SelectItem::Expression(expr, alias))
+    }
+
+    /// サブクエリ内のFROM句を解析（簡易版）
+    fn parse_subquery_from_clause(&mut self) -> ParseResult<crate::ast::FromClause> {
+        self.buffer.consume()?; // FROM
+
+        let mut tables = Vec::new();
+        loop {
+            let start = self.buffer.current()?.span.start;
+
+            // 通常のテーブル参照のみ対応（サブクエリ内のサブクエリは複雑になるため）
+            let text = self.buffer.current()?.text;
+            let span = self.buffer.current()?.span;
+            self.buffer.consume()?;
+
+            let name = crate::ast::Identifier {
+                name: text.to_string(),
+                span,
+            };
+
+            let alias = if self.buffer.check(TokenKind::As) {
+                self.buffer.consume()?;
+                let text = self.buffer.current()?.text;
+                let span = self.buffer.current()?.span;
+                self.buffer.consume()?;
+                Some(crate::ast::Identifier {
+                    name: text.to_string(),
+                    span,
+                })
+            } else if self.buffer.check(TokenKind::Ident) {
+                let text = self.buffer.current()?.text;
+                let span = self.buffer.current()?.span;
+                self.buffer.consume()?;
+                Some(crate::ast::Identifier {
+                    name: text.to_string(),
+                    span,
+                })
+            } else {
+                None
+            };
+
+            tables.push(crate::ast::TableReference::Table {
+                name,
+                alias,
+                span: Span {
+                    start,
+                    end: self.buffer.current()?.span.end,
+                },
+            });
+
+            if !self.buffer.consume_if(TokenKind::Comma)? {
+                break;
+            }
+        }
+
+        Ok(crate::ast::FromClause {
+            tables,
+            joins: Vec::new(),
+        })
     }
 }

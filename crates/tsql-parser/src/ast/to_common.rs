@@ -201,16 +201,23 @@ impl FromClauseExt for FromClause {
         for table_ref in &self.tables {
             match table_ref {
                 TableReference::Table { name, alias, span } => {
-                    tables.push(CommonTableReference {
+                    tables.push(CommonTableReference::Table {
                         name: name.name.clone(),
                         alias: alias.as_ref().map(|a| a.name.clone()),
                         span: *span,
                     });
                 }
-                // サブクエリは一度 dialect-specific として扱う
-                TableReference::Subquery { .. } => {
-                    // TODO: サブクエリの変換を実装
-                    return None;
+                // サブクエリの変換
+                TableReference::Subquery { query, alias, span } => {
+                    let common_select = match query.to_common_ast()? {
+                        CommonStatement::Select(s) => s,
+                        _ => return None,
+                    };
+                    tables.push(CommonTableReference::Derived {
+                        subquery: Box::new(common_select),
+                        alias: alias.as_ref().map(|a| a.name.clone()),
+                        span: *span,
+                    });
                 }
                 TableReference::Joined { .. } => {
                     // JOIN は別途処理
@@ -319,13 +326,19 @@ impl ToCommonAst for Expression {
                 span,
             } => {
                 let common_list = match list {
-                    InList::Values(vals) => vals
-                        .iter()
-                        .filter_map(|e| e.to_common_expression())
-                        .collect(),
-                    InList::Subquery(_) => {
-                        // サブクエリ付きINは一旦 dialect-specific
-                        return Some(CommonExpression::Literal(CommonLiteral::Null));
+                    InList::Values(vals) => {
+                        let values: Vec<_> = vals
+                            .iter()
+                            .filter_map(|e| e.to_common_expression())
+                            .collect();
+                        CommonInList::Values(values)
+                    }
+                    InList::Subquery(select) => {
+                        let common_select = match select.to_common_ast()? {
+                            CommonStatement::Select(s) => s,
+                            _ => return None,
+                        };
+                        CommonInList::Subquery(Box::new(common_select))
                     }
                 };
                 Some(CommonExpression::In {
@@ -351,15 +364,22 @@ impl ToCommonAst for Expression {
             Expression::Like {
                 expr,
                 pattern,
+                escape,
                 negated,
                 span,
-                ..
-            } => Some(CommonExpression::Like {
-                expr: Box::new(expr.to_common_expression()?),
-                pattern: Box::new(pattern.to_common_expression()?),
-                negated: *negated,
-                span: *span,
-            }),
+            } => {
+                let common_escape = match escape {
+                    Some(e) => Some(Box::new(e.to_common_expression()?)),
+                    None => None,
+                };
+                Some(CommonExpression::Like {
+                    expr: Box::new(expr.to_common_expression()?),
+                    pattern: Box::new(pattern.to_common_expression()?),
+                    escape: common_escape,
+                    negated: *negated,
+                    span: *span,
+                })
+            }
             Expression::Is {
                 expr,
                 negated,
@@ -376,9 +396,29 @@ impl ToCommonAst for Expression {
                     _ => None,
                 }
             }
-            // サブクエリ式は一旦 dialect-specific
-            Expression::Subquery(_) | Expression::Exists(_) => {
-                Some(CommonExpression::Literal(CommonLiteral::Null))
+            // サブクエリ式の変換
+            Expression::Subquery(select) => {
+                let span = select.span();
+                let common_select = match select.to_common_ast()? {
+                    CommonStatement::Select(s) => s,
+                    _ => return None,
+                };
+                Some(CommonExpression::Subquery {
+                    query: Box::new(common_select),
+                    span,
+                })
+            }
+            Expression::Exists(select) => {
+                let span = select.span();
+                let common_select = match select.to_common_ast()? {
+                    CommonStatement::Select(s) => s,
+                    _ => return None,
+                };
+                Some(CommonExpression::Exists {
+                    query: Box::new(common_select),
+                    negated: false,
+                    span,
+                })
             }
         }
     }
