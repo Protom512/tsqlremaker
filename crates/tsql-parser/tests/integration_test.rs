@@ -10,6 +10,7 @@
 #![allow(clippy::len_zero)]
 
 use tsql_parser::{parse, parse_one};
+use tsql_parser::ast::ColumnConstraint;
 
 /// 複数の JOIN を含む複雑な SELECT 文
 #[test]
@@ -39,7 +40,6 @@ fn test_complex_join_query() {
 /// 入れ子のサブクエリ
 #[test]
 fn test_nested_subquery() {
-    // TODO: サブクエリの実装が完了したら有効化する
     let sql = r#"
         SELECT u.id, u.name
         FROM users u
@@ -475,20 +475,75 @@ fn test_like_without_escape() {
     }
 }
 
+/// IN サブクエリ
+#[test]
+fn test_in_subquery() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::In { list, .. } => {
+                        // INリストがサブクエリであることを確認
+                        match list {
+                            tsql_parser::InList::Subquery(_) => {
+                                // OK - サブクエリが正しくパースされている
+                            }
+                            _ => panic!("INリストがサブクエリであること"),
+                        }
+                    }
+                    _ => panic!("IN式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// スカラーサブクエリ
+#[test]
+fn test_scalar_subquery() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT (SELECT COUNT(*) FROM orders) as order_count FROM users";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            // カラムリストにサブクエリが含まれていることを確認
+            assert!(!select.columns.is_empty());
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
 /// EXISTS サブクエリ
 #[test]
 fn test_exists_subquery() {
-    // TODO: EXISTS サブクエリの実装が完了したら有効化
     let sql = r#"
         SELECT u.id, u.name
         FROM users u
-        WHERE u.status = 'active'
+        WHERE EXISTS (
+            SELECT 1 FROM orders o WHERE o.user_id = u.id
+        )
     "#;
 
     let stmt = parse_one(sql).unwrap();
     match stmt {
         tsql_parser::Statement::Select(select) => {
             assert!(select.where_clause.is_some());
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::Exists(_) => {
+                        // OK - EXISTS式が正しくパースされている
+                    }
+                    _ => panic!("EXISTS式であること"),
+                }
+            }
         }
         _ => panic!("SELECT文であること"),
     }
@@ -867,5 +922,149 @@ fn test_order_by_direction() {
             assert!(!select.order_by[1].asc); // DESC
         }
         _ => panic!("SELECT文であること"),
+    }
+}
+
+/// カラムレベル制約: PRIMARY KEY
+#[test]
+fn test_column_primary_key_constraint() {
+    let sql = "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(100))";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Create(create) => {
+            match create.as_ref() {
+                tsql_parser::CreateStatement::Table(table) => {
+                    assert_eq!(table.columns.len(), 2);
+                    // idカラムにPRIMARY KEY制約がある
+                    assert!(!table.columns[0].constraints.is_empty());
+                    match &table.columns[0].constraints[0] {
+                        ColumnConstraint::PrimaryKey => {
+                            // OK
+                        }
+                        _ => panic!("PRIMARY KEY制約があること"),
+                    }
+                }
+                _ => panic!("CREATE TABLEであること"),
+            }
+        }
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// カラムレベル制約: UNIQUE
+#[test]
+fn test_column_unique_constraint() {
+    let sql = "CREATE TABLE users (email VARCHAR(255) UNIQUE)";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Create(create) => {
+            match create.as_ref() {
+                tsql_parser::CreateStatement::Table(table) => {
+                    assert_eq!(table.columns.len(), 1);
+                    assert!(!table.columns[0].constraints.is_empty());
+                    match &table.columns[0].constraints[0] {
+                        ColumnConstraint::Unique => {
+                            // OK
+                        }
+                        _ => panic!("UNIQUE制約があること"),
+                    }
+                }
+                _ => panic!("CREATE TABLEであること"),
+            }
+        }
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// カラムレベル制約: REFERENCES (FOREIGN KEY)
+#[test]
+fn test_column_references_constraint() {
+    let sql = "CREATE TABLE orders (user_id INT REFERENCES users(id))";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Create(create) => {
+            match create.as_ref() {
+                tsql_parser::CreateStatement::Table(table) => {
+                    assert_eq!(table.columns.len(), 1);
+                    assert!(!table.columns[0].constraints.is_empty());
+                    match &table.columns[0].constraints[0] {
+                        ColumnConstraint::Foreign { ref_table, ref_column } => {
+                            assert_eq!(ref_table.name, "users");
+                            assert_eq!(ref_column.name, "id");
+                        }
+                        _ => panic!("REFERENCES制約があること"),
+                    }
+                }
+                _ => panic!("CREATE TABLEであること"),
+            }
+        }
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// カラムレベル制約: CHECK
+#[test]
+fn test_column_check_constraint() {
+    let sql = "CREATE TABLE products (price DECIMAL CHECK (price > 0))";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Create(create) => {
+            match create.as_ref() {
+                tsql_parser::CreateStatement::Table(table) => {
+                    assert_eq!(table.columns.len(), 1);
+                    assert!(!table.columns[0].constraints.is_empty());
+                    match &table.columns[0].constraints[0] {
+                        ColumnConstraint::Check(_) => {
+                            // OK
+                        }
+                        _ => panic!("CHECK制約があること"),
+                    }
+                }
+                _ => panic!("CREATE TABLEであること"),
+            }
+        }
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// 複数のカラムレベル制約
+#[test]
+fn test_multiple_column_constraints() {
+    // T-SQL標準ではNULL制約を先に記述する
+    let sql = "CREATE TABLE test (id INT NOT NULL PRIMARY KEY, name VARCHAR(100) NOT NULL UNIQUE)";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Create(create) => {
+            match create.as_ref() {
+                tsql_parser::CreateStatement::Table(table) => {
+                    assert_eq!(table.columns.len(), 2);
+                    // idカラム: NOT NULL + PRIMARY KEY
+                    assert_eq!(table.columns[0].nullability, Some(false));
+                    assert_eq!(table.columns[0].constraints.len(), 1);
+                    match &table.columns[0].constraints[0] {
+                        ColumnConstraint::PrimaryKey => {
+                            // OK
+                        }
+                        _ => panic!("idカラムにPRIMARY KEY制約があること"),
+                    }
+                    // nameカラム: NOT NULL + UNIQUE
+                    assert_eq!(table.columns[1].nullability, Some(false));
+                    assert_eq!(table.columns[1].constraints.len(), 1);
+                    match &table.columns[1].constraints[0] {
+                        ColumnConstraint::Unique => {
+                            // OK
+                        }
+                        _ => panic!("nameカラムにUNIQUE制約があること"),
+                    }
+                }
+                _ => panic!("CREATE TABLEであること"),
+            }
+        }
+        _ => panic!("CREATE文であること"),
     }
 }

@@ -847,12 +847,48 @@ impl<'src> Parser<'src> {
                     self.buffer.consume()?;
                 }
 
-                // カラムレベル制約のチェック（PRIMARY KEY等）
-                // 現在はこれらをスキップする（簡易実装）
-                if self.buffer.check(TokenKind::Primary) {
-                    self.buffer.consume()?;
-                    if self.buffer.check(TokenKind::Key) {
+                // カラムレベル制約のパース
+                let mut constraints = Vec::new();
+                loop {
+                    if self.buffer.check(TokenKind::Primary) {
                         self.buffer.consume()?;
+                        if self.buffer.check(TokenKind::Key) {
+                            self.buffer.consume()?;
+                        }
+                        constraints.push(ColumnConstraint::PrimaryKey);
+                    } else if self.buffer.check(TokenKind::Unique) {
+                        self.buffer.consume()?;
+                        constraints.push(ColumnConstraint::Unique);
+                    } else if self.buffer.check(TokenKind::References) {
+                        self.buffer.consume()?; // REFERENCES
+                        let ref_table = self.parse_identifier()?;
+                        // 参照カラムのパース（オプションの括弧）
+                        let ref_column = if self.buffer.check(TokenKind::LParen) {
+                            self.buffer.consume()?;
+                            let col = self.parse_identifier()?;
+                            if !self.buffer.check(TokenKind::RParen) {
+                                return Err(ParseError::unexpected_token(
+                                    vec![TokenKind::RParen],
+                                    self.buffer.current()?.kind,
+                                    self.buffer.current()?.span,
+                                ));
+                            }
+                            self.buffer.consume()?;
+                            col
+                        } else {
+                            // 括弧なしの場合は参照テーブルと同じ名前のカラム
+                            Identifier {
+                                name: ref_table.name.clone(),
+                                span: ref_table.span,
+                            }
+                        };
+                        constraints.push(ColumnConstraint::Foreign { ref_table, ref_column });
+                    } else if self.buffer.check(TokenKind::Check) {
+                        self.buffer.consume()?;
+                        let expr = ExpressionParser::new(&mut self.buffer).parse()?;
+                        constraints.push(ColumnConstraint::Check(expr));
+                    } else {
+                        break;
                     }
                 }
 
@@ -862,6 +898,7 @@ impl<'src> Parser<'src> {
                     nullability,
                     default_value: None,
                     identity,
+                    constraints,
                 });
             } else {
                 // テーブル制約（CONSTRAINT keywordまたは直接の制約キーワード）

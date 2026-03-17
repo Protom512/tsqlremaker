@@ -27,7 +27,7 @@ pub use data_modification::{
     Assignment as ColumnAssignment, DeleteStatement, InsertSource, InsertStatement, UpdateStatement,
 };
 pub use ddl::{
-    ColumnDefinition, CreateStatement, DataType, IndexDefinition, ParameterDefinition,
+    ColumnConstraint, ColumnDefinition, CreateStatement, DataType, IndexDefinition, ParameterDefinition,
     ProcedureDefinition, TableConstraint, TableDefinition, ViewDefinition,
 };
 pub use select::{

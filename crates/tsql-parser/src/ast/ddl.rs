@@ -64,6 +64,26 @@ pub struct ColumnDefinition {
     pub default_value: Option<Expression>,
     /// IDENTITY指定
     pub identity: bool,
+    /// カラムレベル制約
+    pub constraints: Vec<ColumnConstraint>,
+}
+
+/// カラムレベル制約
+#[derive(Debug, Clone)]
+pub enum ColumnConstraint {
+    /// PRIMARY KEY
+    PrimaryKey,
+    /// UNIQUE
+    Unique,
+    /// FOREIGN KEY (REFERENCES)
+    Foreign {
+        /// 参照先テーブル
+        ref_table: Identifier,
+        /// 参照先カラム
+        ref_column: Identifier,
+    },
+    /// CHECK
+    Check(Expression),
 }
 
 /// データ型
