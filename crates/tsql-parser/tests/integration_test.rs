@@ -1281,7 +1281,7 @@ fn test_table_level_constraints() {
 
                 // PRIMARY KEY制約
                 match &table.constraints[0] {
-                    TableConstraint::PrimaryKey { columns } => {
+                    TableConstraint::PrimaryKey { columns, .. } => {
                         assert_eq!(columns.len(), 1);
                         assert_eq!(columns[0].name, "id");
                     }
@@ -1290,7 +1290,7 @@ fn test_table_level_constraints() {
 
                 // UNIQUE制約
                 match &table.constraints[1] {
-                    TableConstraint::Unique { columns } => {
+                    TableConstraint::Unique { columns, .. } => {
                         assert_eq!(columns.len(), 1);
                         assert_eq!(columns[0].name, "email");
                     }
@@ -1327,7 +1327,7 @@ fn test_composite_primary_key() {
                 assert_eq!(table.constraints.len(), 1);
 
                 match &table.constraints[0] {
-                    TableConstraint::PrimaryKey { columns } => {
+                    TableConstraint::PrimaryKey { columns, .. } => {
                         assert_eq!(columns.len(), 2);
                         assert_eq!(columns[0].name, "order_id");
                         assert_eq!(columns[1].name, "product_id");
@@ -1368,6 +1368,7 @@ fn test_foreign_key_constraint() {
                         columns,
                         ref_table,
                         ref_columns,
+                        ..
                     } => {
                         assert_eq!(columns.len(), 1);
                         assert_eq!(columns[0].name, "user_id");
@@ -1458,6 +1459,288 @@ fn test_nested_derived_tables() {
                     // OK
                 }
                 _ => panic!("JOINされたテーブルは派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// INサブクエリ内の派生テーブル
+#[test]
+fn test_derived_table_in_in_subquery() {
+    let sql = r#"
+        SELECT u.id
+        FROM users u
+        WHERE u.id IN (
+            SELECT t.user_id
+            FROM (
+                SELECT user_id, COUNT(*) as cnt
+                FROM orders
+                GROUP BY user_id
+                HAVING COUNT(*) > 5
+            ) AS t
+        )
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.where_clause.is_some());
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::In { list, .. } => {
+                        match list {
+                            tsql_parser::InList::Subquery(subquery) => {
+                                // サブクエリ内にFROM句と派生テーブルがあることを確認
+                                assert!(subquery.from.is_some());
+                                let from_clause = subquery.from.as_ref().unwrap();
+                                assert_eq!(from_clause.tables.len(), 1);
+                                match &from_clause.tables[0] {
+                                    tsql_parser::ast::TableReference::Subquery {
+                                        alias, ..
+                                    } => {
+                                        assert_eq!(alias.as_ref().unwrap().name, "t");
+                                    }
+                                    _ => panic!("INサブクエリ内に派生テーブルがあること"),
+                                }
+                            }
+                            _ => panic!("INリストがサブクエリであること"),
+                        }
+                    }
+                    _ => panic!("IN式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// EXISTSサブクエリ内の派生テーブル
+#[test]
+fn test_derived_table_in_exists_subquery() {
+    let sql = r#"
+        SELECT u.id, u.name
+        FROM users u
+        WHERE EXISTS (
+            SELECT 1
+            FROM (
+                SELECT user_id, SUM(amount) as total
+                FROM orders
+                GROUP BY user_id
+            ) AS order_totals
+            WHERE order_totals.user_id = u.id
+              AND order_totals.total > 1000
+        )
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.where_clause.is_some());
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::Exists(subquery) => {
+                        // EXISTSサブクエリ内にFROM句と派生テーブルがあることを確認
+                        assert!(subquery.from.is_some());
+                        let from_clause = subquery.from.as_ref().unwrap();
+                        assert_eq!(from_clause.tables.len(), 1);
+                        match &from_clause.tables[0] {
+                            tsql_parser::ast::TableReference::Subquery { alias, query, .. } => {
+                                assert_eq!(alias.as_ref().unwrap().name, "order_totals");
+                                // 派生テーブル内にGROUP BYがあることを確認
+                                assert!(!query.group_by.is_empty());
+                            }
+                            _ => panic!("EXISTSサブクエリ内に派生テーブルがあること"),
+                        }
+                    }
+                    _ => panic!("EXISTS式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// スカラーサブクエリ内の派生テーブル
+#[test]
+fn test_derived_table_in_scalar_subquery() {
+    let sql = r#"
+        SELECT
+            u.id,
+            (
+                SELECT COUNT(*)
+                FROM (
+                    SELECT user_id
+                    FROM orders
+                    WHERE user_id = u.id
+                ) AS user_orders
+            ) as order_count
+        FROM users u
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert_eq!(select.columns.len(), 2);
+            // スカラーサブクエリがカラムリストに含まれていることを確認
+            match &select.columns[1] {
+                tsql_parser::ast::SelectItem::Expression(
+                    tsql_parser::Expression::Subquery(subquery),
+                    _,
+                ) => {
+                    // サブクエリ内にFROM句と派生テーブルがあることを確認
+                    assert!(subquery.from.is_some());
+                    let from_clause = subquery.from.as_ref().unwrap();
+                    assert_eq!(from_clause.tables.len(), 1);
+                    match &from_clause.tables[0] {
+                        tsql_parser::ast::TableReference::Subquery { alias, .. } => {
+                            assert_eq!(alias.as_ref().unwrap().name, "user_orders");
+                        }
+                        _ => panic!("スカラーサブクエリ内に派生テーブルがあること"),
+                    }
+                }
+                _ => panic!("スカラーサブクエリであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: ASなしの別名
+#[test]
+fn test_derived_table_without_as_keyword() {
+    let sql = "SELECT * FROM (SELECT id FROM users) u";
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            assert_eq!(from_clause.tables.len(), 1);
+            match &from_clause.tables[0] {
+                tsql_parser::ast::TableReference::Subquery { alias, .. } => {
+                    assert_eq!(alias.as_ref().unwrap().name, "u");
+                }
+                _ => panic!("派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: 別名なし（エラーまたは警告）
+#[test]
+fn test_derived_table_without_alias() {
+    // SAP ASEでは派生テーブルに別名が必須
+    // パーサーは受け入れるが、意味解析でエラーになる可能性がある
+    let sql = "SELECT * FROM (SELECT id FROM users)";
+
+    let result = parse_one(sql);
+    // パースは成功する（別名なしの派生テーブル）
+    assert!(result.is_ok());
+}
+
+/// 派生テーブル: 複数のテーブルを結合
+#[test]
+fn test_derived_table_with_joins() {
+    let sql = r#"
+        SELECT *
+        FROM (
+            SELECT u.id, u.name, o.order_id
+            FROM users u
+            INNER JOIN orders o ON u.id = o.user_id
+        ) AS user_orders
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            assert_eq!(from_clause.tables.len(), 1);
+            match &from_clause.tables[0] {
+                tsql_parser::ast::TableReference::Subquery { query, .. } => {
+                    // 派生テーブル内にJOINがあることを確認
+                    assert!(query.from.is_some());
+                    let inner_from = query.from.as_ref().unwrap();
+                    assert!(!inner_from.joins.is_empty());
+                }
+                _ => panic!("派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: WHERE句内の派生テーブル
+#[test]
+fn test_derived_table_in_where_clause() {
+    let sql = r#"
+        SELECT *
+        FROM users u
+        WHERE u.department_id IN (
+            SELECT d.id
+            FROM (
+                SELECT id, name
+                FROM departments
+                WHERE active = 1
+            ) AS d
+        )
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.where_clause.is_some());
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::In { list, .. } => match list {
+                        tsql_parser::InList::Subquery(subquery) => {
+                            assert!(subquery.from.is_some());
+                            let from_clause = subquery.from.as_ref().unwrap();
+                            assert_eq!(from_clause.tables.len(), 1);
+                            match &from_clause.tables[0] {
+                                tsql_parser::ast::TableReference::Subquery { alias, .. } => {
+                                    assert_eq!(alias.as_ref().unwrap().name, "d");
+                                }
+                                _ => panic!("INサブクエリ内に派生テーブルがあること"),
+                            }
+                        }
+                        _ => panic!("INリストがサブクエリであること"),
+                    },
+                    _ => panic!("IN式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: DISTINCTとORDER BY
+#[test]
+fn test_derived_table_with_distinct_and_order_by() {
+    let sql = r#"
+        SELECT *
+        FROM (
+            SELECT DISTINCT category, COUNT(*) as cnt
+            FROM products
+            GROUP BY category
+            ORDER BY cnt DESC
+        ) AS category_counts
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            match &from_clause.tables[0] {
+                tsql_parser::ast::TableReference::Subquery { query, .. } => {
+                    assert!(query.distinct);
+                    assert!(!query.group_by.is_empty());
+                    assert!(!query.order_by.is_empty());
+                }
+                _ => panic!("派生テーブルであること"),
             }
         }
         _ => panic!("SELECT文であること"),
