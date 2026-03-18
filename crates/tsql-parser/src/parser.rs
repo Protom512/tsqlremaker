@@ -839,33 +839,8 @@ impl<'src> Parser<'src> {
             let token = self.buffer.current()?;
 
             // まずテーブル制約をチェック
-            // CONSTRAINT キーワードまたは制約キーワード（PRIMARY, FOREIGN, UNIQUE, CHECK）
-            if self.buffer.check(TokenKind::Constraint) || self.is_constraint_keyword() {
-                // CONSTRAINT キーワードを消費
-                let has_constraint_keyword = self.buffer.check(TokenKind::Constraint);
-                if has_constraint_keyword {
-                    self.buffer.consume()?;
-                }
-
-                // 制約名（CONSTRAINT キーワードがある場合のみ）
-                let name = if has_constraint_keyword {
-                    if self.buffer.check(TokenKind::Ident)
-                        || self.buffer.check(TokenKind::QuotedIdent)
-                    {
-                        self.parse_identifier()?
-                    } else {
-                        Identifier {
-                            name: String::new(),
-                            span: self.buffer.current()?.span,
-                        }
-                    }
-                } else {
-                    Identifier {
-                        name: String::new(),
-                        span: self.buffer.current()?.span,
-                    }
-                };
-                let constraint = self.parse_table_constraint(name)?;
+            if self.is_table_constraint_start() {
+                let constraint = self.parse_table_constraint()?;
                 constraints.push(constraint);
             } else {
                 // カラム定義（カラムレベル制約を含む）
@@ -1022,22 +997,37 @@ impl<'src> Parser<'src> {
         ))))
     }
 
-    /// 制約キーワードかチェック
-    fn is_constraint_keyword(&self) -> bool {
+    /// テーブル制約の開始かどうかを判定
+    fn is_table_constraint_start(&self) -> bool {
         let kind = match self.buffer.current() {
             Ok(t) => t.kind,
             Err(_) => return false,
         };
+        // CONSTRAINTキーワードまたは制約タイプキーワード
         matches!(
             kind,
-            TokenKind::Primary | TokenKind::Foreign | TokenKind::Unique | TokenKind::Check
+            TokenKind::Constraint
+                | TokenKind::Primary
+                | TokenKind::Foreign
+                | TokenKind::Unique
+                | TokenKind::Check
         )
     }
 
     /// テーブル制約を解析
-    #[allow(clippy::too_many_arguments)]
-    fn parse_table_constraint(&mut self, _name: Identifier) -> ParseResult<TableConstraint> {
-        match self.buffer.current()?.kind {
+    fn parse_table_constraint(&mut self) -> ParseResult<TableConstraint> {
+        // CONSTRAINT constraint_name の部分をパース（オプション）
+        let constraint_name = if self.buffer.check(TokenKind::Constraint) {
+            self.buffer.consume()?;
+            Some(self.parse_identifier()?)
+        } else {
+            None
+        };
+
+        // 制約タイプを判定
+        let constraint_type = self.buffer.current()?.kind;
+
+        match constraint_type {
             TokenKind::Primary => {
                 self.buffer.consume()?;
                 if !self.buffer.check(TokenKind::Key) {
@@ -1048,7 +1038,17 @@ impl<'src> Parser<'src> {
                     ));
                 }
                 self.buffer.consume()?;
-                self.buffer.consume()?; // LEFT PAREN
+
+                // カラムリストをパース
+                if !self.buffer.check(TokenKind::LParen) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::LParen],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?;
+
                 let mut columns = Vec::new();
                 while !self.buffer.check(TokenKind::RParen) {
                     columns.push(self.parse_identifier()?);
@@ -1057,11 +1057,25 @@ impl<'src> Parser<'src> {
                     }
                 }
                 self.buffer.consume()?; // RIGHT PAREN
-                Ok(TableConstraint::PrimaryKey { columns })
+
+                Ok(TableConstraint::PrimaryKey {
+                    name: constraint_name,
+                    columns,
+                })
             }
             TokenKind::Unique => {
                 self.buffer.consume()?;
-                self.buffer.consume()?; // LEFT PAREN
+
+                // カラムリストをパース
+                if !self.buffer.check(TokenKind::LParen) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::LParen],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?;
+
                 let mut columns = Vec::new();
                 while !self.buffer.check(TokenKind::RParen) {
                     columns.push(self.parse_identifier()?);
@@ -1070,7 +1084,11 @@ impl<'src> Parser<'src> {
                     }
                 }
                 self.buffer.consume()?; // RIGHT PAREN
-                Ok(TableConstraint::Unique { columns })
+
+                Ok(TableConstraint::Unique {
+                    name: constraint_name,
+                    columns,
+                })
             }
             TokenKind::Foreign => {
                 self.buffer.consume()?;
@@ -1082,7 +1100,17 @@ impl<'src> Parser<'src> {
                     ));
                 }
                 self.buffer.consume()?;
-                self.buffer.consume()?; // LEFT PAREN
+
+                // カラムリストをパース
+                if !self.buffer.check(TokenKind::LParen) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::LParen],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?;
+
                 let mut columns = Vec::new();
                 while !self.buffer.check(TokenKind::RParen) {
                     columns.push(self.parse_identifier()?);
@@ -1122,6 +1150,7 @@ impl<'src> Parser<'src> {
                 };
 
                 Ok(TableConstraint::Foreign {
+                    name: constraint_name,
                     columns,
                     ref_table,
                     ref_columns,
@@ -1129,11 +1158,33 @@ impl<'src> Parser<'src> {
             }
             TokenKind::Check => {
                 self.buffer.consume()?;
-                self.buffer.consume()?; // LEFT PAREN
+
+                // CHECK式をパース
+                if !self.buffer.check(TokenKind::LParen) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::LParen],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?;
+
                 let mut expr_parser = ExpressionParser::new(&mut self.buffer);
                 let expr = expr_parser.parse()?;
+
+                if !self.buffer.check(TokenKind::RParen) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::RParen],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
                 self.buffer.consume()?; // RIGHT PAREN
-                Ok(TableConstraint::Check { expr })
+
+                Ok(TableConstraint::Check {
+                    name: constraint_name,
+                    expr,
+                })
             }
             _ => Err(ParseError::unexpected_token(
                 vec![
@@ -3617,5 +3668,361 @@ mod tests {
         let result = parse_sql("SELECT 1; GO; INVALID");
         // GO後の無効なステートメント
         assert!(result.is_err());
+    }
+
+    // Table-level constraint tests
+
+    #[test]
+    fn test_table_level_primary_key() {
+        // テーブルレベルPRIMARY KEY制約
+        let result =
+            parse_sql("CREATE TABLE t (id INT, CONSTRAINT pk_t PRIMARY KEY (id))").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::PrimaryKey { columns, .. } => {
+                            assert_eq!(columns.len(), 1);
+                            assert_eq!(columns[0].name, "id");
+                        }
+                        _ => panic!("Expected PrimaryKey constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_primary_key_multiple_columns() {
+        // 複数カラムのPRIMARY KEY制約
+        let result = parse_sql(
+            "CREATE TABLE t (id INT, user_id INT, CONSTRAINT pk_t PRIMARY KEY (id, user_id))",
+        )
+        .unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::PrimaryKey { columns, .. } => {
+                            assert_eq!(columns.len(), 2);
+                            assert_eq!(columns[0].name, "id");
+                            assert_eq!(columns[1].name, "user_id");
+                        }
+                        _ => panic!("Expected PrimaryKey constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_primary_key_without_constraint_name() {
+        // 制約名なしのPRIMARY KEY
+        let result = parse_sql("CREATE TABLE t (id INT, PRIMARY KEY (id))").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::PrimaryKey { columns, .. } => {
+                            assert_eq!(columns.len(), 1);
+                            assert_eq!(columns[0].name, "id");
+                        }
+                        _ => panic!("Expected PrimaryKey constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_foreign_key() {
+        // テーブルレベルFOREIGN KEY制約
+        let result = parse_sql("CREATE TABLE orders (id INT, user_id INT, CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users(id))").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::Foreign {
+                            columns,
+                            ref_table,
+                            ref_columns,
+                            ..
+                        } => {
+                            assert_eq!(columns.len(), 1);
+                            assert_eq!(columns[0].name, "user_id");
+                            assert_eq!(ref_table.name, "users");
+                            assert_eq!(ref_columns.len(), 1);
+                            assert_eq!(ref_columns[0].name, "id");
+                        }
+                        _ => panic!("Expected Foreign constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_foreign_key_multiple_columns() {
+        // 複数カラムのFOREIGN KEY制約
+        let result = parse_sql("CREATE TABLE t (a INT, b INT, CONSTRAINT fk_t FOREIGN KEY (a, b) REFERENCES other(x, y))").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::Foreign {
+                            columns,
+                            ref_table,
+                            ref_columns,
+                            ..
+                        } => {
+                            assert_eq!(columns.len(), 2);
+                            assert_eq!(columns[0].name, "a");
+                            assert_eq!(columns[1].name, "b");
+                            assert_eq!(ref_table.name, "other");
+                            assert_eq!(ref_columns.len(), 2);
+                            assert_eq!(ref_columns[0].name, "x");
+                            assert_eq!(ref_columns[1].name, "y");
+                        }
+                        _ => panic!("Expected Foreign constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_foreign_key_without_parens() {
+        // 括弧なしの参照カラム（単一カラムの場合）
+        let result = parse_sql("CREATE TABLE t (id INT, user_id INT, CONSTRAINT fk_t FOREIGN KEY (user_id) REFERENCES users id)").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::Foreign { ref_columns, .. } => {
+                            assert_eq!(ref_columns.len(), 1);
+                            assert_eq!(ref_columns[0].name, "id");
+                        }
+                        _ => panic!("Expected Foreign constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_unique() {
+        // テーブルレベルUNIQUE制約
+        let result = parse_sql(
+            "CREATE TABLE t (id INT, email VARCHAR(100), CONSTRAINT uq_t_email UNIQUE (email))",
+        )
+        .unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::Unique { columns, .. } => {
+                            assert_eq!(columns.len(), 1);
+                            assert_eq!(columns[0].name, "email");
+                        }
+                        _ => panic!("Expected Unique constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_unique_multiple_columns() {
+        // 複数カラムのUNIQUE制約
+        let result = parse_sql("CREATE TABLE t (id INT, email VARCHAR(100), username VARCHAR(50), CONSTRAINT uq_t UNIQUE (email, username))").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::Unique { columns, .. } => {
+                            assert_eq!(columns.len(), 2);
+                            assert_eq!(columns[0].name, "email");
+                            assert_eq!(columns[1].name, "username");
+                        }
+                        _ => panic!("Expected Unique constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_unique_without_constraint_name() {
+        // 制約名なしのUNIQUE
+        let result =
+            parse_sql("CREATE TABLE t (id INT, email VARCHAR(100), UNIQUE (email))").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::Unique { columns, .. } => {
+                            assert_eq!(columns.len(), 1);
+                            assert_eq!(columns[0].name, "email");
+                        }
+                        _ => panic!("Expected Unique constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_check() {
+        // テーブルレベルCHECK制約
+        let result =
+            parse_sql("CREATE TABLE t (id INT, age INT, CONSTRAINT chk_t_age CHECK (age >= 18))")
+                .unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => {
+                match stmt.as_ref() {
+                    CreateStatement::Table(table) => {
+                        assert_eq!(table.constraints.len(), 1);
+                        match &table.constraints[0] {
+                            TableConstraint::Check { expr, .. } => {
+                                // CHECK式がパースされていることを確認
+                                // パースされた式をそのままチェック（詳細な構造までは検証しない）
+                                match expr {
+                                    Expression::BinaryOp {
+                                        op: BinaryOperator::Ge,
+                                        ..
+                                    } => {
+                                        // >=演算子が使われていればOK
+                                    }
+                                    _ => {
+                                        // デバッグのためにパニックの代わりに式を表示
+                                        eprintln!("Parsed expr: {:?}", expr);
+                                        panic!("Expected BinaryOp expression with Ge operator, got {:?}", expr);
+                                    }
+                                }
+                            }
+                            _ => panic!("Expected Check constraint"),
+                        }
+                    }
+                    _ => panic!("Expected Create Table statement"),
+                }
+            }
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_check_without_constraint_name() {
+        // 制約名なしのCHECK
+        let result = parse_sql("CREATE TABLE t (id INT, age INT, CHECK (age >= 18))").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::Check { .. } => {
+                            // CHECK制約が存在すればOK
+                        }
+                        _ => panic!("Expected Check constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_multiple_table_level_constraints() {
+        // 複数のテーブルレベル制約
+        let result = parse_sql(
+            "CREATE TABLE t (id INT, user_id INT, email VARCHAR(100), age INT, \
+             CONSTRAINT pk_t PRIMARY KEY (id), \
+             CONSTRAINT fk_t_user FOREIGN KEY (user_id) REFERENCES users(id), \
+             CONSTRAINT uq_t_email UNIQUE (email), \
+             CONSTRAINT chk_t_age CHECK (age >= 18))",
+        )
+        .unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 4);
+                    // 各制約が正しくパースされていることを確認
+                    let mut found_pk = false;
+                    let mut found_fk = false;
+                    let mut found_uq = false;
+                    let mut found_chk = false;
+
+                    for constraint in &table.constraints {
+                        match constraint {
+                            TableConstraint::PrimaryKey { .. } => found_pk = true,
+                            TableConstraint::Foreign { .. } => found_fk = true,
+                            TableConstraint::Unique { .. } => found_uq = true,
+                            TableConstraint::Check { .. } => found_chk = true,
+                        }
+                    }
+
+                    assert!(found_pk, "PrimaryKey constraint not found");
+                    assert!(found_fk, "Foreign constraint not found");
+                    assert!(found_uq, "Unique constraint not found");
+                    assert!(found_chk, "Check constraint not found");
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_mix_column_and_table_level_constraints() {
+        // カラムレベルとテーブルレベルの制約の混合
+        let result = parse_sql(
+            "CREATE TABLE t (id INT PRIMARY KEY, user_id INT, email VARCHAR(100) NOT NULL, \
+             FOREIGN KEY (user_id) REFERENCES users(id), \
+             UNIQUE (email))",
+        )
+        .unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    // カラムレベル制約はColumnDefinition.constraintsに含まれる
+                    assert_eq!(table.columns.len(), 3);
+                    // idカラムのPRIMARY KEY制約
+                    assert!(!table.columns[0].constraints.is_empty());
+                    // emailカラムはNOT NULL（nullabilityフィールド）
+                    assert_eq!(table.columns[2].nullability, Some(false));
+                    // テーブルレベル制約
+                    assert_eq!(table.constraints.len(), 2);
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
     }
 }

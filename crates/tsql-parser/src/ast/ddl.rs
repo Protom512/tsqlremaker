@@ -142,11 +142,15 @@ pub enum DataType {
 pub enum TableConstraint {
     /// PRIMARY KEY
     PrimaryKey {
+        /// 制約名（オプション）
+        name: Option<Identifier>,
         /// カラムリスト
         columns: Vec<Identifier>,
     },
     /// FOREIGN KEY
     Foreign {
+        /// 制約名（オプション）
+        name: Option<Identifier>,
         /// カラムリスト
         columns: Vec<Identifier>,
         /// 参照先テーブル
@@ -156,11 +160,15 @@ pub enum TableConstraint {
     },
     /// UNIQUE
     Unique {
+        /// 制約名（オプション）
+        name: Option<Identifier>,
         /// カラムリスト
         columns: Vec<Identifier>,
     },
     /// CHECK
     Check {
+        /// 制約名（オプション）
+        name: Option<Identifier>,
         /// チェック式
         expr: Expression,
     },

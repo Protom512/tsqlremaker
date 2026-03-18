@@ -329,6 +329,32 @@ impl<'a, 'src> ExpressionParser<'a, 'src> {
         Ok(SelectItem::Expression(expr, alias))
     }
 
+    /// オプションの別名を解析
+    ///
+    /// `AS alias` または `alias` の形式に対応
+    fn parse_optional_alias(&mut self) -> ParseResult<Option<crate::ast::Identifier>> {
+        if self.buffer.check(TokenKind::As) {
+            self.buffer.consume()?;
+            let text = self.buffer.current()?.text;
+            let span = self.buffer.current()?.span;
+            self.buffer.consume()?;
+            Ok(Some(crate::ast::Identifier {
+                name: text.to_string(),
+                span,
+            }))
+        } else if self.buffer.check(TokenKind::Ident) {
+            let text = self.buffer.current()?.text;
+            let span = self.buffer.current()?.span;
+            self.buffer.consume()?;
+            Ok(Some(crate::ast::Identifier {
+                name: text.to_string(),
+                span,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// サブクエリ内のFROM句を解析
     fn parse_subquery_from_clause(&mut self) -> ParseResult<crate::ast::FromClause> {
         self.buffer.consume()?; // FROM
@@ -362,26 +388,7 @@ impl<'a, 'src> ExpressionParser<'a, 'src> {
                 self.buffer.consume()?; // RParen
 
                 // オプションの別名
-                let alias = if self.buffer.check(TokenKind::As) {
-                    self.buffer.consume()?;
-                    let text = self.buffer.current()?.text;
-                    let span = self.buffer.current()?.span;
-                    self.buffer.consume()?;
-                    Some(crate::ast::Identifier {
-                        name: text.to_string(),
-                        span,
-                    })
-                } else if self.buffer.check(TokenKind::Ident) {
-                    let text = self.buffer.current()?.text;
-                    let span = self.buffer.current()?.span;
-                    self.buffer.consume()?;
-                    Some(crate::ast::Identifier {
-                        name: text.to_string(),
-                        span,
-                    })
-                } else {
-                    None
-                };
+                let alias = self.parse_optional_alias()?;
 
                 let end_span = self.buffer.current()?.span;
                 tables.push(crate::ast::TableReference::Subquery {
@@ -404,26 +411,7 @@ impl<'a, 'src> ExpressionParser<'a, 'src> {
                     span,
                 };
 
-                let alias = if self.buffer.check(TokenKind::As) {
-                    self.buffer.consume()?;
-                    let text = self.buffer.current()?.text;
-                    let span = self.buffer.current()?.span;
-                    self.buffer.consume()?;
-                    Some(crate::ast::Identifier {
-                        name: text.to_string(),
-                        span,
-                    })
-                } else if self.buffer.check(TokenKind::Ident) {
-                    let text = self.buffer.current()?.text;
-                    let span = self.buffer.current()?.span;
-                    self.buffer.consume()?;
-                    Some(crate::ast::Identifier {
-                        name: text.to_string(),
-                        span,
-                    })
-                } else {
-                    None
-                };
+                let alias = self.parse_optional_alias()?;
 
                 tables.push(crate::ast::TableReference::Table {
                     name,
