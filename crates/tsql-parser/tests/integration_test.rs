@@ -133,7 +133,6 @@ fn test_multiple_statements() {
 /// IF...ELSE 制御フロー
 #[test]
 fn test_if_else_control_flow() {
-    // TODO: ELSE 句の実装が完了したら完全版をテスト
     let sql = r#"
         IF @x > 0
             SELECT 'positive' as result;
@@ -210,7 +209,6 @@ fn test_insert_select() {
 /// CREATE TABLE
 #[test]
 fn test_create_table() {
-    // TODO: DEFAULT 式の実装が完了したら完全版をテスト
     let sql = r#"
         CREATE TABLE users (
             id INT PRIMARY KEY,
@@ -222,6 +220,87 @@ fn test_create_table() {
     let stmt = parse_one(sql).unwrap();
     match stmt {
         tsql_parser::Statement::Create(_) => {}
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// CREATE TABLE with DEFAULT clause
+#[test]
+fn test_create_table_with_default() {
+    let sql = r#"
+        CREATE TABLE users (
+            id INT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            status VARCHAR(20) DEFAULT 'active',
+            created_at DATETIME DEFAULT GETDATE(),
+            is_active BIT DEFAULT 1
+        )
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Create(create) => {
+            match create.as_ref() {
+                tsql_parser::CreateStatement::Table(table) => {
+                    // Check that status column has a default value
+                    let status_col = table.columns.iter()
+                        .find(|c| c.name.name == "status")
+                        .expect("status column should exist");
+                    assert!(status_col.default_value.is_some(),
+                        "status column should have a default value");
+
+                    // Check that created_at column has a default value
+                    let created_col = table.columns.iter()
+                        .find(|c| c.name.name == "created_at")
+                        .expect("created_at column should exist");
+                    assert!(created_col.default_value.is_some(),
+                        "created_at column should have a default value");
+
+                    // Check that is_active column has a default value
+                    let active_col = table.columns.iter()
+                        .find(|c| c.name.name == "is_active")
+                        .expect("is_active column should exist");
+                    assert!(active_col.default_value.is_some(),
+                        "is_active column should have a default value");
+
+                    // Check that id column does NOT have a default value
+                    let id_col = table.columns.iter()
+                        .find(|c| c.name.name == "id")
+                        .expect("id column should exist");
+                    assert!(id_col.default_value.is_none(),
+                        "id column should not have a default value");
+                }
+                _ => panic!("Expected Table statement"),
+            }
+        }
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// CREATE TABLE with DEFAULT NULL
+#[test]
+fn test_create_table_with_default_null() {
+    let sql = r#"
+        CREATE TABLE items (
+            id INT PRIMARY KEY,
+            description VARCHAR(255) DEFAULT NULL
+        )
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Create(create) => {
+            match create.as_ref() {
+                tsql_parser::CreateStatement::Table(table) => {
+                    let desc_col = table.columns.iter()
+                        .find(|c| c.name.name == "description")
+                        .expect("description column should exist");
+                    assert!(desc_col.default_value.is_some(),
+                        "description column should have a default value");
+                }
+                _ => panic!("Expected Table statement"),
+            }
+        }
         _ => panic!("CREATE文であること"),
     }
 }

@@ -880,6 +880,24 @@ impl<'src> Parser<'src> {
                     self.buffer.consume()?;
                 }
 
+                // DEFAULT句のパース
+                let default_value = if self.buffer.check(TokenKind::Default) {
+                    self.buffer.consume()?; // DEFAULT
+                    // NULLまたは定数式
+                    if self.buffer.check(TokenKind::Null) {
+                        self.buffer.consume()?;
+                        Some(Expression::Literal(Literal::Null(Span {
+                            start: self.buffer.current()?.span.start,
+                            end: self.buffer.current()?.span.end,
+                        })))
+                    } else {
+                        let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+                        Some(expr_parser.parse()?)
+                    }
+                } else {
+                    None
+                };
+
                 // カラムレベル制約のパース
                 let mut constraints = Vec::new();
                 loop {
@@ -929,7 +947,7 @@ impl<'src> Parser<'src> {
                     name,
                     data_type,
                     nullability,
-                    default_value: None,
+                    default_value,
                     identity,
                     constraints,
                 });
