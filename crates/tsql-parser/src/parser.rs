@@ -372,7 +372,7 @@ impl<'src> Parser<'src> {
         // USING句のパース
         let using_columns = if self.buffer.check(TokenKind::Using) {
             self.buffer.consume()?; // USING
-            // USING (col1, col2, ...)
+                                    // USING (col1, col2, ...)
             if !self.buffer.check(TokenKind::LParen) {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::LParen],
@@ -837,21 +837,58 @@ impl<'src> Parser<'src> {
 
         while !self.buffer.check(TokenKind::RParen) {
             let token = self.buffer.current()?;
-            // キーワードでも識別子として使用可能なものをチェック
-            let is_identifier = matches!(
-                token.kind,
-                TokenKind::Ident
-                    | TokenKind::QuotedIdent
-                    | TokenKind::Table
-                    | TokenKind::View
-                    | TokenKind::Index
-                    | TokenKind::Key
-                    | TokenKind::Constraint
-                    | TokenKind::Go
-            );
 
-            if is_identifier {
+            // まずテーブル制約をチェック
+            // CONSTRAINT キーワードまたは制約キーワード（PRIMARY, FOREIGN, UNIQUE, CHECK）
+            if self.buffer.check(TokenKind::Constraint) || self.is_constraint_keyword() {
+                // CONSTRAINT キーワードを消費
+                let has_constraint_keyword = self.buffer.check(TokenKind::Constraint);
+                if has_constraint_keyword {
+                    self.buffer.consume()?;
+                }
+
+                // 制約名（CONSTRAINT キーワードがある場合のみ）
+                let name = if has_constraint_keyword {
+                    if self.buffer.check(TokenKind::Ident)
+                        || self.buffer.check(TokenKind::QuotedIdent)
+                    {
+                        self.parse_identifier()?
+                    } else {
+                        Identifier {
+                            name: String::new(),
+                            span: self.buffer.current()?.span,
+                        }
+                    }
+                } else {
+                    Identifier {
+                        name: String::new(),
+                        span: self.buffer.current()?.span,
+                    }
+                };
+                let constraint = self.parse_table_constraint(name)?;
+                constraints.push(constraint);
+            } else {
                 // カラム定義（カラムレベル制約を含む）
+                let token_kind = token.kind;
+                let token_span = token.span;
+                let is_identifier = matches!(
+                    token_kind,
+                    TokenKind::Ident
+                        | TokenKind::QuotedIdent
+                        | TokenKind::Table
+                        | TokenKind::View
+                        | TokenKind::Index
+                        | TokenKind::Go
+                );
+
+                if !is_identifier {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::Ident, TokenKind::RParen],
+                        token_kind,
+                        token_span,
+                    ));
+                }
+
                 let name = self.parse_identifier()?;
                 let data_type = self.parse_data_type()?;
 
@@ -883,7 +920,7 @@ impl<'src> Parser<'src> {
                 // DEFAULT句のパース
                 let default_value = if self.buffer.check(TokenKind::Default) {
                     self.buffer.consume()?; // DEFAULT
-                    // NULLまたは定数式
+                                            // NULLまたは定数式
                     if self.buffer.check(TokenKind::Null) {
                         self.buffer.consume()?;
                         Some(Expression::Literal(Literal::Null(Span {
@@ -933,7 +970,10 @@ impl<'src> Parser<'src> {
                                 span: ref_table.span,
                             }
                         };
-                        constraints.push(ColumnConstraint::Foreign { ref_table, ref_column });
+                        constraints.push(ColumnConstraint::Foreign {
+                            ref_table,
+                            ref_column,
+                        });
                     } else if self.buffer.check(TokenKind::Check) {
                         self.buffer.consume()?;
                         let expr = ExpressionParser::new(&mut self.buffer).parse()?;
@@ -951,30 +991,6 @@ impl<'src> Parser<'src> {
                     identity,
                     constraints,
                 });
-            } else {
-                // テーブル制約（CONSTRAINT keywordまたは直接の制約キーワード）
-                // 例: CONSTRAINT pk_name PRIMARY KEY (id)
-                // 例: PRIMARY KEY (id)
-                if self.buffer.check(TokenKind::Constraint) || self.is_constraint_keyword() {
-                    let name = if self.buffer.check(TokenKind::Ident)
-                        || self.buffer.check(TokenKind::QuotedIdent)
-                    {
-                        self.parse_identifier()?
-                    } else {
-                        Identifier {
-                            name: String::new(),
-                            span: self.buffer.current()?.span,
-                        }
-                    };
-                    let constraint = self.parse_table_constraint(name)?;
-                    constraints.push(constraint);
-                } else {
-                    return Err(ParseError::unexpected_token(
-                        vec![TokenKind::Ident, TokenKind::RParen],
-                        token.kind,
-                        token.span,
-                    ));
-                }
             }
 
             if !self.buffer.consume_if(TokenKind::Comma)? {
@@ -1019,7 +1035,8 @@ impl<'src> Parser<'src> {
     }
 
     /// テーブル制約を解析
-    fn parse_table_constraint(&mut self, name: Identifier) -> ParseResult<TableConstraint> {
+    #[allow(clippy::too_many_arguments)]
+    fn parse_table_constraint(&mut self, _name: Identifier) -> ParseResult<TableConstraint> {
         match self.buffer.current()?.kind {
             TokenKind::Primary => {
                 self.buffer.consume()?;
@@ -1042,9 +1059,92 @@ impl<'src> Parser<'src> {
                 self.buffer.consume()?; // RIGHT PAREN
                 Ok(TableConstraint::PrimaryKey { columns })
             }
-            _ => Ok(TableConstraint::Unique {
-                columns: vec![name],
-            }),
+            TokenKind::Unique => {
+                self.buffer.consume()?;
+                self.buffer.consume()?; // LEFT PAREN
+                let mut columns = Vec::new();
+                while !self.buffer.check(TokenKind::RParen) {
+                    columns.push(self.parse_identifier()?);
+                    if !self.buffer.consume_if(TokenKind::Comma)? {
+                        break;
+                    }
+                }
+                self.buffer.consume()?; // RIGHT PAREN
+                Ok(TableConstraint::Unique { columns })
+            }
+            TokenKind::Foreign => {
+                self.buffer.consume()?;
+                if !self.buffer.check(TokenKind::Key) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::Key],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?;
+                self.buffer.consume()?; // LEFT PAREN
+                let mut columns = Vec::new();
+                while !self.buffer.check(TokenKind::RParen) {
+                    columns.push(self.parse_identifier()?);
+                    if !self.buffer.consume_if(TokenKind::Comma)? {
+                        break;
+                    }
+                }
+                self.buffer.consume()?; // RIGHT PAREN
+
+                // REFERENCES
+                if !self.buffer.check(TokenKind::References) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::References],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?;
+
+                let ref_table = self.parse_identifier()?;
+
+                // 参照カラム（オプションの括弧）
+                let ref_columns = if self.buffer.check(TokenKind::LParen) {
+                    self.buffer.consume()?;
+                    let mut cols = Vec::new();
+                    while !self.buffer.check(TokenKind::RParen) {
+                        cols.push(self.parse_identifier()?);
+                        if !self.buffer.consume_if(TokenKind::Comma)? {
+                            break;
+                        }
+                    }
+                    self.buffer.consume()?;
+                    cols
+                } else {
+                    // 括弧がない場合、単一カラムとして処理
+                    vec![self.parse_identifier()?]
+                };
+
+                Ok(TableConstraint::Foreign {
+                    columns,
+                    ref_table,
+                    ref_columns,
+                })
+            }
+            TokenKind::Check => {
+                self.buffer.consume()?;
+                self.buffer.consume()?; // LEFT PAREN
+                let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+                let expr = expr_parser.parse()?;
+                self.buffer.consume()?; // RIGHT PAREN
+                Ok(TableConstraint::Check { expr })
+            }
+            _ => Err(ParseError::unexpected_token(
+                vec![
+                    TokenKind::Primary,
+                    TokenKind::Unique,
+                    TokenKind::Foreign,
+                    TokenKind::Check,
+                ],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            )),
         }
     }
 
@@ -2666,7 +2766,7 @@ mod tests {
 
     #[test]
     fn test_create_table_with_constraints() {
-        // 制約付きCREATE TABLE（簡易実装：カラム制約は解析するがconstraintsリストには追加しない）
+        // カラム制約付きCREATE TABLE
         let result = parse_sql(
             "CREATE TABLE users ( \
              id INT PRIMARY KEY, \

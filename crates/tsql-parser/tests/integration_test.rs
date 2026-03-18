@@ -9,8 +9,8 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::len_zero)]
 
-use tsql_parser::{parse, parse_one};
 use tsql_parser::ast::ColumnConstraint;
+use tsql_parser::{parse, parse_one};
 
 /// 複数の JOIN を含む複雑な SELECT 文
 #[test]
@@ -243,32 +243,48 @@ fn test_create_table_with_default() {
             match create.as_ref() {
                 tsql_parser::CreateStatement::Table(table) => {
                     // Check that status column has a default value
-                    let status_col = table.columns.iter()
+                    let status_col = table
+                        .columns
+                        .iter()
                         .find(|c| c.name.name == "status")
                         .expect("status column should exist");
-                    assert!(status_col.default_value.is_some(),
-                        "status column should have a default value");
+                    assert!(
+                        status_col.default_value.is_some(),
+                        "status column should have a default value"
+                    );
 
                     // Check that created_at column has a default value
-                    let created_col = table.columns.iter()
+                    let created_col = table
+                        .columns
+                        .iter()
                         .find(|c| c.name.name == "created_at")
                         .expect("created_at column should exist");
-                    assert!(created_col.default_value.is_some(),
-                        "created_at column should have a default value");
+                    assert!(
+                        created_col.default_value.is_some(),
+                        "created_at column should have a default value"
+                    );
 
                     // Check that is_active column has a default value
-                    let active_col = table.columns.iter()
+                    let active_col = table
+                        .columns
+                        .iter()
                         .find(|c| c.name.name == "is_active")
                         .expect("is_active column should exist");
-                    assert!(active_col.default_value.is_some(),
-                        "is_active column should have a default value");
+                    assert!(
+                        active_col.default_value.is_some(),
+                        "is_active column should have a default value"
+                    );
 
                     // Check that id column does NOT have a default value
-                    let id_col = table.columns.iter()
+                    let id_col = table
+                        .columns
+                        .iter()
                         .find(|c| c.name.name == "id")
                         .expect("id column should exist");
-                    assert!(id_col.default_value.is_none(),
-                        "id column should not have a default value");
+                    assert!(
+                        id_col.default_value.is_none(),
+                        "id column should not have a default value"
+                    );
                 }
                 _ => panic!("Expected Table statement"),
             }
@@ -289,18 +305,20 @@ fn test_create_table_with_default_null() {
 
     let stmt = parse_one(sql).unwrap();
     match stmt {
-        tsql_parser::Statement::Create(create) => {
-            match create.as_ref() {
-                tsql_parser::CreateStatement::Table(table) => {
-                    let desc_col = table.columns.iter()
-                        .find(|c| c.name.name == "description")
-                        .expect("description column should exist");
-                    assert!(desc_col.default_value.is_some(),
-                        "description column should have a default value");
-                }
-                _ => panic!("Expected Table statement"),
+        tsql_parser::Statement::Create(create) => match create.as_ref() {
+            tsql_parser::CreateStatement::Table(table) => {
+                let desc_col = table
+                    .columns
+                    .iter()
+                    .find(|c| c.name.name == "description")
+                    .expect("description column should exist");
+                assert!(
+                    desc_col.default_value.is_some(),
+                    "description column should have a default value"
+                );
             }
-        }
+            _ => panic!("Expected Table statement"),
+        },
         _ => panic!("CREATE文であること"),
     }
 }
@@ -1152,22 +1170,23 @@ fn test_column_references_constraint() {
     let stmt = parse_one(sql).unwrap();
 
     match stmt {
-        tsql_parser::Statement::Create(create) => {
-            match create.as_ref() {
-                tsql_parser::CreateStatement::Table(table) => {
-                    assert_eq!(table.columns.len(), 1);
-                    assert!(!table.columns[0].constraints.is_empty());
-                    match &table.columns[0].constraints[0] {
-                        ColumnConstraint::Foreign { ref_table, ref_column } => {
-                            assert_eq!(ref_table.name, "users");
-                            assert_eq!(ref_column.name, "id");
-                        }
-                        _ => panic!("REFERENCES制約があること"),
+        tsql_parser::Statement::Create(create) => match create.as_ref() {
+            tsql_parser::CreateStatement::Table(table) => {
+                assert_eq!(table.columns.len(), 1);
+                assert!(!table.columns[0].constraints.is_empty());
+                match &table.columns[0].constraints[0] {
+                    ColumnConstraint::Foreign {
+                        ref_table,
+                        ref_column,
+                    } => {
+                        assert_eq!(ref_table.name, "users");
+                        assert_eq!(ref_column.name, "id");
                     }
+                    _ => panic!("REFERENCES制約があること"),
                 }
-                _ => panic!("CREATE TABLEであること"),
             }
-        }
+            _ => panic!("CREATE TABLEであること"),
+        },
         _ => panic!("CREATE文であること"),
     }
 }
@@ -1232,6 +1251,135 @@ fn test_multiple_column_constraints() {
                 _ => panic!("CREATE TABLEであること"),
             }
         }
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// テーブルレベル制約のテスト
+#[test]
+fn test_table_level_constraints() {
+    use tsql_parser::ast::TableConstraint;
+
+    let sql = r#"
+        CREATE TABLE users (
+            id INT,
+            name VARCHAR(100),
+            email VARCHAR(255),
+            CONSTRAINT pk_users PRIMARY KEY (id),
+            CONSTRAINT uq_users_email UNIQUE (email)
+        )
+    "#;
+
+    let statements = parse(sql).unwrap();
+    assert_eq!(statements.len(), 1);
+
+    match &statements[0] {
+        tsql_parser::Statement::Create(create) => match create.as_ref() {
+            tsql_parser::CreateStatement::Table(table) => {
+                assert_eq!(table.columns.len(), 3);
+                assert_eq!(table.constraints.len(), 2);
+
+                // PRIMARY KEY制約
+                match &table.constraints[0] {
+                    TableConstraint::PrimaryKey { columns } => {
+                        assert_eq!(columns.len(), 1);
+                        assert_eq!(columns[0].name, "id");
+                    }
+                    _ => panic!("PRIMARY KEY制約であること"),
+                }
+
+                // UNIQUE制約
+                match &table.constraints[1] {
+                    TableConstraint::Unique { columns } => {
+                        assert_eq!(columns.len(), 1);
+                        assert_eq!(columns[0].name, "email");
+                    }
+                    _ => panic!("UNIQUE制約であること"),
+                }
+            }
+            _ => panic!("CREATE TABLEであること"),
+        },
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// 複合プライマリキーのテーブルレベル制約
+#[test]
+fn test_composite_primary_key() {
+    use tsql_parser::ast::TableConstraint;
+
+    let sql = r#"
+        CREATE TABLE order_items (
+            order_id INT,
+            product_id INT,
+            quantity INT,
+            CONSTRAINT pk_order_items PRIMARY KEY (order_id, product_id)
+        )
+    "#;
+
+    let statements = parse(sql).unwrap();
+    assert_eq!(statements.len(), 1);
+
+    match &statements[0] {
+        tsql_parser::Statement::Create(create) => match create.as_ref() {
+            tsql_parser::CreateStatement::Table(table) => {
+                assert_eq!(table.columns.len(), 3);
+                assert_eq!(table.constraints.len(), 1);
+
+                match &table.constraints[0] {
+                    TableConstraint::PrimaryKey { columns } => {
+                        assert_eq!(columns.len(), 2);
+                        assert_eq!(columns[0].name, "order_id");
+                        assert_eq!(columns[1].name, "product_id");
+                    }
+                    _ => panic!("PRIMARY KEY制約であること"),
+                }
+            }
+            _ => panic!("CREATE TABLEであること"),
+        },
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// FOREIGN KEY制約のテーブルレベル制約
+#[test]
+fn test_foreign_key_constraint() {
+    use tsql_parser::ast::TableConstraint;
+
+    let sql = r#"
+        CREATE TABLE orders (
+            id INT,
+            user_id INT,
+            CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    "#;
+
+    let statements = parse(sql).unwrap();
+    assert_eq!(statements.len(), 1);
+
+    match &statements[0] {
+        tsql_parser::Statement::Create(create) => match create.as_ref() {
+            tsql_parser::CreateStatement::Table(table) => {
+                assert_eq!(table.columns.len(), 2);
+                assert_eq!(table.constraints.len(), 1);
+
+                match &table.constraints[0] {
+                    TableConstraint::Foreign {
+                        columns,
+                        ref_table,
+                        ref_columns,
+                    } => {
+                        assert_eq!(columns.len(), 1);
+                        assert_eq!(columns[0].name, "user_id");
+                        assert_eq!(ref_table.name, "users");
+                        assert_eq!(ref_columns.len(), 1);
+                        assert_eq!(ref_columns[0].name, "id");
+                    }
+                    _ => panic!("FOREIGN KEY制約であること"),
+                }
+            }
+            _ => panic!("CREATE TABLEであること"),
+        },
         _ => panic!("CREATE文であること"),
     }
 }
