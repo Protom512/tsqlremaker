@@ -24,7 +24,10 @@ impl EmitterConfig {
     /// * `indent_size` - インデントサイズ
     #[must_use]
     pub const fn new(format: bool, indent_size: usize) -> Self {
-        Self { format, indent_size }
+        Self {
+            format,
+            indent_size,
+        }
     }
 
     /// 整形なしの設定を作成

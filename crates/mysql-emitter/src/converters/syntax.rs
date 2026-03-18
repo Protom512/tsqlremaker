@@ -115,9 +115,7 @@ impl SyntaxConverter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsql_parser::common::{
-        CommonExpression, CommonIdentifier, CommonLiteral,
-    };
+    use tsql_parser::common::{CommonExpression, CommonIdentifier, CommonLiteral};
 
     fn create_literal_int(n: i64) -> CommonExpression {
         CommonExpression::Literal(CommonLiteral::Integer(n))

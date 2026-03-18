@@ -42,9 +42,9 @@ pub use error::EmitError;
 
 use converters::{DataTypeConverter, FunctionConverter, SyntaxConverter};
 use tsql_parser::common::{
-    CommonExpression, CommonIdentifier, CommonLiteral, CommonUnaryOperator,
-    CommonBinaryOperator, CommonFunctionCall, CommonCaseExpression, CommonInList,
-    CommonStatement, CommonSelectStatement,
+    CommonBinaryOperator, CommonCaseExpression, CommonExpression, CommonFunctionCall,
+    CommonIdentifier, CommonInList, CommonLiteral, CommonSelectStatement, CommonStatement,
+    CommonUnaryOperator,
 };
 
 /// MySQL Emitter
@@ -151,7 +151,9 @@ impl MySqlEmitter {
             CommonStatement::Delete(delete) => self.visit_delete_statement(delete),
             CommonStatement::DialectSpecific { description, .. } => {
                 // 方言固有構文はエラーとする
-                Err(EmitError::UnsupportedStatement { statement_type: description.clone() })
+                Err(EmitError::UnsupportedStatement {
+                    statement_type: description.clone(),
+                })
             }
         }
     }
@@ -310,26 +312,32 @@ impl MySqlEmitter {
             CommonExpression::Literal(lit) => self.visit_literal(lit),
             CommonExpression::Identifier(ident) => self.visit_identifier(ident),
             CommonExpression::ColumnReference(col) => self.visit_column_reference(col),
-            CommonExpression::UnaryOp { op, expr, .. } => {
-                self.visit_unary_op(*op, expr)
-            }
-            CommonExpression::BinaryOp { left, op, right, .. } => {
-                self.visit_binary_op(left, *op, right)
-            }
+            CommonExpression::UnaryOp { op, expr, .. } => self.visit_unary_op(*op, expr),
+            CommonExpression::BinaryOp {
+                left, op, right, ..
+            } => self.visit_binary_op(left, *op, right),
             CommonExpression::FunctionCall(func) => self.visit_function(func),
             CommonExpression::Case(case) => self.visit_case(case),
-            CommonExpression::In { expr, list, negated, .. } => {
-                self.visit_in(expr, list, negated)
-            }
-            CommonExpression::Between { expr, low, high, negated, .. } => {
-                self.visit_between(expr, low, high, negated)
-            }
-            CommonExpression::Like { expr, pattern, negated, .. } => {
-                self.visit_like(expr, pattern, negated)
-            }
-            CommonExpression::IsNull { expr, negated, .. } => {
-                self.visit_is_null(expr, negated)
-            }
+            CommonExpression::In {
+                expr,
+                list,
+                negated,
+                ..
+            } => self.visit_in(expr, list, negated),
+            CommonExpression::Between {
+                expr,
+                low,
+                high,
+                negated,
+                ..
+            } => self.visit_between(expr, low, high, negated),
+            CommonExpression::Like {
+                expr,
+                pattern,
+                negated,
+                ..
+            } => self.visit_like(expr, pattern, negated),
+            CommonExpression::IsNull { expr, negated, .. } => self.visit_is_null(expr, negated),
             CommonExpression::Subquery { query, .. } => {
                 self.write("(");
                 self.visit_select_statement(query)?;
@@ -461,7 +469,9 @@ impl MySqlEmitter {
                     self.write(&format!(" AS `{}`", a));
                 }
             }
-            tsql_parser::common::CommonTableReference::Derived { subquery, alias, .. } => {
+            tsql_parser::common::CommonTableReference::Derived {
+                subquery, alias, ..
+            } => {
                 self.write("(");
                 self.visit_select_statement(subquery)?;
                 self.write(")");
@@ -517,7 +527,11 @@ impl MySqlEmitter {
     }
 
     /// 単項演算子を訪問
-    fn visit_unary_op(&mut self, op: CommonUnaryOperator, expr: &CommonExpression) -> Result<(), EmitError> {
+    fn visit_unary_op(
+        &mut self,
+        op: CommonUnaryOperator,
+        expr: &CommonExpression,
+    ) -> Result<(), EmitError> {
         let op_str = match op {
             CommonUnaryOperator::Plus => "+",
             CommonUnaryOperator::Minus => "-",
@@ -564,7 +578,9 @@ impl MySqlEmitter {
     /// 関数呼び出しを訪問
     fn visit_function(&mut self, func: &CommonFunctionCall) -> Result<(), EmitError> {
         let result = FunctionConverter::convert_function(
-            &CommonIdentifier { name: func.name.clone() },
+            &CommonIdentifier {
+                name: func.name.clone(),
+            },
             &func.args,
             func.distinct,
             self,
@@ -653,7 +669,11 @@ impl MySqlEmitter {
     ) -> Result<(), EmitError> {
         let expr_str = self.visit_expression(expr)?;
         self.write(&expr_str);
-        self.write(if *negated { " NOT BETWEEN " } else { " BETWEEN " });
+        self.write(if *negated {
+            " NOT BETWEEN "
+        } else {
+            " BETWEEN "
+        });
         let low_str = self.visit_expression(low)?;
         self.write(&low_str);
         self.write(" AND ");
@@ -696,9 +716,8 @@ impl Default for MySqlEmitter {
 mod tests {
     use super::*;
     use tsql_parser::common::{
-        CommonExpression, CommonLiteral, CommonIdentifier, CommonColumnReference,
-        CommonBinaryOperator, CommonUnaryOperator, CommonFunctionCall, CommonCaseExpression,
-        CommonInList,
+        CommonBinaryOperator, CommonCaseExpression, CommonColumnReference, CommonExpression,
+        CommonFunctionCall, CommonIdentifier, CommonInList, CommonLiteral, CommonUnaryOperator,
     };
 
     #[test]
@@ -810,7 +829,9 @@ mod tests {
     #[test]
     fn test_visit_identifier() {
         let mut emitter = MySqlEmitter::default();
-        let ident = CommonIdentifier { name: "users".to_string() };
+        let ident = CommonIdentifier {
+            name: "users".to_string(),
+        };
         let result = emitter.visit_expression(&CommonExpression::Identifier(ident));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "`users`");
@@ -885,7 +906,9 @@ mod tests {
     #[test]
     fn test_visit_in() {
         let mut emitter = MySqlEmitter::default();
-        let expr = CommonExpression::Identifier(CommonIdentifier { name: "id".to_string() });
+        let expr = CommonExpression::Identifier(CommonIdentifier {
+            name: "id".to_string(),
+        });
         let list = CommonInList::Values(vec![
             CommonExpression::Literal(CommonLiteral::Integer(1)),
             CommonExpression::Literal(CommonLiteral::Integer(2)),
@@ -905,7 +928,9 @@ mod tests {
     #[test]
     fn test_visit_not_in() {
         let mut emitter = MySqlEmitter::default();
-        let expr = CommonExpression::Identifier(CommonIdentifier { name: "id".to_string() });
+        let expr = CommonExpression::Identifier(CommonIdentifier {
+            name: "id".to_string(),
+        });
         let list = CommonInList::Values(vec![
             CommonExpression::Literal(CommonLiteral::Integer(1)),
             CommonExpression::Literal(CommonLiteral::Integer(2)),
@@ -924,7 +949,9 @@ mod tests {
     #[test]
     fn test_visit_between() {
         let mut emitter = MySqlEmitter::default();
-        let expr = CommonExpression::Identifier(CommonIdentifier { name: "age".to_string() });
+        let expr = CommonExpression::Identifier(CommonIdentifier {
+            name: "age".to_string(),
+        });
         let low = CommonExpression::Literal(CommonLiteral::Integer(18));
         let high = CommonExpression::Literal(CommonLiteral::Integer(65));
         let between_expr = CommonExpression::Between {
@@ -942,7 +969,9 @@ mod tests {
     #[test]
     fn test_visit_like() {
         let mut emitter = MySqlEmitter::default();
-        let expr = CommonExpression::Identifier(CommonIdentifier { name: "name".to_string() });
+        let expr = CommonExpression::Identifier(CommonIdentifier {
+            name: "name".to_string(),
+        });
         let pattern = CommonExpression::Literal(CommonLiteral::String("%John%".to_string()));
         let like_expr = CommonExpression::Like {
             expr: Box::new(expr),
@@ -959,7 +988,9 @@ mod tests {
     #[test]
     fn test_visit_is_null() {
         let mut emitter = MySqlEmitter::default();
-        let expr = CommonExpression::Identifier(CommonIdentifier { name: "email".to_string() });
+        let expr = CommonExpression::Identifier(CommonIdentifier {
+            name: "email".to_string(),
+        });
         let is_null_expr = CommonExpression::IsNull {
             expr: Box::new(expr),
             negated: false,
@@ -973,7 +1004,9 @@ mod tests {
     #[test]
     fn test_visit_is_not_null() {
         let mut emitter = MySqlEmitter::default();
-        let expr = CommonExpression::Identifier(CommonIdentifier { name: "email".to_string() });
+        let expr = CommonExpression::Identifier(CommonIdentifier {
+            name: "email".to_string(),
+        });
         let is_null_expr = CommonExpression::IsNull {
             expr: Box::new(expr),
             negated: true,

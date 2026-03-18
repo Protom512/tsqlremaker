@@ -50,8 +50,8 @@ impl FunctionConverter {
                     function_name: format!("DATEDIFF with {} args", args.len()),
                 });
             }
-            "GETDATE" | "GETUTCDATE" | "LEN" | "CHARINDEX" | "REPLICATE" | "ISNULL"
-            | "NEWID" | "CEILING" | "POWER" => {
+            "GETDATE" | "GETUTCDATE" | "LEN" | "CHARINDEX" | "REPLICATE" | "ISNULL" | "NEWID"
+            | "CEILING" | "POWER" => {
                 // 単純な名前マッピング
                 let mapped_name = Self::map_function_name(&func_name).ok_or_else(|| {
                     EmitError::UnsupportedFunction {
@@ -229,7 +229,10 @@ mod tests {
 
     #[test]
     fn test_map_isnull_to_ifnull() {
-        assert_eq!(FunctionConverter::map_function_name("ISNULL"), Some("IFNULL"));
+        assert_eq!(
+            FunctionConverter::map_function_name("ISNULL"),
+            Some("IFNULL")
+        );
     }
 
     #[test]
@@ -239,7 +242,10 @@ mod tests {
 
     #[test]
     fn test_map_ceiling_to_ceil() {
-        assert_eq!(FunctionConverter::map_function_name("CEILING"), Some("CEIL"));
+        assert_eq!(
+            FunctionConverter::map_function_name("CEILING"),
+            Some("CEIL")
+        );
     }
 
     #[test]

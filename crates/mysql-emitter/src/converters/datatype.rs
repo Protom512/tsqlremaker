@@ -180,7 +180,9 @@ mod tests {
 
     #[test]
     fn test_convert_float_with_precision() {
-        let dt = CommonDataType::Float { precision: Some(10) };
+        let dt = CommonDataType::Float {
+            precision: Some(10),
+        };
         assert_eq!(DataTypeConverter::convert(&dt), "FLOAT(10)");
     }
 
