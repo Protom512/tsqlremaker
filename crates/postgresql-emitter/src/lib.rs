@@ -91,6 +91,7 @@ impl PostgreSqlEmitter {
     }
 
     /// 現在のインデントを取得
+    #[allow(dead_code)]
     fn current_indent(&self) -> String {
         " ".repeat(self.indent_level * self.config.indent_size)
     }
@@ -106,6 +107,7 @@ impl PostgreSqlEmitter {
     }
 
     /// インデントを追加
+    #[allow(dead_code)]
     fn write_indent(&mut self) {
         if self.config.quote_identifiers {
             let indent = self.current_indent();
@@ -114,11 +116,13 @@ impl PostgreSqlEmitter {
     }
 
     /// インデントを増やす
+    #[allow(dead_code)]
     fn inc_indent(&mut self) {
         self.indent_level += 1;
     }
 
     /// インデントを減らす
+    #[allow(dead_code)]
     fn dec_indent(&mut self) {
         if self.indent_level > 0 {
             self.indent_level -= 1;
@@ -160,7 +164,10 @@ impl PostgreSqlEmitter {
     /// let sql = emitter.emit(&stmt).unwrap();
     /// assert_eq!(sql, "SELECT *");
     /// ```
-    pub fn emit(&mut self, stmt: &tsql_parser::common::CommonStatement) -> Result<String, EmitError> {
+    pub fn emit(
+        &mut self,
+        stmt: &tsql_parser::common::CommonStatement,
+    ) -> Result<String, EmitError> {
         self.reset();
         self.visit_statement(stmt)?;
         Ok(self.buffer.clone())
@@ -333,7 +340,9 @@ impl PostgreSqlEmitter {
                     self.write_identifier(alias_name);
                 }
             }
-            tsql_parser::common::CommonTableReference::Derived { subquery, alias, .. } => {
+            tsql_parser::common::CommonTableReference::Derived {
+                subquery, alias, ..
+            } => {
                 self.write("(");
                 self.visit_select_statement(subquery)?;
                 self.write(")");

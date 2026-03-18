@@ -26,6 +26,7 @@ pub enum EmitError {
 }
 
 /// PostgreSQL Emitter の Result 型エイリアス
+#[allow(dead_code)]
 pub type Result<T> = std::result::Result<T, EmitError>;
 
 #[cfg(test)]
@@ -35,10 +36,7 @@ mod tests {
     #[test]
     fn test_error_display() {
         let err = EmitError::Unsupported("DECLARE statement".to_string());
-        assert_eq!(
-            format!("{}", err),
-            "Unsupported: DECLARE statement"
-        );
+        assert_eq!(format!("{}", err), "Unsupported: DECLARE statement");
     }
 
     #[test]
