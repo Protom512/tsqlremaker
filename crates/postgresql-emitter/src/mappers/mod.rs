@@ -6,8 +6,10 @@ mod datatype;
 mod expression;
 mod function;
 mod identifier;
+mod select_statement;
 
 pub use datatype::DataTypeMapper;
 pub use expression::ExpressionEmitter;
 pub use function::FunctionMapper;
 pub use identifier::IdentifierQuoter;
+pub use select_statement::SelectStatementRenderer;
