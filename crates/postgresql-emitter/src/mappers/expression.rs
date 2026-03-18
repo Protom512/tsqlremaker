@@ -62,9 +62,9 @@ impl ExpressionEmitter {
                 negated,
                 ..
             } => {
-                let neg = if *negated { "NOT " } else { "" };
+                let neg = if *negated { " NOT" } else { "" };
                 let list_str = Self::emit_in_list(list);
-                format!("{}{} IN {}", neg, Self::emit(expr), list_str)
+                format!("{}{} IN {}", Self::emit(expr), neg, list_str)
             }
 
             // BETWEEN式
@@ -139,6 +139,11 @@ impl ExpressionEmitter {
 
     /// 識別子を発行
     fn emit_identifier(ident: &CommonIdentifier) -> String {
+        // * はワイルドカードとして特別扱い（クォート不要）
+        if ident.name == "*" {
+            return "*".to_string();
+        }
+
         // PostgreSQLの識別子は必要に応じて二重引用符で囲む
         let name = &ident.name;
         if needs_quoting(name) {
@@ -150,6 +155,14 @@ impl ExpressionEmitter {
 
     /// カラム参照を発行
     fn emit_column_reference(col: &CommonColumnReference) -> String {
+        // * はワイルドカードとして特別扱い
+        if col.column == "*" {
+            return match &col.table {
+                Some(table) => format!("{}.*", table),
+                None => "*".to_string(),
+            };
+        }
+
         match &col.table {
             Some(table) => {
                 format!(
