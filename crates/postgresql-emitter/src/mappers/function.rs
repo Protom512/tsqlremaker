@@ -2,8 +2,8 @@
 //!
 //! T-SQL 関数を PostgreSQL 関数にマッピングします。
 
-use crate::EmitError;
 use crate::mappers::ExpressionEmitter;
+use crate::EmitError;
 use tsql_parser::common::{CommonExpression, CommonIdentifier};
 
 /// PostgreSQL 関数マッパー
@@ -87,7 +87,9 @@ impl FunctionMapper {
             "GETUTCDATE" => Ok("(NOW() AT TIME ZONE 'UTC')".to_string()),
 
             // LEN: LEN(s) → LENGTH(s)
-            "LEN" if args.len() == 1 => Ok(format!("LENGTH({})", ExpressionEmitter::emit(&args[0]))),
+            "LEN" if args.len() == 1 => {
+                Ok(format!("LENGTH({})", ExpressionEmitter::emit(&args[0])))
+            }
 
             // SUBSTRING: SUBSTRING(s, start, len) → SUBSTRING(s FROM start FOR len)
             "SUBSTRING" if args.len() == 3 => Ok(format!(
@@ -112,7 +114,9 @@ impl FunctionMapper {
             )),
 
             // CEILING: CEILING(x) → CEIL(x)
-            "CEILING" if args.len() == 1 => Ok(format!("CEIL({})", ExpressionEmitter::emit(&args[0]))),
+            "CEILING" if args.len() == 1 => {
+                Ok(format!("CEIL({})", ExpressionEmitter::emit(&args[0])))
+            }
 
             // NEWID: NEWID() → UUID_GENERATE_V4() (uuid-ossp 拡張が必要)
             "NEWID" if args.is_empty() => Ok("UUID_GENERATE_V4()".to_string()),
@@ -120,10 +124,14 @@ impl FunctionMapper {
             _ => {
                 // マッピングがあれば使用
                 if let Some(mapped) = Self::map_function_name(name) {
-                    Ok(format!("{}({})", mapped, args.iter()
-                        .map(ExpressionEmitter::emit)
-                        .collect::<Vec<_>>()
-                        .join(", ")))
+                    Ok(format!(
+                        "{}({})",
+                        mapped,
+                        args.iter()
+                            .map(ExpressionEmitter::emit)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ))
                 } else {
                     Err(EmitError::UnsupportedFunction(name.to_string()))
                 }
@@ -142,9 +150,11 @@ impl FunctionMapper {
         // DATEADD(part, n, date) → date + INTERVAL 'n part'
         let part = match &args[0] {
             CommonExpression::Identifier(CommonIdentifier { name }) => name,
-            _ => return Err(EmitError::SyntaxError {
-                message: "DATEADD first argument must be an identifier".to_string(),
-            }),
+            _ => {
+                return Err(EmitError::SyntaxError {
+                    message: "DATEADD first argument must be an identifier".to_string(),
+                })
+            }
         };
 
         let n = ExpressionEmitter::emit(&args[1]);
@@ -174,9 +184,11 @@ impl FunctionMapper {
         // DATEDIFF(part, start, end) → DATE_PART('part', end - start)
         let part = match &args[0] {
             CommonExpression::Identifier(CommonIdentifier { name }) => name,
-            _ => return Err(EmitError::SyntaxError {
-                message: "DATEDIFF first argument must be an identifier".to_string(),
-            }),
+            _ => {
+                return Err(EmitError::SyntaxError {
+                    message: "DATEDIFF first argument must be an identifier".to_string(),
+                })
+            }
         };
 
         let start = ExpressionEmitter::emit(&args[1]);
@@ -192,7 +204,10 @@ impl FunctionMapper {
             _ => part,
         };
 
-        Ok(format!("DATE_PART('{}', {} - {})", postgres_part, end, start))
+        Ok(format!(
+            "DATE_PART('{}', {} - {})",
+            postgres_part, end, start
+        ))
     }
 }
 
@@ -203,32 +218,50 @@ mod tests {
 
     #[test]
     fn test_map_getdate() {
-        assert_eq!(FunctionMapper::map_function_name("GETDATE"), Some("CURRENT_TIMESTAMP".to_string()));
+        assert_eq!(
+            FunctionMapper::map_function_name("GETDATE"),
+            Some("CURRENT_TIMESTAMP".to_string())
+        );
     }
 
     #[test]
     fn test_map_getutcdate() {
-        assert_eq!(FunctionMapper::map_function_name("GETUTCDATE"), Some("(NOW() AT TIME ZONE 'UTC')".to_string()));
+        assert_eq!(
+            FunctionMapper::map_function_name("GETUTCDATE"),
+            Some("(NOW() AT TIME ZONE 'UTC')".to_string())
+        );
     }
 
     #[test]
     fn test_map_len() {
-        assert_eq!(FunctionMapper::map_function_name("LEN"), Some("LENGTH".to_string()));
+        assert_eq!(
+            FunctionMapper::map_function_name("LEN"),
+            Some("LENGTH".to_string())
+        );
     }
 
     #[test]
     fn test_map_isnull() {
-        assert_eq!(FunctionMapper::map_function_name("ISNULL"), Some("COALESCE".to_string()));
+        assert_eq!(
+            FunctionMapper::map_function_name("ISNULL"),
+            Some("COALESCE".to_string())
+        );
     }
 
     #[test]
     fn test_map_ceiling() {
-        assert_eq!(FunctionMapper::map_function_name("CEILING"), Some("CEIL".to_string()));
+        assert_eq!(
+            FunctionMapper::map_function_name("CEILING"),
+            Some("CEIL".to_string())
+        );
     }
 
     #[test]
     fn test_map_newid() {
-        assert_eq!(FunctionMapper::map_function_name("NEWID"), Some("UUID_GENERATE_V4".to_string()));
+        assert_eq!(
+            FunctionMapper::map_function_name("NEWID"),
+            Some("UUID_GENERATE_V4".to_string())
+        );
     }
 
     #[test]
@@ -250,7 +283,9 @@ mod tests {
 
     #[test]
     fn test_convert_len() {
-        let args = vec![CommonExpression::Identifier(CommonIdentifier { name: "column_name".to_string() })];
+        let args = vec![CommonExpression::Identifier(CommonIdentifier {
+            name: "column_name".to_string(),
+        })];
         let result = FunctionMapper::map_function_call("LEN", &args).unwrap();
         assert_eq!(result, "LENGTH(column_name)");
     }
@@ -258,7 +293,9 @@ mod tests {
     #[test]
     fn test_convert_isnull() {
         let args = vec![
-            CommonExpression::Identifier(CommonIdentifier { name: "expr".to_string() }),
+            CommonExpression::Identifier(CommonIdentifier {
+                name: "expr".to_string(),
+            }),
             CommonExpression::Literal(CommonLiteral::Integer(0)),
         ];
         let result = FunctionMapper::map_function_call("ISNULL", &args).unwrap();
@@ -267,7 +304,9 @@ mod tests {
 
     #[test]
     fn test_convert_ceiling() {
-        let args = vec![CommonExpression::Identifier(CommonIdentifier { name: "value".to_string() })];
+        let args = vec![CommonExpression::Identifier(CommonIdentifier {
+            name: "value".to_string(),
+        })];
         let result = FunctionMapper::map_function_call("CEILING", &args).unwrap();
         assert_eq!(result, "CEIL(value)");
     }
@@ -275,9 +314,13 @@ mod tests {
     #[test]
     fn test_convert_dateadd_day() {
         let args = vec![
-            CommonExpression::Identifier(CommonIdentifier { name: "DAY".to_string() }),
+            CommonExpression::Identifier(CommonIdentifier {
+                name: "DAY".to_string(),
+            }),
             CommonExpression::Literal(CommonLiteral::Integer(7)),
-            CommonExpression::Identifier(CommonIdentifier { name: "current_date".to_string() }),
+            CommonExpression::Identifier(CommonIdentifier {
+                name: "current_date".to_string(),
+            }),
         ];
         let result = FunctionMapper::map_function_call("DATEADD", &args).unwrap();
         assert_eq!(result, "current_date + INTERVAL '7 days'");
@@ -286,9 +329,13 @@ mod tests {
     #[test]
     fn test_convert_dateadd_month() {
         let args = vec![
-            CommonExpression::Identifier(CommonIdentifier { name: "MONTH".to_string() }),
+            CommonExpression::Identifier(CommonIdentifier {
+                name: "MONTH".to_string(),
+            }),
             CommonExpression::Literal(CommonLiteral::Integer(3)),
-            CommonExpression::Identifier(CommonIdentifier { name: "start_date".to_string() }),
+            CommonExpression::Identifier(CommonIdentifier {
+                name: "start_date".to_string(),
+            }),
         ];
         let result = FunctionMapper::map_function_call("DATEADD", &args).unwrap();
         assert_eq!(result, "start_date + INTERVAL '3 months'");
@@ -297,9 +344,13 @@ mod tests {
     #[test]
     fn test_convert_dateadd_year() {
         let args = vec![
-            CommonExpression::Identifier(CommonIdentifier { name: "YEAR".to_string() }),
+            CommonExpression::Identifier(CommonIdentifier {
+                name: "YEAR".to_string(),
+            }),
             CommonExpression::Literal(CommonLiteral::Integer(1)),
-            CommonExpression::Identifier(CommonIdentifier { name: "hire_date".to_string() }),
+            CommonExpression::Identifier(CommonIdentifier {
+                name: "hire_date".to_string(),
+            }),
         ];
         let result = FunctionMapper::map_function_call("DATEADD", &args).unwrap();
         assert_eq!(result, "hire_date + INTERVAL '1 years'");
@@ -308,9 +359,15 @@ mod tests {
     #[test]
     fn test_convert_datediff_day() {
         let args = vec![
-            CommonExpression::Identifier(CommonIdentifier { name: "DAY".to_string() }),
-            CommonExpression::Identifier(CommonIdentifier { name: "start_date".to_string() }),
-            CommonExpression::Identifier(CommonIdentifier { name: "end_date".to_string() }),
+            CommonExpression::Identifier(CommonIdentifier {
+                name: "DAY".to_string(),
+            }),
+            CommonExpression::Identifier(CommonIdentifier {
+                name: "start_date".to_string(),
+            }),
+            CommonExpression::Identifier(CommonIdentifier {
+                name: "end_date".to_string(),
+            }),
         ];
         let result = FunctionMapper::map_function_call("DATEDIFF", &args).unwrap();
         assert_eq!(result, "DATE_PART('day', end_date - start_date)");
@@ -319,9 +376,15 @@ mod tests {
     #[test]
     fn test_convert_datediff_month() {
         let args = vec![
-            CommonExpression::Identifier(CommonIdentifier { name: "MONTH".to_string() }),
-            CommonExpression::Identifier(CommonIdentifier { name: "start_date".to_string() }),
-            CommonExpression::Identifier(CommonIdentifier { name: "end_date".to_string() }),
+            CommonExpression::Identifier(CommonIdentifier {
+                name: "MONTH".to_string(),
+            }),
+            CommonExpression::Identifier(CommonIdentifier {
+                name: "start_date".to_string(),
+            }),
+            CommonExpression::Identifier(CommonIdentifier {
+                name: "end_date".to_string(),
+            }),
         ];
         let result = FunctionMapper::map_function_call("DATEDIFF", &args).unwrap();
         assert_eq!(result, "DATE_PART('month', end_date - start_date)");
@@ -341,7 +404,9 @@ mod tests {
     #[test]
     fn test_convert_dateadd_wrong_args() {
         let args = vec![
-            CommonExpression::Identifier(CommonIdentifier { name: "DAY".to_string() }),
+            CommonExpression::Identifier(CommonIdentifier {
+                name: "DAY".to_string(),
+            }),
             CommonExpression::Literal(CommonLiteral::Integer(7)),
         ];
         let result = FunctionMapper::map_function_call("DATEADD", &args);
