@@ -1,0 +1,20 @@
+[package]
+name = "postgresql-emitter"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["T-SQL Remaker Contributors"]
+description = "PostgreSQL SQL emitter for Common SQL AST"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/your-org/tsqlremaker"
+
+[dependencies]
+# Workspace dependencies
+tsql-parser = { path = "../tsql-parser" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+
+[lints]
+workspace = true
