@@ -1383,3 +1383,83 @@ fn test_foreign_key_constraint() {
         _ => panic!("CREATE文であること"),
     }
 }
+
+/// 派生テーブル（サブクエリ内のサブクエリ）
+#[test]
+fn test_derived_table_in_subquery() {
+    use tsql_parser::ast::TableReference;
+
+    let sql = r#"
+        SELECT u.id, u.name
+        FROM (
+            SELECT id, name
+            FROM users
+            WHERE active = 1
+        ) AS u
+        WHERE u.id > 10
+    "#;
+
+    let statements = parse(sql).unwrap();
+    assert_eq!(statements.len(), 1);
+
+    match &statements[0] {
+        tsql_parser::Statement::Select(select) => {
+            assert_eq!(select.columns.len(), 2);
+
+            // FROM句に派生テーブルがあることを確認
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            assert_eq!(from_clause.tables.len(), 1);
+
+            match &from_clause.tables[0] {
+                TableReference::Subquery { query, alias, .. } => {
+                    assert_eq!(alias.as_ref().unwrap().name, "u");
+                    assert_eq!(query.columns.len(), 2);
+                }
+                _ => panic!("派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// ネストした派生テーブル
+#[test]
+fn test_nested_derived_tables() {
+    use tsql_parser::ast::TableReference;
+
+    let sql = r#"
+        SELECT a.id, b.name
+        FROM (
+            SELECT id FROM table1
+        ) AS a
+        JOIN (
+            SELECT id, name FROM (
+                SELECT id, name FROM table2
+            ) AS inner_table
+        ) AS b
+        ON a.id = b.id
+    "#;
+
+    let statements = parse(sql).unwrap();
+    assert_eq!(statements.len(), 1);
+
+    match &statements[0] {
+        tsql_parser::Statement::Select(select) => {
+            // FROM句に1つのテーブルと1つのJOINがあることを確認
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            assert_eq!(from_clause.tables.len(), 1);
+            assert_eq!(from_clause.joins.len(), 1);
+
+            // JOIN内のテーブルも派生テーブルであることを確認
+            match &from_clause.joins[0].table {
+                TableReference::Subquery { .. } => {
+                    // OK
+                }
+                _ => panic!("JOINされたテーブルは派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}

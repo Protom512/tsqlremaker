@@ -288,6 +288,12 @@ impl<'a, 'src> ExpressionParser<'a, 'src> {
         })
     }
 
+    /// サブクエリとしてSELECT文を解析（Statementラッパー）
+    fn parse_subquery_select_statement(&mut self) -> ParseResult<crate::ast::Statement> {
+        let select_stmt = self.parse_subquery_select()?;
+        Ok(crate::ast::Statement::Select(Box::new(select_stmt)))
+    }
+
     /// サブクエリ内のSELECTアイテムを解析
     fn parse_subquery_select_item(&mut self) -> ParseResult<SelectItem> {
         // ワイルドカード
@@ -323,53 +329,111 @@ impl<'a, 'src> ExpressionParser<'a, 'src> {
         Ok(SelectItem::Expression(expr, alias))
     }
 
-    /// サブクエリ内のFROM句を解析（簡易版）
+    /// サブクエリ内のFROM句を解析
     fn parse_subquery_from_clause(&mut self) -> ParseResult<crate::ast::FromClause> {
         self.buffer.consume()?; // FROM
 
         let mut tables = Vec::new();
         loop {
-            let start = self.buffer.current()?.span.start;
+            // 派生テーブル（サブクエリ）の検出
+            if self.buffer.check(TokenKind::LParen) {
+                let start = self.buffer.current()?.span.start;
+                self.buffer.consume()?; // LParen
 
-            // 通常のテーブル参照のみ対応（サブクエリ内のサブクエリは複雑になるため）
-            let text = self.buffer.current()?.text;
-            let span = self.buffer.current()?.span;
-            self.buffer.consume()?;
+                // サブクエリを解析
+                let select_stmt = match self.parse_subquery_select_statement()? {
+                    crate::ast::Statement::Select(select) => select,
+                    _ => {
+                        return Err(ParseError::invalid_syntax(
+                            "Expected SELECT statement in subquery".to_string(),
+                            self.buffer.current()?.span,
+                        ))
+                    }
+                };
 
-            let name = crate::ast::Identifier {
-                name: text.to_string(),
-                span,
-            };
+                // 右括弧を期待
+                if !self.buffer.check(TokenKind::RParen) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::RParen],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?; // RParen
 
-            let alias = if self.buffer.check(TokenKind::As) {
-                self.buffer.consume()?;
-                let text = self.buffer.current()?.text;
-                let span = self.buffer.current()?.span;
-                self.buffer.consume()?;
-                Some(crate::ast::Identifier {
-                    name: text.to_string(),
-                    span,
-                })
-            } else if self.buffer.check(TokenKind::Ident) {
-                let text = self.buffer.current()?.text;
-                let span = self.buffer.current()?.span;
-                self.buffer.consume()?;
-                Some(crate::ast::Identifier {
-                    name: text.to_string(),
-                    span,
-                })
+                // オプションの別名
+                let alias = if self.buffer.check(TokenKind::As) {
+                    self.buffer.consume()?;
+                    let text = self.buffer.current()?.text;
+                    let span = self.buffer.current()?.span;
+                    self.buffer.consume()?;
+                    Some(crate::ast::Identifier {
+                        name: text.to_string(),
+                        span,
+                    })
+                } else if self.buffer.check(TokenKind::Ident) {
+                    let text = self.buffer.current()?.text;
+                    let span = self.buffer.current()?.span;
+                    self.buffer.consume()?;
+                    Some(crate::ast::Identifier {
+                        name: text.to_string(),
+                        span,
+                    })
+                } else {
+                    None
+                };
+
+                let end_span = self.buffer.current()?.span;
+                tables.push(crate::ast::TableReference::Subquery {
+                    query: select_stmt,
+                    alias,
+                    span: Span {
+                        start,
+                        end: end_span.end,
+                    },
+                });
             } else {
-                None
-            };
+                // 通常のテーブル参照
+                let start = self.buffer.current()?.span.start;
+                let text = self.buffer.current()?.text;
+                let span = self.buffer.current()?.span;
+                self.buffer.consume()?;
 
-            tables.push(crate::ast::TableReference::Table {
-                name,
-                alias,
-                span: Span {
-                    start,
-                    end: self.buffer.current()?.span.end,
-                },
-            });
+                let name = crate::ast::Identifier {
+                    name: text.to_string(),
+                    span,
+                };
+
+                let alias = if self.buffer.check(TokenKind::As) {
+                    self.buffer.consume()?;
+                    let text = self.buffer.current()?.text;
+                    let span = self.buffer.current()?.span;
+                    self.buffer.consume()?;
+                    Some(crate::ast::Identifier {
+                        name: text.to_string(),
+                        span,
+                    })
+                } else if self.buffer.check(TokenKind::Ident) {
+                    let text = self.buffer.current()?.text;
+                    let span = self.buffer.current()?.span;
+                    self.buffer.consume()?;
+                    Some(crate::ast::Identifier {
+                        name: text.to_string(),
+                        span,
+                    })
+                } else {
+                    None
+                };
+
+                tables.push(crate::ast::TableReference::Table {
+                    name,
+                    alias,
+                    span: Span {
+                        start,
+                        end: self.buffer.current()?.span.end,
+                    },
+                });
+            }
 
             if !self.buffer.consume_if(TokenKind::Comma)? {
                 break;
