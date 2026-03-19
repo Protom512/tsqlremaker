@@ -1,0 +1,44 @@
+[package]
+name = "tsql-remaker-wasm"
+version = "0.1.0"
+edition = "2021"
+authors = ["TSQL Remaker Contributors"]
+description = "WebAssembly bindings for T-SQL Remaker"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Protom512/tsqlremaker"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+tsql-lexer = { path = "../tsql-lexer" }
+tsql-parser = { path = "../tsql-parser" }
+tsql-token = { path = "../tsql-token" }
+postgresql-emitter = { path = "../postgresql-emitter" }
+mysql-emitter = { path = "../mysql-emitter" }
+
+# WASM-specific dependencies
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+wee_alloc = { version = "0.4", optional = true }
+
+# getrandom with WASM JS support
+getrandom = { version = "0.3", features = ["wasm_js"], optional = true }
+
+[features]
+default = ["console_error_panic_hook"]
+wasm = [
+    "wasm-bindgen",
+    "js-sys",
+    "serde",
+    "serde-wasm-bindgen",
+    "console_error_panic_hook",
+    "getrandom/wasm_js",
+]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-mutable-globals"]
+
