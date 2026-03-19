@@ -247,10 +247,29 @@ pub fn convert_to(input: &str, dialect: TargetDialect) -> JsValue {
                 .unwrap_or_else(|_| JsValue::from_str(r#"{"error":"serialization_error"}"#))
         }
         TargetDialect::SQLite => {
-            let error_result = JsConversionResult::Error {
-                message: "SQLite emitter is not yet implemented".to_string(),
+            use sqlite_emitter::{EmitterConfig, SqliteEmitter};
+
+            let mut emitter = SqliteEmitter::new(EmitterConfig::default());
+            let mut results = Vec::new();
+
+            for stmt in common_stmts {
+                match emitter.emit(&stmt) {
+                    Ok(sql) => results.push(sql),
+                    Err(e) => {
+                        let error_result = JsConversionResult::Error {
+                            message: format!("Emit error: {}", e),
+                        };
+                        return serde_wasm_bindgen::to_value(&error_result).unwrap_or_else(|_| {
+                            JsValue::from_str(r#"{"error":"serialization_error"}"#)
+                        });
+                    }
+                }
+            }
+
+            let success_result = JsConversionResult::Success {
+                sql: results.join(";\n"),
             };
-            serde_wasm_bindgen::to_value(&error_result)
+            serde_wasm_bindgen::to_value(&success_result)
                 .unwrap_or_else(|_| JsValue::from_str(r#"{"error":"serialization_error"}"#))
         }
     }
@@ -267,7 +286,7 @@ pub fn get_supported_dialects() -> JsValue {
     let dialects = vec![
         ("postgresql", "PostgreSQL - Available"),
         ("mysql", "MySQL / MariaDB - Available"),
-        ("sqlite", "SQLite - Not Planned"),
+        ("sqlite", "SQLite - Available"),
     ];
 
     serde_wasm_bindgen::to_value(&dialects).unwrap_or_else(|_| JsValue::from_str("[]"))
@@ -386,5 +405,27 @@ mod tests {
         let result_str = result.as_string().unwrap();
         // パースエラーが返るはず
         assert!(result_str.contains("Error") || result_str.contains("error"));
+    }
+
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn test_convert_to_sqlite_simple_select() {
+        let input = "SELECT * FROM users";
+        let result = convert_to(input, TargetDialect::SQLite);
+
+        // JSONをパースして結果を検証
+        let result_str = result.as_string().unwrap();
+        assert!(result_str.contains(r#""status":"success""#) || result_str.contains("Success"));
+        assert!(result_str.contains("SELECT"));
+    }
+
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn test_convert_to_sqlite_with_where() {
+        let input = "SELECT id, name FROM users WHERE id = 1";
+        let result = convert_to(input, TargetDialect::SQLite);
+
+        let result_str = result.as_string().unwrap();
+        assert!(result_str.contains("WHERE"));
     }
 }

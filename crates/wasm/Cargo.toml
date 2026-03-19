@@ -16,6 +16,7 @@ tsql-parser = { path = "../tsql-parser" }
 tsql-token = { path = "../tsql-token" }
 postgresql-emitter = { path = "../postgresql-emitter" }
 mysql-emitter = { path = "../mysql-emitter" }
+sqlite-emitter = { path = "../sqlite-emitter" }
 
 # WASM-specific dependencies
 wasm-bindgen = { version = "0.2", optional = true }

@@ -5,6 +5,7 @@ members = [
     "crates/tsql-parser",
     "crates/mysql-emitter",
     "crates/postgresql-emitter",
+    "crates/sqlite-emitter",
     "crates/wasm",
 ]
 resolver = "2"
