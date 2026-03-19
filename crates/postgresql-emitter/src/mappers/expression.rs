@@ -7,6 +7,8 @@ use tsql_parser::common::{
     CommonFunctionCall, CommonIdentifier, CommonInList, CommonLiteral, CommonUnaryOperator,
 };
 
+use super::identifier::IdentifierQuoter;
+
 /// 式エミッター
 pub struct ExpressionEmitter;
 
@@ -144,13 +146,8 @@ impl ExpressionEmitter {
             return "*".to_string();
         }
 
-        // PostgreSQLの識別子は必要に応じて二重引用符で囲む
-        let name = &ident.name;
-        if needs_quoting(name) {
-            format!("\"{}\"", name.replace('"', "\"\""))
-        } else {
-            name.clone()
-        }
+        // IdentifierQuoterを使用して識別子をクォート
+        IdentifierQuoter::quote(&ident.name)
     }
 
     /// カラム参照を発行
@@ -256,77 +253,6 @@ impl ExpressionEmitter {
         // SelectStatementRenderer を使用してサブクエリをレンダリング
         super::SelectStatementRenderer::emit(query)
     }
-
-    /// 識別子がクォートを必要とするか判定
-    ///
-    /// PostgreSQLでは以下の場合に識別子を二重引用符で囲む必要がある:
-    /// - 大文字を含む（ケースを保存するため）
-    /// - 数字で始まる
-    /// - 予約語である
-    /// - 特殊文字を含む
-    /// - 空文字列
-    ///
-    /// ※純粋な小文字識別子はクォート不要（PostgreSQLが自動的に小文字に変換するため）
-    #[allow(dead_code)]
-    fn needs_quoting(name: &str) -> bool {
-        if name.is_empty() {
-            return true;
-        }
-
-        // 最初の文字を取得（空文字列はチェック済みなので Some が保証される）
-        let first_char = match name.chars().next() {
-            Some(c) => c,
-            None => return true,
-        };
-
-        // 数字で始まる場合はクォートが必要
-        if first_char.is_ascii_digit() {
-            return true;
-        }
-
-        // 大文字を含む場合はクォートが必要（ケース保存のため）
-        if name.chars().any(|c| c.is_ascii_uppercase()) {
-            return true;
-        }
-
-        // 特殊文字を含む場合はクォートが必要
-        if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            return true;
-        }
-
-        false
-    }
-}
-
-/// 識別子がクォートを必要とするか判定（ヘルパー関数）
-#[allow(dead_code)]
-fn needs_quoting(name: &str) -> bool {
-    if name.is_empty() {
-        return true;
-    }
-
-    // 最初の文字を取得（空文字列はチェック済みなので Some が保証される）
-    let first_char = match name.chars().next() {
-        Some(c) => c,
-        None => return true,
-    };
-
-    // 数字で始まる場合はクォートが必要
-    if first_char.is_ascii_digit() {
-        return true;
-    }
-
-    // 大文字を含む場合はクォートが必要（ケース保存のため）
-    if name.chars().any(|c| c.is_ascii_uppercase()) {
-        return true;
-    }
-
-    // 特殊文字を含む場合はクォートが必要
-    if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-        return true;
-    }
-
-    false
 }
 
 #[cfg(test)]

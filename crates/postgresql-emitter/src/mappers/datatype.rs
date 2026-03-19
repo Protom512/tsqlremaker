@@ -26,7 +26,8 @@ impl DataTypeMapper {
     pub fn map(data_type: &CommonDataType) -> Result<String, EmitError> {
         Ok(match data_type {
             // 整数型
-            CommonDataType::TinyInt => "TINYINT".to_string(),
+            // Note: PostgreSQL doesn't have TINYINT, use SMALLINT instead
+            CommonDataType::TinyInt => "SMALLINT".to_string(),
             CommonDataType::SmallInt => "SMALLINT".to_string(),
             CommonDataType::Int => "INTEGER".to_string(),
             CommonDataType::BigInt => "BIGINT".to_string(),
@@ -131,9 +132,10 @@ mod tests {
     // 整数型のテスト
     #[test]
     fn test_map_tinyint() {
+        // PostgreSQLにはTINYINT型がないため、TINYINTはSMALLINTにマップされる
         assert_eq!(
             DataTypeMapper::map(&CommonDataType::TinyInt).unwrap(),
-            "TINYINT"
+            "SMALLINT"
         );
     }
 
