@@ -1746,3 +1746,158 @@ fn test_derived_table_with_distinct_and_order_by() {
         _ => panic!("SELECT文であること"),
     }
 }
+
+/// 派生テーブル: 3レベルの入れ子
+#[test]
+fn test_deeply_nested_derived_tables() {
+    let sql = r#"
+        SELECT *
+        FROM (
+            SELECT * FROM (
+                SELECT * FROM (
+                    SELECT id, name FROM users
+                ) AS level3
+            ) AS level2
+        ) AS level1
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+
+            // 最も外側の派生テーブル
+            match &from_clause.tables[0] {
+                tsql_parser::ast::TableReference::Subquery { query: outer_q, alias: outer_a, .. } => {
+                    assert_eq!(outer_a.as_ref().unwrap().name, "level1");
+
+                    // 2レベル目の派生テーブル
+                    match &outer_q.from.as_ref().unwrap().tables[0] {
+                        tsql_parser::ast::TableReference::Subquery { query: mid_q, alias: mid_a, .. } => {
+                            assert_eq!(mid_a.as_ref().unwrap().name, "level2");
+
+                            // 3レベル目の派生テーブル
+                            match &mid_q.from.as_ref().unwrap().tables[0] {
+                                tsql_parser::ast::TableReference::Subquery { query: inner_q, alias: inner_a, .. } => {
+                                    assert_eq!(inner_a.as_ref().unwrap().name, "level3");
+                                    assert_eq!(inner_q.columns.len(), 2);
+                                }
+                                _ => panic!("3レベル目は派生テーブルであること"),
+                            }
+                        }
+                        _ => panic!("2レベル目は派生テーブルであること"),
+                    }
+                }
+                _ => panic!("最も外側は派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: 複数の派生テーブルをカンマ区切り
+#[test]
+fn test_multiple_derived_tables() {
+    let sql = r#"
+        SELECT *
+        FROM (
+            SELECT id FROM users
+        ) AS u,
+        (
+            SELECT order_id FROM orders
+        ) AS o
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            assert_eq!(from_clause.tables.len(), 2);
+
+            // 1つ目の派生テーブル
+            match &from_clause.tables[0] {
+                tsql_parser::ast::TableReference::Subquery { alias, .. } => {
+                    assert_eq!(alias.as_ref().unwrap().name, "u");
+                }
+                _ => panic!("1つ目は派生テーブルであること"),
+            }
+
+            // 2つ目の派生テーブル
+            match &from_clause.tables[1] {
+                tsql_parser::ast::TableReference::Subquery { alias, .. } => {
+                    assert_eq!(alias.as_ref().unwrap().name, "o");
+                }
+                _ => panic!("2つ目は派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: 通常テーブルとの混在
+#[test]
+fn test_mixed_table_and_derived_table() {
+    let sql = r#"
+        SELECT *
+        FROM users,
+        (
+            SELECT order_id FROM orders
+        ) AS o
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            assert_eq!(from_clause.tables.len(), 2);
+
+            // 1つ目は通常テーブル
+            match &from_clause.tables[0] {
+                tsql_parser::ast::TableReference::Table { name, .. } => {
+                    assert_eq!(name.name, "users");
+                }
+                _ => panic!("1つ目は通常テーブルであること"),
+            }
+
+            // 2つ目は派生テーブル
+            match &from_clause.tables[1] {
+                tsql_parser::ast::TableReference::Subquery { alias, .. } => {
+                    assert_eq!(alias.as_ref().unwrap().name, "o");
+                }
+                _ => panic!("2つ目は派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: TOP句を含むサブクエリ
+#[test]
+fn test_derived_table_with_top_clause() {
+    let sql = r#"
+        SELECT *
+        FROM (
+            SELECT TOP 10 * FROM users ORDER BY created_at DESC
+        ) AS recent_users
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            match &from_clause.tables[0] {
+                tsql_parser::ast::TableReference::Subquery { query, .. } => {
+                    // TOP句があることを確認
+                    assert!(query.top.is_some());
+                    assert!(!query.order_by.is_empty());
+                }
+                _ => panic!("派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}

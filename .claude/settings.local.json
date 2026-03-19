@@ -32,7 +32,16 @@
       "Skill(kiro:spec-status)",
       "Bash(ls:*)",
       "Bash(\"C:\\\\Users\\\\black\\\\.claude\\\\plugins\\\\cache\\\\claude-plugins-official\\\\ralph-loop\\\\96276205880a/scripts/setup-ralph-loop.sh\" \"Run /kiro:spec-impl tsql-parser and complete all pending tasks. Use MAGI system for quality review before committing.\" --completion-promise \"IMPL_COMPLETE\" --max-iterations 10)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(gh pr list:*)",
+      "Bash(__NEW_LINE_f613b5a9dca9da53__ echo \"Comment added\")",
+      "Bash(cd:*)",
+      "Bash(rustup target:*)",
+      "Skill(kiro:spec-init)",
+      "Skill(kiro:spec-requirements)",
+      "Skill(kiro:spec-design)",
+      "Bash(cd:)",
+      "Bash(chmod:)"
     ]
   },
   "enableAllProjectMcpServers": true

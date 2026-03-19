@@ -974,6 +974,8 @@ dependencies = [
  "console_error_panic_hook",
  "getrandom 0.3.4",
  "js-sys",
+ "mysql-emitter",
+ "postgresql-emitter",
  "serde",
  "serde-wasm-bindgen",
  "tsql-lexer",
