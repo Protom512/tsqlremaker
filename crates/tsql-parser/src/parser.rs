@@ -4,7 +4,7 @@
 
 use crate::ast::*;
 use crate::buffer::TokenBuffer;
-use crate::error::{ParseError, ParseResult};
+use crate::error::{ParseError, ParseErrors, ParseResult, ParseResultWithErrors};
 use crate::expression::ExpressionParser;
 use tsql_lexer::Lexer;
 use tsql_token::{Span, TokenKind};
@@ -92,6 +92,63 @@ impl<'src> Parser<'src> {
         }
 
         Ok(statements)
+    }
+
+    /// 入力全体を解析（エラー回復付き）
+    ///
+    /// エラー回復機能を使用して、構文エラーがあってもパースを継続し、
+    /// 複数のエラーを一度に報告する。
+    ///
+    /// # Returns
+    ///
+    /// 文のリストとエラーリスト、または単一のエラー
+    pub fn parse_with_errors(
+        &mut self,
+    ) -> ParseResultWithErrors<(Vec<Statement>, Vec<ParseError>)> {
+        let mut statements = Vec::new();
+
+        while !self.is_at_eof() {
+            match self.parse_statement() {
+                Ok(stmt) => statements.push(stmt),
+                Err(e) => {
+                    self.errors.push(e.clone());
+                    self.synchronize();
+                }
+            }
+
+            // セミコロンを消費
+            let _ = self.buffer.consume_if(TokenKind::Semicolon);
+        }
+
+        // エラーリストをクローンして返す
+        let errors = self.errors.clone();
+
+        // エラーがあった場合はParseErrorsを返す
+        if !errors.is_empty() {
+            return Err(ParseErrors::new(errors));
+        }
+
+        Ok((statements, Vec::new()))
+    }
+
+    /// 収集されたエラーを返す
+    ///
+    /// # Returns
+    ///
+    /// エラーリストのコピー
+    #[must_use]
+    pub fn errors(&self) -> Vec<ParseError> {
+        self.errors.clone()
+    }
+
+    /// エラーがあるかどうかを確認
+    ///
+    /// # Returns
+    ///
+    /// エラーがある場合はtrue
+    #[must_use]
+    pub fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
     }
 
     /// 単一の文を解析
@@ -2377,12 +2434,6 @@ impl<'src> Parser<'src> {
             }
         }
         Ok(items)
-    }
-
-    /// 収集されたエラーを返す
-    #[must_use]
-    pub fn errors(&self) -> &[ParseError] {
-        &self.errors
     }
 
     /// エラーを消費して取得
