@@ -163,12 +163,12 @@ pub enum JsTokenKind {
     Exec,
     Execute,
     Into,
-    Values,
     Output,
     Cursor,
     Open,
     Close,
     Deallocate,
+    Escape,
     Grant,
     Revoke,
     Deny,
@@ -235,6 +235,7 @@ pub enum JsTokenKind {
     BlockComment,
     Eof,
     Unknown,
+    Using,
 }
 
 #[cfg(feature = "wasm")]
@@ -372,6 +373,7 @@ impl From<TokenKind> for JsTokenKind {
             TokenKind::Open => Self::Open,
             TokenKind::Close => Self::Close,
             TokenKind::Deallocate => Self::Deallocate,
+            TokenKind::Escape => Self::Escape,
             TokenKind::Grant => Self::Grant,
             TokenKind::Revoke => Self::Revoke,
             TokenKind::Deny => Self::Deny,
@@ -433,6 +435,7 @@ impl From<TokenKind> for JsTokenKind {
             TokenKind::BlockComment => Self::BlockComment,
             TokenKind::Eof => Self::Eof,
             TokenKind::Unknown => Self::Unknown,
+            TokenKind::Using => Self::Using,
         }
     }
 }
