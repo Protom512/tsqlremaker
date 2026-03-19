@@ -11,10 +11,10 @@ resolver = "2"
 
 [workspace.dependencies]
 # 共通バージョン管理
-once_cell = "1.19"
+once_cell = "1.21"
 thiserror = "2.0"
-rstest = "0.18"
-proptest = "1.4"
+rstest = "0.26"
+proptest = "1.10"
 criterion = "0.5"
 
 [workspace.metadata.cargo-semver-check]
