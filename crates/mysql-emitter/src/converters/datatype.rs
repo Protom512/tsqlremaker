@@ -75,7 +75,7 @@ impl DataTypeConverter {
     fn format_char(base: &str, length: Option<u64>) -> String {
         match length {
             Some(n) => format!("{}({})", base, n),
-            None => format!("{}", base),
+            None => base.to_string(),
         }
     }
 
@@ -91,7 +91,7 @@ impl DataTypeConverter {
     fn format_time(base: &str, precision: Option<u8>) -> String {
         match precision {
             Some(p) => format!("{}({})", base, p),
-            None => format!("{}", base),
+            None => base.to_string(),
         }
     }
 
@@ -99,7 +99,7 @@ impl DataTypeConverter {
     fn format_binary(base: &str, length: Option<u64>) -> String {
         match length {
             Some(n) => format!("{}({})", base, n),
-            None => format!("{}", base),
+            None => base.to_string(),
         }
     }
 }
