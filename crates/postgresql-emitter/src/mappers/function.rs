@@ -311,7 +311,7 @@ mod tests {
             name: "value".to_string(),
         })];
         let result = FunctionMapper::map_function_call("CEILING", &args).unwrap();
-        assert_eq!(result, "CEIL(value)");
+        assert_eq!(result, "CEIL(\"value\")");
     }
 
     #[test]
@@ -326,7 +326,7 @@ mod tests {
             }),
         ];
         let result = FunctionMapper::map_function_call("DATEADD", &args).unwrap();
-        assert_eq!(result, "current_date + INTERVAL '7 days'");
+        assert_eq!(result, "\"current_date\" + INTERVAL '7 days'");
     }
 
     #[test]

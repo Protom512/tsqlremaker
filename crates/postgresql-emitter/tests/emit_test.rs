@@ -50,7 +50,7 @@ fn test_emit_select_with_order_by() {
     let mut emitter = PostgreSqlEmitter::new(config);
     let postgres_sql = emitter.emit(&common_stmt).unwrap();
 
-    assert_eq!(postgres_sql, "SELECT * FROM users ORDER BY name ASC");
+    assert_eq!(postgres_sql, "SELECT * FROM users ORDER BY \"name\" ASC");
 }
 
 /// SELECT文 with LIMIT
