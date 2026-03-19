@@ -177,16 +177,19 @@ mod tests {
     use super::*;
     use tsql_parser::common::{CommonExpression, CommonIdentifier, CommonLiteral};
 
+    #[allow(dead_code)]
     fn create_identifier(name: &str) -> CommonIdentifier {
         CommonIdentifier {
             name: name.to_string(),
         }
     }
 
+    #[allow(dead_code)]
     fn create_literal_str(s: &str) -> CommonExpression {
         CommonExpression::Literal(CommonLiteral::String(s.to_string()))
     }
 
+    #[allow(dead_code)]
     fn create_literal_int(n: i64) -> CommonExpression {
         CommonExpression::Literal(CommonLiteral::Integer(n))
     }

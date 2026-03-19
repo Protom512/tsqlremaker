@@ -491,7 +491,7 @@ mod tests {
     #[test]
     fn test_default_emitter() {
         let emitter = PostgreSqlEmitter::default();
-        assert_eq!(emitter.config().quote_identifiers, true);
+        assert!(emitter.config().quote_identifiers);
         assert_eq!(emitter.config().indent_size, 4);
     }
 

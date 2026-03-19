@@ -354,8 +354,8 @@ mod tests {
 
     #[test]
     fn test_emit_literal_float() {
-        let lit = CommonLiteral::Float(3.14);
-        assert_eq!(ExpressionEmitter::emit_literal(&lit), "3.14");
+        let lit = CommonLiteral::Float(123.456);
+        assert_eq!(ExpressionEmitter::emit_literal(&lit), "123.456");
     }
 
     #[test]

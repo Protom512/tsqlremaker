@@ -62,28 +62,28 @@ mod tests {
     #[test]
     fn test_new_config() {
         let config = EmitterConfig::new(true, 2);
-        assert_eq!(config.format, true);
+        assert!(config.format);
         assert_eq!(config.indent_size, 2);
     }
 
     #[test]
     fn test_compact_config() {
         let config = EmitterConfig::compact();
-        assert_eq!(config.format, false);
+        assert!(!config.format);
         assert_eq!(config.indent_size, 0);
     }
 
     #[test]
     fn test_formatted_config() {
         let config = EmitterConfig::formatted();
-        assert_eq!(config.format, true);
+        assert!(config.format);
         assert_eq!(config.indent_size, 4);
     }
 
     #[test]
     fn test_default_config() {
         let config = EmitterConfig::default();
-        assert_eq!(config.format, true);
+        assert!(config.format);
         assert_eq!(config.indent_size, 4);
     }
 }

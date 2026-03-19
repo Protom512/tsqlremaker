@@ -732,7 +732,7 @@ mod tests {
     #[test]
     fn test_default_emitter() {
         let emitter = MySqlEmitter::default();
-        assert_eq!(emitter.config().format, true);
+        assert!(emitter.config().format);
         assert_eq!(emitter.config().indent_size, 4);
     }
 
@@ -794,10 +794,10 @@ mod tests {
     #[test]
     fn test_visit_literal_float() {
         let mut emitter = MySqlEmitter::default();
-        let lit = CommonLiteral::Float(3.14);
+        let lit = CommonLiteral::Float(123.456);
         let result = emitter.visit_expression(&CommonExpression::Literal(lit));
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "3.14");
+        assert_eq!(result.unwrap(), "123.456");
     }
 
     #[test]

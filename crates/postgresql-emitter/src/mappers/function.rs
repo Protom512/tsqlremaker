@@ -213,6 +213,9 @@ impl FunctionMapper {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::panic)]
+
     use super::*;
     use tsql_parser::common::CommonLiteral;
 
