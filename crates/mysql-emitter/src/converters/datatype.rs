@@ -8,8 +8,10 @@ use tsql_parser::common::CommonDataType;
 ///
 /// Common SQL AST のデータ型を MySQL データ型文字列に変換します。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub struct DataTypeConverter;
 
+#[allow(dead_code)]
 impl DataTypeConverter {
     /// データ型を MySQL データ型文字列に変換
     ///

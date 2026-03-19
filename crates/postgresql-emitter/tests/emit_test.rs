@@ -2,6 +2,8 @@
 //!
 //! Common SQL AST から PostgreSQL SQL への変換をテストします。
 
+#![allow(clippy::unwrap_used)]
+
 use postgresql_emitter::{EmissionConfig, PostgreSqlEmitter};
 use tsql_parser::{parse, ToCommonAst};
 

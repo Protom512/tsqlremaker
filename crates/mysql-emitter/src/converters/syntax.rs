@@ -9,8 +9,10 @@ use tsql_parser::common::{CommonExpression, CommonIdentifier};
 ///
 /// T-SQL 固有の構文を MySQL 構文に変換します。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub struct SyntaxConverter;
 
+#[allow(dead_code)]
 impl SyntaxConverter {
     /// TOP n を LIMIT n に変換
     ///
@@ -113,9 +115,10 @@ impl SyntaxConverter {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use tsql_parser::common::{CommonExpression, CommonIdentifier, CommonLiteral};
+    use tsql_parser::common::{CommonExpression, CommonLiteral};
 
     fn create_literal_int(n: i64) -> CommonExpression {
         CommonExpression::Literal(CommonLiteral::Integer(n))

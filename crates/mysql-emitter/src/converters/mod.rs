@@ -6,6 +6,6 @@ mod datatype;
 mod function;
 mod syntax;
 
-pub use datatype::DataTypeConverter;
+// Data type and syntax converters are not yet fully integrated
+// They are defined but not exported to avoid unused warnings
 pub use function::FunctionConverter;
-pub use syntax::SyntaxConverter;

@@ -40,11 +40,10 @@ mod error;
 pub use config::EmitterConfig;
 pub use error::EmitError;
 
-use converters::{DataTypeConverter, FunctionConverter, SyntaxConverter};
+use converters::FunctionConverter;
 use tsql_parser::common::{
     CommonBinaryOperator, CommonCaseExpression, CommonExpression, CommonFunctionCall,
-    CommonIdentifier, CommonInList, CommonLiteral, CommonSelectStatement, CommonStatement,
-    CommonUnaryOperator,
+    CommonIdentifier, CommonInList, CommonLiteral, CommonStatement, CommonUnaryOperator,
 };
 
 /// MySQL Emitter
@@ -713,8 +712,10 @@ impl Default for MySqlEmitter {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
     use tsql_parser::common::{
         CommonBinaryOperator, CommonCaseExpression, CommonColumnReference, CommonExpression,
         CommonFunctionCall, CommonIdentifier, CommonInList, CommonLiteral, CommonUnaryOperator,

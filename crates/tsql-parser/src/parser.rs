@@ -2230,7 +2230,7 @@ impl<'src> Parser<'src> {
         // 現在のトークンは BEGIN なので、次のトークンをチェック
         self.buffer
             .peek(1)
-            .map_or(false, |t| matches!(t.kind, TokenKind::Try))
+            .is_ok_and(|t| matches!(t.kind, TokenKind::Try))
     }
 
     /// BEGIN TRANSACTION かどうかをチェック
@@ -2238,7 +2238,7 @@ impl<'src> Parser<'src> {
     /// BEGIN の後ろに TRANSACTION または TRAN が続く場合のみ true
     fn check_transaction_begin(&self) -> bool {
         // 現在のトークンは BEGIN なので、次のトークンをチェック
-        self.buffer.peek(1).map_or(false, |t| {
+        self.buffer.peek(1).is_ok_and(|t| {
             matches!(t.kind, TokenKind::Transaction | TokenKind::Tran)
         })
     }

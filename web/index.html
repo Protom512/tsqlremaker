@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>T-SQL Remaker - Interactive Demo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>T-SQL Remaker</h1>
+            <p class="subtitle">SAP ASE T-SQL to MySQL/PostgreSQL Converter</p>
+        </header>
+
+        <main>
+            <div class="input-section">
+                <div class="section-header">
+                    <h2>Input T-SQL</h2>
+                    <div class="controls">
+                        <button id="btn-clear" class="btn btn-secondary">Clear</button>
+                        <button id="btn-example" class="btn btn-secondary">Load Example</button>
+                    </div>
+                </div>
+                <textarea id="sql-input" placeholder="Enter your SAP ASE T-SQL code here...
+Example: SELECT TOP 10 * FROM users WHERE status = 'active'"></textarea>
+                <div class="action-bar">
+                    <button id="btn-convert" class="btn btn-primary">Convert</button>
+                    <select id="target-dialect" class="select-dialect">
+                        <option value="mysql">MySQL / MariaDB</option>
+                        <option value="postgresql">PostgreSQL</option>
+                        <option value="sqlite">SQLite</option>
+                    </select>
+                    <span id="status" class="status"></span>
+                </div>
+            </div>
+
+            <div class="output-section">
+                <div class="tabs">
+                    <button class="tab active" data-tab="converted">Converted SQL</button>
+                    <button class="tab" data-tab="tokens">Tokens</button>
+                    <button class="tab" data-tab="ast">AST</button>
+                </div>
+
+                <div id="tab-converted" class="tab-content active">
+                    <div class="output-header">
+                        <h3>Converted SQL</h3>
+                        <button id="btn-copy-converted" class="btn btn-small" title="Copy to clipboard">Copy</button>
+                    </div>
+                    <pre id="converted-output" class="output"><span class="placeholder">Converted SQL will appear here...</span></pre>
+                </div>
+
+                <div id="tab-tokens" class="tab-content">
+                    <div class="output-header">
+                        <h3>Tokens</h3>
+                        <button id="btn-copy-tokens" class="btn btn-small" title="Copy to clipboard">Copy</button>
+                    </div>
+                    <pre id="tokens-output" class="output"><span class="placeholder">Tokenized output will appear here...</span></pre>
+                </div>
+
+                <div id="tab-ast" class="tab-content">
+                    <div class="output-header">
+                        <h3>Abstract Syntax Tree</h3>
+                        <button id="btn-copy-ast" class="btn btn-small" title="Copy to clipboard">Copy</button>
+                    </div>
+                    <pre id="ast-output" class="output"><span class="placeholder">Parsed AST will appear here...</span></pre>
+                </div>
+            </div>
+
+            <div id="error-section" class="error-section hidden">
+                <div class="error-header">
+                    <h3>Error</h3>
+                    <button id="btn-close-error" class="btn btn-small">&times;</button>
+                </div>
+                <pre id="error-output" class="error-output"></pre>
+            </div>
+        </main>
+
+        <footer>
+            <p>
+                Powered by <a href="https://github.com/Protom512/tsqlremaker" target="_blank">T-SQL Remaker</a> |
+                Version: <span id="version">Loading...</span>
+            </p>
+        </footer>
+    </div>
+
+    <script type="module">
+        import init, { tokenize, parse, getVersion, convertTo, getSupportedDialects } from './pkg/tsql_remaker_wasm.js';
+
+        let wasmLoaded = false;
+        let supportedDialects = [];
+
+        // DOM elements
+        const sqlInput = document.getElementById('sql-input');
+        const tokensOutput = document.getElementById('tokens-output');
+        const astOutput = document.getElementById('ast-output');
+        const convertedOutput = document.getElementById('converted-output');
+        const errorOutput = document.getElementById('error-output');
+        const errorSection = document.getElementById('error-section');
+        const statusEl = document.getElementById('status');
+        const versionEl = document.getElementById('version');
+        const targetDialectSelect = document.getElementById('target-dialect');
+
+        // Initialize WASM
+        async function loadWasm() {
+            try {
+                await init();
+                wasmLoaded = true;
+                versionEl.textContent = getVersion();
+                console.log('WASM loaded successfully');
+            } catch (err) {
+                console.error('Failed to load WASM:', err);
+                showError('Failed to load WASM module: ' + err.message);
+            }
+        }
+
+        // Show error
+        function showError(message) {
+            errorOutput.textContent = message;
+            errorSection.classList.remove('hidden');
+        }
+
+        // Hide error
+        function hideError() {
+            errorSection.classList.add('hidden');
+        }
+
+        // Show status
+        function showStatus(message) {
+            statusEl.textContent = message;
+            setTimeout(() => {
+                statusEl.textContent = '';
+            }, 3000);
+        }
+
+        // Format tokens for display
+        function formatTokens(tokens) {
+            return tokens.map(t => {
+                const kind = t.kind;
+                const text = t.text ? ` "${t.text}"` : '';
+                const pos = `L${t.span.start}:${t.span.end}`;
+                return `${kind}${text}\t[${pos}]`;
+            }).join('\n');
+        }
+
+        // Convert T-SQL to target dialect
+        document.getElementById('btn-convert').addEventListener('click', async () => {
+            if (!wasmLoaded) {
+                showError('WASM module not loaded yet');
+                return;
+            }
+
+            hideError();
+            const input = sqlInput.value.trim();
+
+            if (!input) {
+                showError('Please enter some SQL code');
+                return;
+            }
+
+            const targetDialect = targetDialectSelect.value;
+
+            try {
+                showStatus('Converting...');
+                const result = convertTo(input, targetDialect);
+
+                if (result.status === 'success') {
+                    convertedOutput.textContent = result.sql;
+                    // Also show tokens and AST for debugging
+                    const tokens = tokenize(input);
+                    tokensOutput.textContent = formatTokens(tokens);
+
+                    const parseResult = parse(input);
+                    if (parseResult.type === 'success') {
+                        astOutput.textContent = JSON.stringify(parseResult.statements, null, 2);
+                    }
+
+                    switchTab('converted');
+                    showStatus(`Converted to ${targetDialect.toUpperCase()} successfully`);
+                } else if (result.status === 'error') {
+                    showError(result.message);
+                }
+            } catch (err) {
+                showError('Conversion error: ' + err.message);
+            }
+        });
+
+        // Clear input
+        document.getElementById('btn-clear').addEventListener('click', () => {
+            sqlInput.value = '';
+            convertedOutput.innerHTML = '<span class="placeholder">Converted SQL will appear here...</span>';
+            tokensOutput.innerHTML = '<span class="placeholder">Tokenized output will appear here...</span>';
+            astOutput.innerHTML = '<span class="placeholder">Parsed AST will appear here...</span>';
+            hideError();
+        });
+
+        // Load example
+        document.getElementById('btn-example').addEventListener('click', () => {
+            sqlInput.value = `-- Sample SAP ASE T-SQL query with various dialect-specific features
+SELECT TOP 10
+    u.user_id,
+    u.username,
+    u.email,
+    LEN(u.username) AS name_length,
+    GETDATE() AS current_date
+FROM
+    users u
+INNER JOIN
+    orders o ON u.user_id = o.user_id
+WHERE
+    u.created_date >= DATEADD(day, -30, GETDATE())
+    AND u.status = 'active'
+ORDER BY
+    u.created_date DESC`;
+            showStatus('Example loaded');
+        });
+
+        // Close error
+        document.getElementById('btn-close-error').addEventListener('click', hideError);
+
+        // Copy buttons
+        document.getElementById('btn-copy-converted').addEventListener('click', () => {
+            navigator.clipboard.writeText(convertedOutput.textContent);
+            showStatus('Converted SQL copied to clipboard');
+        });
+
+        document.getElementById('btn-copy-tokens').addEventListener('click', () => {
+            navigator.clipboard.writeText(tokensOutput.textContent);
+            showStatus('Tokens copied to clipboard');
+        });
+
+        document.getElementById('btn-copy-ast').addEventListener('click', () => {
+            navigator.clipboard.writeText(astOutput.textContent);
+            showStatus('AST copied to clipboard');
+        });
+
+        // Tab switching
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.tab === tabName);
+            });
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.toggle('active', content.id === `tab-${tabName}`);
+            });
+        }
+
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+        });
+
+        // Load WASM on page load
+        loadWasm();
+    </script>
+</body>
+</html>
