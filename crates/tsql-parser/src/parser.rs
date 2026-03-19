@@ -1986,8 +1986,7 @@ impl<'src> Parser<'src> {
             TokenKind::Begin => {
                 self.buffer.consume()?; // BEGIN
 
-                if !self.buffer.check(TokenKind::Transaction)
-                    && !self.buffer.check(TokenKind::Tran)
+                if !self.buffer.check(TokenKind::Transaction) && !self.buffer.check(TokenKind::Tran)
                 {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::Transaction, TokenKind::Tran],
@@ -2084,8 +2083,7 @@ impl<'src> Parser<'src> {
             TokenKind::Save => {
                 self.buffer.consume()?; // SAVE
 
-                if !self.buffer.check(TokenKind::Transaction)
-                    && !self.buffer.check(TokenKind::Tran)
+                if !self.buffer.check(TokenKind::Transaction) && !self.buffer.check(TokenKind::Tran)
                 {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::Transaction, TokenKind::Tran],
@@ -2230,9 +2228,9 @@ impl<'src> Parser<'src> {
     /// BEGIN の後ろに TRY が続く場合のみ true
     fn check_try_begin(&self) -> bool {
         // 現在のトークンは BEGIN なので、次のトークンをチェック
-        self.buffer.peek(1).map_or(false, |t| {
-            matches!(t.kind, TokenKind::Try)
-        })
+        self.buffer
+            .peek(1)
+            .map_or(false, |t| matches!(t.kind, TokenKind::Try))
     }
 
     /// BEGIN TRANSACTION かどうかをチェック

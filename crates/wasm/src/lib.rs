@@ -206,8 +206,9 @@ pub fn convert_to(input: &str, dialect: TargetDialect) -> JsValue {
                         let error_result = JsConversionResult::Error {
                             message: format!("Emit error: {}", e),
                         };
-                        return serde_wasm_bindgen::to_value(&error_result)
-                            .unwrap_or_else(|_| JsValue::from_str(r#"{"error":"serialization_error"}"#));
+                        return serde_wasm_bindgen::to_value(&error_result).unwrap_or_else(|_| {
+                            JsValue::from_str(r#"{"error":"serialization_error"}"#)
+                        });
                     }
                 }
             }

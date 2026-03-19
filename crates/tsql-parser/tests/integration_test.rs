@@ -1769,17 +1769,29 @@ fn test_deeply_nested_derived_tables() {
 
             // 最も外側の派生テーブル
             match &from_clause.tables[0] {
-                tsql_parser::ast::TableReference::Subquery { query: outer_q, alias: outer_a, .. } => {
+                tsql_parser::ast::TableReference::Subquery {
+                    query: outer_q,
+                    alias: outer_a,
+                    ..
+                } => {
                     assert_eq!(outer_a.as_ref().unwrap().name, "level1");
 
                     // 2レベル目の派生テーブル
                     match &outer_q.from.as_ref().unwrap().tables[0] {
-                        tsql_parser::ast::TableReference::Subquery { query: mid_q, alias: mid_a, .. } => {
+                        tsql_parser::ast::TableReference::Subquery {
+                            query: mid_q,
+                            alias: mid_a,
+                            ..
+                        } => {
                             assert_eq!(mid_a.as_ref().unwrap().name, "level2");
 
                             // 3レベル目の派生テーブル
                             match &mid_q.from.as_ref().unwrap().tables[0] {
-                                tsql_parser::ast::TableReference::Subquery { query: inner_q, alias: inner_a, .. } => {
+                                tsql_parser::ast::TableReference::Subquery {
+                                    query: inner_q,
+                                    alias: inner_a,
+                                    ..
+                                } => {
                                     assert_eq!(inner_a.as_ref().unwrap().name, "level3");
                                     assert_eq!(inner_q.columns.len(), 2);
                                 }

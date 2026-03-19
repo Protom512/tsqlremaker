@@ -21,8 +21,8 @@ pub use base::AstNode;
 pub use batch::BatchSeparator;
 pub use control_flow::{
     Assignment, Block, BreakStatement, ContinueStatement, DeclareStatement, IfStatement,
-    RaiserrorStatement, ReturnStatement, SetStatement, ThrowStatement, TryCatchStatement,
-    TransactionStatement, VariableAssignment, VariableDeclaration, WhileStatement,
+    RaiserrorStatement, ReturnStatement, SetStatement, ThrowStatement, TransactionStatement,
+    TryCatchStatement, VariableAssignment, VariableDeclaration, WhileStatement,
 };
 pub use data_modification::{
     Assignment as ColumnAssignment, DeleteStatement, InsertSource, InsertStatement, UpdateStatement,
