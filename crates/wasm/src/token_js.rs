@@ -163,6 +163,7 @@ pub enum JsTokenKind {
     Exec,
     Execute,
     Into,
+    Values,
     Output,
     Cursor,
     Open,
