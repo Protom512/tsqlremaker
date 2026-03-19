@@ -168,3 +168,111 @@ impl AstNode for ReturnStatement {
         self.span
     }
 }
+
+/// TRY...CATCH ブロック
+///
+/// T-SQL の例外処理構文を表す。
+/// BEGIN TRY...END TRY BEGIN CATCH...END CATCH
+#[derive(Debug, Clone)]
+pub struct TryCatchStatement {
+    /// 位置情報
+    pub span: Span,
+    /// TRY ブロック
+    pub try_block: Box<Block>,
+    /// CATCH ブロック
+    pub catch_block: Box<Block>,
+}
+
+impl AstNode for TryCatchStatement {
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// トランザクション制御文
+///
+/// BEGIN TRANSACTION、COMMIT TRANSACTION、ROLLBACK TRANSACTION、SAVE TRANSACTION
+#[derive(Debug, Clone)]
+pub enum TransactionStatement {
+    /// BEGIN TRANSACTION [name]
+    Begin {
+        /// 位置情報
+        span: Span,
+        /// トランザクション名（省略可能）
+        name: Option<Identifier>,
+    },
+    /// COMMIT TRANSACTION [name]
+    Commit {
+        /// 位置情報
+        span: Span,
+        /// トランザクション名（省略可能）
+        name: Option<Identifier>,
+    },
+    /// ROLLBACK TRANSACTION [name | savepoint]
+    Rollback {
+        /// 位置情報
+        span: Span,
+        /// トランザクション名またはセーブポイント名（省略可能）
+        name: Option<Identifier>,
+    },
+    /// SAVE TRANSACTION name
+    Save {
+        /// 位置情報
+        span: Span,
+        /// セーブポイント名
+        name: Identifier,
+    },
+}
+
+impl AstNode for TransactionStatement {
+    fn span(&self) -> Span {
+        match self {
+            TransactionStatement::Begin { span, .. }
+            | TransactionStatement::Commit { span, .. }
+            | TransactionStatement::Rollback { span, .. }
+            | TransactionStatement::Save { span, .. } => *span,
+        }
+    }
+}
+
+/// THROW 文
+///
+/// SQL Server 2012+ のエラー投げ槍
+#[derive(Debug, Clone)]
+pub struct ThrowStatement {
+    /// 位置情報
+    pub span: Span,
+    /// エラー番号
+    pub error_number: Option<Expression>,
+    /// エラーメッセージ
+    pub message: Option<Expression>,
+    /// エラー状態
+    pub state: Option<Expression>,
+}
+
+impl AstNode for ThrowStatement {
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// RAISERROR 文
+///
+/// レガシーなエラー投げ槍
+#[derive(Debug, Clone)]
+pub struct RaiserrorStatement {
+    /// 位置情報
+    pub span: Span,
+    /// エラーメッセージ（またはメッセージID）
+    pub message: Expression,
+    /// 重大度
+    pub severity: Option<Expression>,
+    /// エラー状態
+    pub state: Option<Expression>,
+}
+
+impl AstNode for RaiserrorStatement {
+    fn span(&self) -> Span {
+        self.span
+    }
+}

@@ -121,14 +121,30 @@ impl<'src> Parser<'src> {
             TokenKind::If => self.parse_if_statement(),
             // WHILE文
             TokenKind::While => self.parse_while_statement(),
-            // BEGINブロック
-            TokenKind::Begin => self.parse_block(),
+            // BEGINブロック（BEGIN TRY は TRY...CATCH、BEGIN TRANSACTION はトランザクション）
+            TokenKind::Begin => {
+                if self.check_try_begin() {
+                    self.parse_try_catch_statement()
+                } else if self.check_transaction_begin() {
+                    self.parse_transaction_statement()
+                } else {
+                    self.parse_block()
+                }
+            }
             // BREAK文
             TokenKind::Break => self.parse_break_statement(),
             // CONTINUE文
             TokenKind::Continue => self.parse_continue_statement(),
             // RETURN文
             TokenKind::Return => self.parse_return_statement(),
+            // トランザクション制御（COMMIT, ROLLBACK, SAVE）
+            TokenKind::Commit | TokenKind::Rollback | TokenKind::Save => {
+                self.parse_transaction_statement()
+            }
+            // THROW 文
+            TokenKind::Throw => self.parse_throw_statement(),
+            // RAISERROR 文
+            TokenKind::Raiserror => self.parse_raiserror_statement(),
             // GOバッチ区切り（BatchModeのみ）
             TokenKind::Go => {
                 if matches!(self.mode, ParserMode::BatchMode) {
@@ -311,7 +327,17 @@ impl<'src> Parser<'src> {
     /// FROM句を解析
     fn parse_from_clause(&mut self) -> ParseResult<FromClause> {
         self.buffer.consume()?; // FROM
-        let tables = vec![self.parse_table_reference()?];
+
+        // テーブル参照リスト（カンマ区切り）
+        let mut tables = Vec::new();
+        loop {
+            tables.push(self.parse_table_reference()?);
+
+            // カンマで区切られた複数テーブル
+            if !self.buffer.consume_if(TokenKind::Comma)? {
+                break;
+            }
+        }
 
         // JOINを解析
         let mut joins = Vec::new();
@@ -1819,6 +1845,404 @@ impl<'src> Parser<'src> {
             span,
             expression,
         })))
+    }
+
+    /// TRY...CATCH ブロックを解析
+    ///
+    /// T-SQL構文: BEGIN TRY ... END TRY BEGIN CATCH ... END CATCH
+    fn parse_try_catch_statement(&mut self) -> ParseResult<Statement> {
+        let start = self.buffer.current()?.span.start;
+
+        // BEGIN TRY
+        self.buffer.consume()?; // BEGIN
+        if !self.buffer.check(TokenKind::Try) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::Try],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // TRY
+
+        // TRY ブロックの本体をパース
+        let try_block = if self.buffer.check(TokenKind::Begin) {
+            match self.parse_block()? {
+                Statement::Block(block) => block,
+                _ => {
+                    return Err(ParseError::invalid_syntax(
+                        "Expected block statement".to_string(),
+                        self.buffer.current()?.span,
+                    ))
+                }
+            }
+        } else {
+            // 単一の文も許容
+            let stmt = self.parse_statement()?;
+            Box::new(Block {
+                span: stmt.span(),
+                statements: vec![stmt],
+            })
+        };
+
+        // END TRY
+        if !self.buffer.check(TokenKind::End) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::End],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // END
+
+        if !self.buffer.check(TokenKind::Try) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::Try],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // TRY
+
+        // BEGIN CATCH
+        if !self.buffer.check(TokenKind::Begin) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::Begin],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // BEGIN
+
+        if !self.buffer.check(TokenKind::Catch) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::Catch],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // CATCH
+
+        // CATCH ブロックの本体をパース
+        let catch_block = if self.buffer.check(TokenKind::Begin) {
+            match self.parse_block()? {
+                Statement::Block(block) => block,
+                _ => {
+                    return Err(ParseError::invalid_syntax(
+                        "Expected block statement".to_string(),
+                        self.buffer.current()?.span,
+                    ))
+                }
+            }
+        } else {
+            // 単一の文も許容
+            let stmt = self.parse_statement()?;
+            Box::new(Block {
+                span: stmt.span(),
+                statements: vec![stmt],
+            })
+        };
+
+        // END CATCH
+        if !self.buffer.check(TokenKind::End) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::End],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // END
+
+        if !self.buffer.check(TokenKind::Catch) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::Catch],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // CATCH
+
+        let end_span = self.buffer.current()?.span;
+
+        Ok(Statement::TryCatch(Box::new(TryCatchStatement {
+            span: Span {
+                start,
+                end: end_span.end,
+            },
+            try_block,
+            catch_block,
+        })))
+    }
+
+    /// トランザクション制御文を解析
+    ///
+    /// T-SQL構文: BEGIN TRANSACTION [name], COMMIT TRANSACTION [name],
+    ///             ROLLBACK TRANSACTION [name], SAVE TRANSACTION name
+    fn parse_transaction_statement(&mut self) -> ParseResult<Statement> {
+        let kind = self.buffer.current()?.kind;
+        let start = self.buffer.current()?.span.start;
+
+        match kind {
+            // BEGIN TRANSACTION [name]
+            TokenKind::Begin => {
+                self.buffer.consume()?; // BEGIN
+
+                if !self.buffer.check(TokenKind::Transaction)
+                    && !self.buffer.check(TokenKind::Tran)
+                {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::Transaction, TokenKind::Tran],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?; // TRANSACTION | TRAN
+
+                let name = if self.buffer.check(TokenKind::Ident)
+                    || self.buffer.check(TokenKind::QuotedIdent)
+                {
+                    Some(self.parse_identifier()?)
+                } else {
+                    None
+                };
+
+                let end_span = self.buffer.current()?.span;
+
+                Ok(Statement::Transaction(TransactionStatement::Begin {
+                    span: Span {
+                        start,
+                        end: end_span.end,
+                    },
+                    name,
+                }))
+            }
+
+            // COMMIT TRANSACTION [name]
+            TokenKind::Commit => {
+                self.buffer.consume()?; // COMMIT
+
+                let (name, end_span) = if self.buffer.check(TokenKind::Transaction)
+                    || self.buffer.check(TokenKind::Tran)
+                {
+                    self.buffer.consume()?; // TRANSACTION | TRAN
+                    (
+                        if self.buffer.check(TokenKind::Ident)
+                            || self.buffer.check(TokenKind::QuotedIdent)
+                        {
+                            Some(self.parse_identifier()?)
+                        } else {
+                            None
+                        },
+                        self.buffer.current()?.span,
+                    )
+                } else {
+                    // COMMIT だけの場合（TRANSACTION 省略）
+                    (None, self.buffer.current()?.span)
+                };
+
+                Ok(Statement::Transaction(TransactionStatement::Commit {
+                    span: Span {
+                        start,
+                        end: end_span.end,
+                    },
+                    name,
+                }))
+            }
+
+            // ROLLBACK TRANSACTION [name]
+            TokenKind::Rollback => {
+                self.buffer.consume()?; // ROLLBACK
+
+                let (name, end_span) = if self.buffer.check(TokenKind::Transaction)
+                    || self.buffer.check(TokenKind::Tran)
+                {
+                    self.buffer.consume()?; // TRANSACTION | TRAN
+                    (
+                        if self.buffer.check(TokenKind::Ident)
+                            || self.buffer.check(TokenKind::QuotedIdent)
+                        {
+                            Some(self.parse_identifier()?)
+                        } else {
+                            None
+                        },
+                        self.buffer.current()?.span,
+                    )
+                } else {
+                    // ROLLBACK だけの場合（TRANSACTION 省略）
+                    (None, self.buffer.current()?.span)
+                };
+
+                Ok(Statement::Transaction(TransactionStatement::Rollback {
+                    span: Span {
+                        start,
+                        end: end_span.end,
+                    },
+                    name,
+                }))
+            }
+
+            // SAVE TRANSACTION name
+            TokenKind::Save => {
+                self.buffer.consume()?; // SAVE
+
+                if !self.buffer.check(TokenKind::Transaction)
+                    && !self.buffer.check(TokenKind::Tran)
+                {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::Transaction, TokenKind::Tran],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?; // TRANSACTION | TRAN
+
+                let name = self.parse_identifier()?;
+                let end_span = self.buffer.current()?.span;
+
+                Ok(Statement::Transaction(TransactionStatement::Save {
+                    span: Span {
+                        start,
+                        end: end_span.end,
+                    },
+                    name,
+                }))
+            }
+
+            _ => Err(ParseError::unexpected_token(
+                vec![
+                    TokenKind::Begin,
+                    TokenKind::Commit,
+                    TokenKind::Rollback,
+                    TokenKind::Save,
+                ],
+                kind,
+                self.buffer.current()?.span,
+            )),
+        }
+    }
+
+    /// THROW 文を解析
+    ///
+    /// T-SQL構文: THROW [error_number, message, state]
+    fn parse_throw_statement(&mut self) -> ParseResult<Statement> {
+        let span = self.buffer.current()?.span;
+        self.buffer.consume()?; // THROW
+
+        let error_number = if self.buffer.check(TokenKind::Semicolon)
+            || self.buffer.check(TokenKind::End)
+            || self.is_at_eof()
+        {
+            None
+        } else {
+            let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+            Some(expr_parser.parse()?)
+        };
+
+        let message = if error_number.is_some() && (self.buffer.check(TokenKind::Comma)) {
+            self.buffer.consume()?;
+            let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+            Some(expr_parser.parse()?)
+        } else {
+            None
+        };
+
+        let state = if message.is_some() && self.buffer.check(TokenKind::Comma) {
+            self.buffer.consume()?;
+            let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+            Some(expr_parser.parse()?)
+        } else {
+            None
+        };
+
+        let end_span = self.buffer.current()?.span;
+
+        Ok(Statement::Throw(Box::new(ThrowStatement {
+            span: Span {
+                start: span.start,
+                end: end_span.end,
+            },
+            error_number,
+            message,
+            state,
+        })))
+    }
+
+    /// RAISERROR 文を解析
+    ///
+    /// T-SQL構文: RAISERROR(message, severity, state)
+    fn parse_raiserror_statement(&mut self) -> ParseResult<Statement> {
+        let span = self.buffer.current()?.span;
+        self.buffer.consume()?; // RAISERROR
+
+        // 左括弧
+        if !self.buffer.check(TokenKind::LParen) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::LParen],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?;
+
+        let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+        let message = expr_parser.parse()?;
+
+        let severity = if self.buffer.check(TokenKind::Comma) {
+            self.buffer.consume()?;
+            let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+            Some(expr_parser.parse()?)
+        } else {
+            None
+        };
+
+        let state = if severity.is_some() && self.buffer.check(TokenKind::Comma) {
+            self.buffer.consume()?;
+            let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+            Some(expr_parser.parse()?)
+        } else {
+            None
+        };
+
+        // 右括弧
+        if !self.buffer.check(TokenKind::RParen) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::RParen],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?;
+
+        let end_span = self.buffer.current()?.span;
+
+        Ok(Statement::Raiserror(Box::new(RaiserrorStatement {
+            span: Span {
+                start: span.start,
+                end: end_span.end,
+            },
+            message,
+            severity,
+            state,
+        })))
+    }
+
+    /// BEGIN TRY かどうかをチェック
+    ///
+    /// BEGIN の後ろに TRY が続く場合のみ true
+    fn check_try_begin(&self) -> bool {
+        // 現在のトークンは BEGIN なので、次のトークンをチェック
+        self.buffer.peek(1).map_or(false, |t| {
+            matches!(t.kind, TokenKind::Try)
+        })
+    }
+
+    /// BEGIN TRANSACTION かどうかをチェック
+    ///
+    /// BEGIN の後ろに TRANSACTION または TRAN が続く場合のみ true
+    fn check_transaction_begin(&self) -> bool {
+        // 現在のトークンは BEGIN なので、次のトークンをチェック
+        self.buffer.peek(1).map_or(false, |t| {
+            matches!(t.kind, TokenKind::Transaction | TokenKind::Tran)
+        })
     }
 
     /// バッチ区切り（GO）を解析
@@ -4023,6 +4447,115 @@ mod tests {
                 _ => panic!("Expected Create Table statement"),
             },
             _ => panic!("Expected Create statement"),
+        }
+    }
+
+    // TRY...CATCH tests
+
+    #[test]
+    fn test_try_catch_basic() {
+        // 基本的なTRY...CATCHブロック
+        let result = parse_sql(
+            "BEGIN TRY \
+             SELECT 1 \
+             END TRY \
+             BEGIN CATCH \
+             SELECT 2 \
+             END CATCH",
+        )
+        .unwrap();
+        match &result[0] {
+            Statement::TryCatch(tc) => {
+                assert!(!tc.try_block.statements.is_empty());
+                assert!(!tc.catch_block.statements.is_empty());
+            }
+            _ => panic!("Expected TryCatch statement"),
+        }
+    }
+
+    // Transaction tests
+
+    #[test]
+    fn test_begin_transaction() {
+        // BEGIN TRANSACTION
+        let result = parse_sql("BEGIN TRANSACTION").unwrap();
+        match &result[0] {
+            Statement::Transaction(TransactionStatement::Begin { name, .. }) => {
+                assert!(name.is_none());
+            }
+            _ => panic!("Expected Begin Transaction statement"),
+        }
+    }
+
+    #[test]
+    fn test_begin_transaction_with_name() {
+        // BEGIN TRANSACTION tran_name
+        let result = parse_sql("BEGIN TRANSACTION my_tran").unwrap();
+        match &result[0] {
+            Statement::Transaction(TransactionStatement::Begin { name, .. }) => {
+                assert_eq!(name.as_ref().unwrap().name, "my_tran");
+            }
+            _ => panic!("Expected Begin Transaction statement"),
+        }
+    }
+
+    #[test]
+    fn test_commit_transaction() {
+        // COMMIT TRANSACTION
+        let result = parse_sql("COMMIT TRANSACTION").unwrap();
+        match &result[0] {
+            Statement::Transaction(TransactionStatement::Commit { name, .. }) => {
+                assert!(name.is_none());
+            }
+            _ => panic!("Expected Commit Transaction statement"),
+        }
+    }
+
+    #[test]
+    fn test_rollback_transaction() {
+        // ROLLBACK TRANSACTION
+        let result = parse_sql("ROLLBACK TRANSACTION").unwrap();
+        match &result[0] {
+            Statement::Transaction(TransactionStatement::Rollback { name, .. }) => {
+                assert!(name.is_none());
+            }
+            _ => panic!("Expected Rollback Transaction statement"),
+        }
+    }
+
+    #[test]
+    fn test_save_transaction() {
+        // SAVE TRANSACTION savepoint_name
+        let result = parse_sql("SAVE TRANSACTION my_savepoint").unwrap();
+        match &result[0] {
+            Statement::Transaction(TransactionStatement::Save { name, .. }) => {
+                assert_eq!(name.name, "my_savepoint");
+            }
+            _ => panic!("Expected Save Transaction statement"),
+        }
+    }
+
+    // THROW tests
+
+    #[test]
+    fn test_throw_basic() {
+        // 基本的なTHROW
+        let result = parse_sql("THROW").unwrap();
+        match &result[0] {
+            Statement::Throw(_) => {}
+            _ => panic!("Expected Throw statement"),
+        }
+    }
+
+    // RAISERROR tests
+
+    #[test]
+    fn test_raiserror_basic() {
+        // 基本的なRAISERROR
+        let result = parse_sql("RAISERROR('Error message', 16, 1)").unwrap();
+        match &result[0] {
+            Statement::Raiserror(_) => {}
+            _ => panic!("Expected Raiserror statement"),
         }
     }
 }

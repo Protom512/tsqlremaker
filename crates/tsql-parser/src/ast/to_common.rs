@@ -22,7 +22,11 @@ impl ToCommonAst for Statement {
             | Statement::Block(_)
             | Statement::Break(_)
             | Statement::Continue(_)
-            | Statement::Return(_) => Some(CommonStatement::DialectSpecific {
+            | Statement::Return(_)
+            | Statement::TryCatch(_)
+            | Statement::Transaction(_)
+            | Statement::Throw(_)
+            | Statement::Raiserror(_) => Some(CommonStatement::DialectSpecific {
                 description: format!("{:?}", self),
                 span: self.span(),
             }),
