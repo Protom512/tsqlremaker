@@ -281,6 +281,7 @@ pub fn tokenize(input: &str) -> Result<Vec<tsql_lexer::Token<'_>>, tsql_lexer::L
 mod tests {
     use super::*;
 
+    #[cfg(not(feature = "wasm"))]
     #[test]
     fn test_tokenize() {
         let input = "SELECT * FROM users";
@@ -290,6 +291,7 @@ mod tests {
         assert!(!tokens.is_empty());
     }
 
+    #[cfg(not(feature = "wasm"))]
     #[test]
     fn test_parse() {
         let input = "SELECT * FROM users";
@@ -297,6 +299,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[cfg(not(feature = "wasm"))]
     #[test]
     fn test_parse_one() {
         let input = "SELECT 1";
