@@ -10,7 +10,7 @@
 #![allow(clippy::len_zero)]
 
 use tsql_parser::ast::ColumnConstraint;
-use tsql_parser::{parse, parse_one};
+use tsql_parser::{parse, parse_one, Parser};
 
 /// 複数の JOIN を含む複雑な SELECT 文
 #[test]
@@ -655,10 +655,87 @@ fn test_synchronization_at_keywords() {
         UPDATE products SET price = 100;
     "#;
 
-    let result = parse(sql);
-    // 現在の実装ではエラー回復が不完全なので、エラーになることを期待
-    // TODO: エラー回復が実装されたらこのテストを更新する
+    // エラー回復が実装されたので、複数の文をパースできることを確認
+    let mut parser = Parser::new(sql);
+    let result = parser.parse_with_errors();
+
+    // エラーがあることを確認（SELCTは typo）
     assert!(result.is_err());
+
+    // エラーの詳細を確認
+    let errors = result.unwrap_err();
+    assert!(errors.len() >= 1);
+
+    // 最初のエラーは「SELCT」が原因
+    let first_error = errors.first().unwrap();
+    let error_msg = format!("{}", first_error);
+    assert!(error_msg.contains("unexpected") || error_msg.contains("expected"));
+}
+
+/// エラー回復：複数の構文エラーを一度に検出
+#[test]
+fn test_multiple_syntax_errors() {
+    let sql = r#"
+        SELCT * FROM users;
+        INERT INTO orders VALUES (1, 2);
+        UPDAET products SET price = 100;
+    "#;
+
+    let mut parser = Parser::new(sql);
+    let result = parser.parse_with_errors();
+
+    // 複数のエラーを検出
+    assert!(result.is_err());
+    let errors = result.unwrap_err();
+    assert!(errors.len() >= 2);
+
+    // 各エラーにキーワード typo が含まれていることを確認
+    let error_strings: Vec<String> = errors.iter().map(|e| format!("{}", e)).collect();
+    assert!(error_strings.iter().any(|s| s.contains("unexpected")));
+}
+
+/// エラー回復：セミコロンで同期
+#[test]
+fn test_synchronization_at_semicolon() {
+    let sql = "SELCT * FROM users; SELECT * FROM orders";
+
+    let mut parser = Parser::new(sql);
+    let result = parser.parse_with_errors();
+
+    // エラーがあるが、2番目の文はパースできるはず
+    assert!(result.is_err());
+
+    let errors = result.unwrap_err();
+    // 最初のエラーのみ
+    assert!(errors.len() >= 1);
+}
+
+/// エラー回復：GOキーワードで同期
+#[test]
+fn test_synchronization_at_go() {
+    let sql = "SELCT * FROM users GO SELECT * FROM orders";
+
+    let mut parser = Parser::new(sql);
+    let result = parser.parse_with_errors();
+
+    // エラーがある
+    assert!(result.is_err());
+}
+
+/// エラー回復：エラー収集メソッド
+#[test]
+fn test_error_collection_methods() {
+    let sql = "SELCT * FROM users; INERT INTO orders VALUES (1, 2)";
+
+    let mut parser = Parser::new(sql);
+    let _ = parser.parse_with_errors();
+
+    // has_errors() メソッドのテスト
+    assert!(parser.has_errors());
+
+    // errors() メソッドのテスト
+    let errors = parser.errors();
+    assert!(errors.len() >= 2);
 }
 
 /// エラー回復：予期しないEOF

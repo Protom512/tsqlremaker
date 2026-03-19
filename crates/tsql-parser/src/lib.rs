@@ -54,7 +54,7 @@ pub use common::{
     CommonDeleteStatement, CommonExpression, CommonInsertStatement, CommonSelectItem,
     CommonSelectStatement, CommonStatement, CommonUpdateStatement, ToCommonAst,
 };
-pub use error::{ParseError, ParseResult};
+pub use error::{ParseError, ParseErrors, ParseResult};
 pub use expression::ExpressionParser;
 pub use parser::{Parser, ParserMode};
 pub use tsql_token::{Position, Span, TokenKind};
@@ -107,6 +107,42 @@ pub fn parse(input: &str) -> ParseResult<Vec<Statement>> {
 pub fn parse_one(input: &str) -> ParseResult<Statement> {
     let mut parser = Parser::new(input).with_mode(ParserMode::SingleStatement);
     parser.parse_statement()
+}
+
+/// エラー回復付きでSQL文を解析するヘルパー関数
+///
+/// 構文エラーがあってもパースを継続し、複数のエラーを一度に報告する。
+///
+/// # Arguments
+///
+/// * `input` - 解析するSQLソースコード
+///
+/// # Returns
+///
+/// 文のリストとエラーリストのタプル、または複数エラー
+///
+/// # Examples
+///
+/// ```
+/// use tsql_parser::parse_with_errors;
+///
+/// let sql = "SELECT * FROM users; INSERT INTO orders VALUES (1)";
+/// let result = parse_with_errors(sql);
+/// assert!(result.is_ok());
+/// ```
+///
+/// エラーがある場合:
+///
+/// ```
+/// use tsql_parser::parse_with_errors;
+///
+/// let sql = "SELCT * FROM users; INERT INTO orders VALUES (1)";
+/// let result = parse_with_errors(sql);
+/// assert!(result.is_err());
+/// ```
+pub fn parse_with_errors(input: &str) -> Result<(Vec<Statement>, Vec<ParseError>), ParseErrors> {
+    let mut parser = Parser::new(input);
+    parser.parse_with_errors()
 }
 
 #[cfg(test)]
