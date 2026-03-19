@@ -175,9 +175,7 @@ impl FunctionConverter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsql_parser::common::{
-        CommonExpression, CommonIdentifier, CommonLiteral,
-    };
+    use tsql_parser::common::{CommonExpression, CommonIdentifier, CommonLiteral};
 
     fn create_identifier(name: &str) -> CommonIdentifier {
         CommonIdentifier {

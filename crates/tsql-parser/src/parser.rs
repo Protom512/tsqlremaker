@@ -2238,9 +2238,9 @@ impl<'src> Parser<'src> {
     /// BEGIN の後ろに TRANSACTION または TRAN が続く場合のみ true
     fn check_transaction_begin(&self) -> bool {
         // 現在のトークンは BEGIN なので、次のトークンをチェック
-        self.buffer.peek(1).is_ok_and(|t| {
-            matches!(t.kind, TokenKind::Transaction | TokenKind::Tran)
-        })
+        self.buffer
+            .peek(1)
+            .is_ok_and(|t| matches!(t.kind, TokenKind::Transaction | TokenKind::Tran))
     }
 
     /// バッチ区切り（GO）を解析
