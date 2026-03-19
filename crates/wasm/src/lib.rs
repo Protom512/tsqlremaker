@@ -161,6 +161,7 @@ pub fn get_version() -> String {
 #[wasm_bindgen(js_name = convertTo)]
 pub fn convert_to(input: &str, dialect: TargetDialect) -> JsValue {
     use ast_js::JsConversionResult;
+    use tsql_parser::ToCommonAst;
 
     // Parser で T-SQL をパース
     let result = tsql_parser::parse(input);
@@ -194,9 +195,9 @@ pub fn convert_to(input: &str, dialect: TargetDialect) -> JsValue {
     // PostgreSQL Emitter で出力
     match dialect {
         TargetDialect::PostgreSQL => {
-            use postgresql_emitter::PostgreSqlEmitter;
+            use postgresql_emitter::{EmissionConfig, PostgreSqlEmitter};
 
-            let mut emitter = PostgreSqlEmitter::new();
+            let mut emitter = PostgreSqlEmitter::new(EmissionConfig::default());
             let mut results = Vec::new();
 
             for stmt in common_stmts {

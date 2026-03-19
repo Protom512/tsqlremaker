@@ -117,6 +117,14 @@ pub enum JsStatement {
     Return,
     /// Batch separator (GO)
     BatchSeparator,
+    /// TRY...CATCH statement
+    TryCatch,
+    /// Transaction control statement
+    Transaction,
+    /// THROW statement
+    Throw,
+    /// RAISERROR statement
+    Raiserror,
 }
 
 #[cfg(feature = "wasm")]
@@ -160,6 +168,10 @@ impl TryFrom<Statement> for JsStatement {
             Statement::VariableAssignment(_) => Ok(Self::VariableAssignment),
             Statement::Return(_) => Ok(Self::Return),
             Statement::BatchSeparator(_) => Ok(Self::BatchSeparator),
+            Statement::TryCatch(_) => Ok(Self::TryCatch),
+            Statement::Transaction(_) => Ok(Self::Transaction),
+            Statement::Throw(_) => Ok(Self::Throw),
+            Statement::Raiserror(_) => Ok(Self::Raiserror),
         }
     }
 }
