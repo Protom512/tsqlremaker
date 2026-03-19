@@ -333,9 +333,10 @@ impl MySqlEmitter {
             CommonExpression::Like {
                 expr,
                 pattern,
+                escape,
                 negated,
                 ..
-            } => self.visit_like(expr, pattern, negated),
+            } => self.visit_like(expr, pattern, escape, negated),
             CommonExpression::IsNull { expr, negated, .. } => self.visit_is_null(expr, negated),
             CommonExpression::Subquery { query, .. } => {
                 self.write("(");
@@ -686,6 +687,7 @@ impl MySqlEmitter {
         &mut self,
         expr: &CommonExpression,
         pattern: &CommonExpression,
+        escape: &Option<Box<CommonExpression>>,
         negated: &bool,
     ) -> Result<(), EmitError> {
         let expr_str = self.visit_expression(expr)?;
@@ -693,6 +695,13 @@ impl MySqlEmitter {
         self.write(if *negated { " NOT LIKE " } else { " LIKE " });
         let pattern_str = self.visit_expression(pattern)?;
         self.write(&pattern_str);
+
+        // ESCAPE句を出力
+        if let Some(esc) = escape {
+            let escape_str = self.visit_expression(esc)?;
+            self.write(&format!(" ESCAPE {}", escape_str));
+        }
+
         Ok(())
     }
 
