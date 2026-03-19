@@ -10,4 +10,4 @@ mod functions;
 mod literals;
 mod operators;
 mod special;
-// mod subquery; // TODO: 別タスクで実装
+mod subquery;
