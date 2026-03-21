@@ -151,11 +151,11 @@
   - _Requirements: 9.5_
 
 - [x] 4.7 Implement special expression types
-  - Create parse_subquery_expression() for scalar subqueries (TODO: actual subquery parsing)
-  - Create parse_exists_expression() for EXISTS subqueries (TODO: actual subquery parsing)
-  - Create parse_in_expression() for IN lists and subqueries (lists implemented, subqueries TODO)
+  - Create parse_subquery_expression() for scalar subqueries (✅ completed)
+  - Create parse_exists_expression() for EXISTS subqueries (✅ completed)
+  - Create parse_in_expression() for IN lists and subqueries (✅ completed)
   - Create parse_between_expression() for BETWEEN ranges (with negation)
-  - Create parse_like_expression() for LIKE patterns (with negation, ESCAPE TODO)
+  - Create parse_like_expression() for LIKE patterns (with negation and ESCAPE ✅ completed)
   - Create parse_is_expression() for IS NULL/TRUE/FALSE/UNKNOWN (with negation)
   - Handle negated forms (NOT IN, NOT BETWEEN, NOT LIKE, IS NOT)
   - _Requirements: 9.8, 9.9, 9.10, 9.11, 9.12_
@@ -175,7 +175,7 @@
 - [x] 5.2 Implement FROM clause parsing
   - Create parse_from_clause() method
   - Parse table references with optional aliases
-  - Handle subqueries in FROM clause (derived tables) (TODO)
+  - Handle subqueries in FROM clause (derived tables) (✅ completed)
   - Support AS keyword for aliases
   - Create FromClause AST node
   - _Requirements: 2.3_
