@@ -9,6 +9,8 @@ pub struct EmissionConfig {
     pub quote_identifiers: bool,
     /// インデントサイズ（スペース数）
     pub indent_size: usize,
+    /// サポートされていない機能に対して警告コメントを出力するかどうか
+    pub warn_unsupported: bool,
 }
 
 impl Default for EmissionConfig {
@@ -17,6 +19,7 @@ impl Default for EmissionConfig {
             uppercase_keywords: false,
             quote_identifiers: true,
             indent_size: 4,
+            warn_unsupported: true,
         }
     }
 }
@@ -39,6 +42,7 @@ mod tests {
             uppercase_keywords: true,
             quote_identifiers: false,
             indent_size: 2,
+            warn_unsupported: false,
         };
         assert!(config.uppercase_keywords);
         assert!(!config.quote_identifiers);
@@ -57,8 +61,16 @@ mod tests {
         let config1 = EmissionConfig::default();
         let config2 = EmissionConfig {
             uppercase_keywords: true,
-            ..config1
+            quote_identifiers: config1.quote_identifiers,
+            indent_size: config1.indent_size,
+            warn_unsupported: config1.warn_unsupported,
         };
         assert_ne!(config1, config2);
+    }
+
+    #[test]
+    fn test_warn_unsupported_default() {
+        let config = EmissionConfig::default();
+        assert!(config.warn_unsupported);
     }
 }

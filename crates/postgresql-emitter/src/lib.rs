@@ -215,8 +215,39 @@ impl PostgreSqlEmitter {
                 self.visit_delete_statement(delete)
             }
             tsql_parser::common::CommonStatement::DialectSpecific { description, .. } => {
-                // 方言固有構文はエラーとする
-                Err(EmitError::Unsupported(description.clone()))
+                // 方言固有構文は警告コメントを出力して続行
+                if self.config.warn_unsupported {
+                    // descriptionの内容を解析して適切な警告メッセージを出力
+                    if description.contains("Declare(") {
+                        self.write("-- TODO: T-SQL 変数宣言 (DECLARE @var)\n");
+                        self.write("-- PostgreSQL は DO ブロック内で変数宣言が必要です\n");
+                    } else if description.contains("VariableAssignment(")
+                        || description.contains("Set(")
+                    {
+                        self.write("-- TODO: T-SQL 変数代入 (SET @var = value または SELECT @var = expr)\n");
+                        self.write("-- PostgreSQL では変数代入は SELECT INTO または := で代替してください\n");
+                    } else if description.contains("If(") {
+                        self.write("-- TODO: T-SQL IF...ELSE 文\n");
+                        self.write(
+                            "-- PostgreSQL では IF...THEN...ELSE...END IF を使用してください\n",
+                        );
+                    } else if description.contains("While(") {
+                        self.write("-- TODO: T-SQL WHILE ループ\n");
+                        self.write(
+                            "-- PostgreSQL では WHILE...LOOP...END LOOP を使用してください\n",
+                        );
+                    } else if description.contains("CREATE") {
+                        self.write("-- TODO: T-SQL CREATE 文\n");
+                        self.write("-- PostgreSQL の構文に合わせて手動で変換してください\n");
+                    } else {
+                        // その他の方言固有構文
+                        self.write("-- TODO: ");
+                        self.write(description);
+                        self.writeln();
+                        self.write("-- PostgreSQL では同等の機能に手動で変換してください\n");
+                    }
+                }
+                Ok(())
             }
         }
     }
@@ -513,6 +544,7 @@ mod tests {
             quote_identifiers: true,
             uppercase_keywords: false,
             indent_size: 2,
+            warn_unsupported: false,
         });
 
         assert_eq!(emitter.current_indent(), "");

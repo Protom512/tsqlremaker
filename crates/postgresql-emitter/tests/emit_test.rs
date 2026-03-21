@@ -152,6 +152,7 @@ fn test_emit_with_quoted_identifiers() {
         quote_identifiers: true,
         uppercase_keywords: false,
         indent_size: 4,
+        warn_unsupported: true,
     };
     let mut emitter = PostgreSqlEmitter::new(config);
     let postgres_sql = emitter.emit(&common_stmt).unwrap();
@@ -171,6 +172,7 @@ fn test_emit_without_quoted_identifiers() {
         quote_identifiers: false,
         uppercase_keywords: false,
         indent_size: 4,
+        warn_unsupported: true,
     };
     let mut emitter = PostgreSqlEmitter::new(config);
     let postgres_sql = emitter.emit(&common_stmt).unwrap();
@@ -288,4 +290,68 @@ fn test_emit_nested_subquery() {
 
     assert!(postgres_sql.contains("customer_id IN (SELECT id FROM customers"));
     assert!(postgres_sql.contains("region_id IN (SELECT id FROM regions"));
+}
+
+/// T-SQL 変数宣言（DialectSpecific）の警告コメント出力テスト
+#[test]
+fn test_emit_declare_statement_with_warning() {
+    let sql = "DECLARE @counter INT";
+    let statements = parse(sql).unwrap();
+    let common_stmt = statements[0].to_common_ast().unwrap();
+
+    let config = EmissionConfig {
+        warn_unsupported: true,
+        ..Default::default()
+    };
+    let mut emitter = PostgreSqlEmitter::new(config);
+    let postgres_sql = emitter.emit(&common_stmt).unwrap();
+
+    // デバッグ出力
+    eprintln!("Generated SQL: {}", postgres_sql);
+
+    // 警告コメントが出力されていることを確認
+    assert!(postgres_sql.contains("-- TODO: T-SQL 変数宣言"));
+    assert!(postgres_sql.contains("DECLARE @var"));
+    assert!(postgres_sql.contains("PostgreSQL は DO ブロック内で変数宣言が必要です"));
+}
+
+/// T-SQL 変数代入（SET文）の警告コメント出力テスト
+#[test]
+fn test_emit_set_statement_with_warning() {
+    let sql = "SET @counter = 1";
+    let statements = parse(sql).unwrap();
+    let common_stmt = statements[0].to_common_ast().unwrap();
+
+    let config = EmissionConfig {
+        warn_unsupported: true,
+        ..Default::default()
+    };
+    let mut emitter = PostgreSqlEmitter::new(config);
+    let postgres_sql = emitter.emit(&common_stmt).unwrap();
+
+    eprintln!("Generated SQL: {}", postgres_sql);
+
+    // 警告コメントが出力されていることを確認
+    assert!(postgres_sql.contains("-- TODO: T-SQL 変数代入"));
+    assert!(postgres_sql.contains("SET @var"));
+    assert!(postgres_sql.contains("SELECT INTO"));
+}
+
+/// 警告なしモードのテスト
+#[test]
+fn test_emit_declare_statement_without_warning() {
+    let sql = "DECLARE @counter INT";
+    let statements = parse(sql).unwrap();
+    let common_stmt = statements[0].to_common_ast().unwrap();
+
+    let config = EmissionConfig {
+        warn_unsupported: false,
+        ..Default::default()
+    };
+    let mut emitter = PostgreSqlEmitter::new(config);
+    let postgres_sql = emitter.emit(&common_stmt).unwrap();
+
+    // 警告コメントが出力されていないことを確認
+    assert!(!postgres_sql.contains("-- TODO:"));
+    assert!(postgres_sql.is_empty());
 }
