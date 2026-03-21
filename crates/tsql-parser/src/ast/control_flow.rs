@@ -194,28 +194,28 @@ impl AstNode for TryCatchStatement {
 /// BEGIN TRANSACTION、COMMIT TRANSACTION、ROLLBACK TRANSACTION、SAVE TRANSACTION
 #[derive(Debug, Clone)]
 pub enum TransactionStatement {
-    /// BEGIN TRANSACTION [name]
+    /// BEGIN TRANSACTION \[name\]
     Begin {
         /// 位置情報
         span: Span,
         /// トランザクション名（省略可能）
         name: Option<Identifier>,
     },
-    /// COMMIT TRANSACTION [name]
+    /// COMMIT TRANSACTION \[name\]
     Commit {
         /// 位置情報
         span: Span,
         /// トランザクション名（省略可能）
         name: Option<Identifier>,
     },
-    /// ROLLBACK TRANSACTION [name | savepoint]
+    /// ROLLBACK TRANSACTION \[name | savepoint\]
     Rollback {
         /// 位置情報
         span: Span,
         /// トランザクション名またはセーブポイント名（省略可能）
         name: Option<Identifier>,
     },
-    /// SAVE TRANSACTION name
+    /// SAVE TRANSACTION \[name\]
     Save {
         /// 位置情報
         span: Span,
