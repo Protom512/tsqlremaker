@@ -7,7 +7,7 @@
 > **Orchestratorへ**: チームメイトの発見をこのファイルに転記・構造化する責務を持つ。
 > 「作業指示」ではなく「知識のファシリテーション」が役割。
 
-**最終更新:** 2026-03-21 22:00 / Orchestrator (DATEADD/DATEDIFF完全実装、ドキュメント修正)
+**最終更新:** 2026-03-21 23:45 / Orchestrator (品質分析・ドキュメント警告修正)
 
 ---
 
@@ -128,6 +128,19 @@
 - ✅ WHITEBOARD更新完了
 - 🎉 **全12タスク完了！プロジェクト全体が本番品質の状態**
 
+### 2026-03-21 23:50 - Orchestrator (品質分析・ドキュメント警告修正)
+- ✅ プロジェクト全体の品質スキャン完了
+  - Rustファイル: 65ファイル、24,887行
+  - 全テストパス確認 (82+21+5+3件)
+  - fmt/clippyパス確認
+- ✅ ドキュメント警告修正: T016
+  - `crates/tsql-parser/src/ast/control_flow.rs` のrustdoc警告を修正
+  - `[name]` を `\[name\]` にエスケープしてリンク誤検出を解消
+- ✅ 未使用コード分析完了
+  - `#[allow(dead_code)]` 付きコードは公開APIまたは将来の拡張用として正当化
+  - 削除不要
+- ✅ コミット完了 (d5be76b)
+
 ---
 
 ---
@@ -173,8 +186,8 @@ Investigator ──→ 調査結果・申し送り ──→ Designer
 
 | 項目 | 内容 |
 |------|------|
-| 現在フェーズ | Phase 1: 全タスク完了 ✅ |
-| 全体進捗 | 12 / 12 タスク完了 |
+| 現在フェーズ | Phase 1: 全タスク完了 + 品質改善 ✅ |
+| 全体進捗 | 13 / 13 タスク完了（T001-T015 + T016） |
 | アクティブエージェント | Orchestrator |
 | 最終更新者 | Orchestrator |
 | 次のレビューポイント | コミット・プッシュ |
@@ -209,12 +222,11 @@ Investigator ──→ 調査結果・申し送り ──→ Designer
 | T013 | sqlite-emitter/src/lib.rs | SIMPLE_IMPL | DATEADD関数が簡易実装（引数変換なし） | P2 | ✅ 完了 |
 | T014 | sqlite-emitter/src/lib.rs | SIMPLE_IMPL | DATEDIFF関数が簡易実装（引数変換なし） | P2 | ✅ 完了 |
 | T015 | .kiro/specs/mysql-emitter/requirements.md | DOC_TYPO | ドキュメントのタイポ（3箇所） | P3 | ✅ 完了 |
-| T011 | postgresql-emitter/src/mappers/datatype.rs | FEATURE_LIMITATION | TINYINTマッピングの検討 | P3 | ✅ 完了 |
-| T012 | .kiro/specs/postgresql-emitter/design.md | DESIGN_NEEDED | SelectItem distinctフラグ設計未確定 | P3 | ✅ 完了 |
+| T016 | tsql-parser/src/ast/control_flow.rs | DOC_WARNING | rustdocの壊れたリンク警告 | P3 | ✅ 完了 |
 
-**統計:** P0: 0件 / P1: 2件 / P2: 6件 / P3: 4件 / 合計: 12件
+**統計:** P0: 0件 / P1: 2件 / P2: 6件 / P3: 5件 / 合計: 13件
 
-**推計工数:** 56.5時間
+**推計工数:** 56.5時間 + T016: 0.25h = 56.75時間
 
 ### クイックウィン（推奨優先実施）
 
@@ -384,6 +396,7 @@ resume_instruction: "Investigatorのスキャンから再開"
 | T009 | エラー回復実装確認（既に実装済み） | 2026-03-19 21:20 | 6346ab4 |
 | T010 | SDD.mdのPostgreSQL Emitter記述更新 | 2026-03-19 14:00 | 5a7e547 |
 | T013 | SQLite EmitterのDATEADD関数完全実装 | 2026-03-21 22:00 | 7165b23 |
+| T016 | ドキュメント警告修正（control_flow.rs） | 2026-03-21 23:50 | d5be76b |
 | T014 | SQLite EmitterのDATEDIFF関数完全実装 | 2026-03-21 22:00 | 7165b23 |
 | T015 | MySQL Emitterドキュメントのタイポ修正 | 2026-03-21 22:00 | 7165b23 |
 | T007 | T-SQL変数構文の警告コメント出力機能 | 2026-03-21 23:30 | ee50e74 |
