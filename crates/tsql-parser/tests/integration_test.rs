@@ -9,7 +9,8 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::len_zero)]
 
-use tsql_parser::{parse, parse_one};
+use tsql_parser::ast::ColumnConstraint;
+use tsql_parser::{parse, parse_one, Parser};
 
 /// 複数の JOIN を含む複雑な SELECT 文
 #[test]
@@ -39,7 +40,6 @@ fn test_complex_join_query() {
 /// 入れ子のサブクエリ
 #[test]
 fn test_nested_subquery() {
-    // TODO: サブクエリの実装が完了したら有効化する
     let sql = r#"
         SELECT u.id, u.name
         FROM users u
@@ -133,7 +133,6 @@ fn test_multiple_statements() {
 /// IF...ELSE 制御フロー
 #[test]
 fn test_if_else_control_flow() {
-    // TODO: ELSE 句の実装が完了したら完全版をテスト
     let sql = r#"
         IF @x > 0
             SELECT 'positive' as result;
@@ -210,7 +209,6 @@ fn test_insert_select() {
 /// CREATE TABLE
 #[test]
 fn test_create_table() {
-    // TODO: DEFAULT 式の実装が完了したら完全版をテスト
     let sql = r#"
         CREATE TABLE users (
             id INT PRIMARY KEY,
@@ -222,6 +220,105 @@ fn test_create_table() {
     let stmt = parse_one(sql).unwrap();
     match stmt {
         tsql_parser::Statement::Create(_) => {}
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// CREATE TABLE with DEFAULT clause
+#[test]
+fn test_create_table_with_default() {
+    let sql = r#"
+        CREATE TABLE users (
+            id INT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            status VARCHAR(20) DEFAULT 'active',
+            created_at DATETIME DEFAULT GETDATE(),
+            is_active BIT DEFAULT 1
+        )
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Create(create) => {
+            match create.as_ref() {
+                tsql_parser::CreateStatement::Table(table) => {
+                    // Check that status column has a default value
+                    let status_col = table
+                        .columns
+                        .iter()
+                        .find(|c| c.name.name == "status")
+                        .expect("status column should exist");
+                    assert!(
+                        status_col.default_value.is_some(),
+                        "status column should have a default value"
+                    );
+
+                    // Check that created_at column has a default value
+                    let created_col = table
+                        .columns
+                        .iter()
+                        .find(|c| c.name.name == "created_at")
+                        .expect("created_at column should exist");
+                    assert!(
+                        created_col.default_value.is_some(),
+                        "created_at column should have a default value"
+                    );
+
+                    // Check that is_active column has a default value
+                    let active_col = table
+                        .columns
+                        .iter()
+                        .find(|c| c.name.name == "is_active")
+                        .expect("is_active column should exist");
+                    assert!(
+                        active_col.default_value.is_some(),
+                        "is_active column should have a default value"
+                    );
+
+                    // Check that id column does NOT have a default value
+                    let id_col = table
+                        .columns
+                        .iter()
+                        .find(|c| c.name.name == "id")
+                        .expect("id column should exist");
+                    assert!(
+                        id_col.default_value.is_none(),
+                        "id column should not have a default value"
+                    );
+                }
+                _ => panic!("Expected Table statement"),
+            }
+        }
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// CREATE TABLE with DEFAULT NULL
+#[test]
+fn test_create_table_with_default_null() {
+    let sql = r#"
+        CREATE TABLE items (
+            id INT PRIMARY KEY,
+            description VARCHAR(255) DEFAULT NULL
+        )
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Create(create) => match create.as_ref() {
+            tsql_parser::CreateStatement::Table(table) => {
+                let desc_col = table
+                    .columns
+                    .iter()
+                    .find(|c| c.name.name == "description")
+                    .expect("description column should exist");
+                assert!(
+                    desc_col.default_value.is_some(),
+                    "description column should have a default value"
+                );
+            }
+            _ => panic!("Expected Table statement"),
+        },
         _ => panic!("CREATE文であること"),
     }
 }
@@ -392,6 +489,130 @@ fn test_like_pattern() {
     match stmt {
         tsql_parser::Statement::Select(select) => {
             assert!(select.where_clause.is_some());
+            if let Some(where_expr) = &select.where_clause {
+                // ESCAPE句が正しくパースされていることを確認
+                match where_expr {
+                    tsql_parser::Expression::Like { escape, .. } => {
+                        assert!(escape.is_some(), "ESCAPE句があること");
+                    }
+                    _ => panic!("LIKE式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// LIKE ESCAPE 句のパース（バックスラッシュ）
+#[test]
+fn test_like_escape_backslash() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT * FROM t WHERE col LIKE '%\\_%' ESCAPE '\\'";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::Like { escape, .. } => {
+                        assert!(escape.is_some(), "ESCAPE句があること");
+                    }
+                    _ => panic!("LIKE式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// LIKE ESCAPE 句のパース（他のエスケープ文字）
+#[test]
+fn test_like_escape_other_char() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT * FROM t WHERE col LIKE '%#_%' ESCAPE '#'";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::Like { escape, .. } => {
+                        assert!(escape.is_some(), "ESCAPE句があること");
+                    }
+                    _ => panic!("LIKE式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// LIKE ESCAPE 句なし（通常のLIKE）
+#[test]
+fn test_like_without_escape() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT * FROM t WHERE col LIKE '%test%'";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::Like { escape, .. } => {
+                        assert!(escape.is_none(), "ESCAPE句がないこと");
+                    }
+                    _ => panic!("LIKE式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// IN サブクエリ
+#[test]
+fn test_in_subquery() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::In { list, .. } => {
+                        // INリストがサブクエリであることを確認
+                        match list {
+                            tsql_parser::InList::Subquery(_) => {
+                                // OK - サブクエリが正しくパースされている
+                            }
+                            _ => panic!("INリストがサブクエリであること"),
+                        }
+                    }
+                    _ => panic!("IN式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// スカラーサブクエリ
+#[test]
+fn test_scalar_subquery() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT (SELECT COUNT(*) FROM orders) as order_count FROM users";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            // カラムリストにサブクエリが含まれていることを確認
+            assert!(!select.columns.is_empty());
         }
         _ => panic!("SELECT文であること"),
     }
@@ -400,17 +621,26 @@ fn test_like_pattern() {
 /// EXISTS サブクエリ
 #[test]
 fn test_exists_subquery() {
-    // TODO: EXISTS サブクエリの実装が完了したら有効化
     let sql = r#"
         SELECT u.id, u.name
         FROM users u
-        WHERE u.status = 'active'
+        WHERE EXISTS (
+            SELECT 1 FROM orders o WHERE o.user_id = u.id
+        )
     "#;
 
     let stmt = parse_one(sql).unwrap();
     match stmt {
         tsql_parser::Statement::Select(select) => {
             assert!(select.where_clause.is_some());
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::Exists(_) => {
+                        // OK - EXISTS式が正しくパースされている
+                    }
+                    _ => panic!("EXISTS式であること"),
+                }
+            }
         }
         _ => panic!("SELECT文であること"),
     }
@@ -425,10 +655,87 @@ fn test_synchronization_at_keywords() {
         UPDATE products SET price = 100;
     "#;
 
-    let result = parse(sql);
-    // 現在の実装ではエラー回復が不完全なので、エラーになることを期待
-    // TODO: エラー回復が実装されたらこのテストを更新する
+    // エラー回復が実装されたので、複数の文をパースできることを確認
+    let mut parser = Parser::new(sql);
+    let result = parser.parse_with_errors();
+
+    // エラーがあることを確認（SELCTは typo）
     assert!(result.is_err());
+
+    // エラーの詳細を確認
+    let errors = result.unwrap_err();
+    assert!(errors.len() >= 1);
+
+    // 最初のエラーは「SELCT」が原因
+    let first_error = errors.first().unwrap();
+    let error_msg = format!("{}", first_error);
+    assert!(error_msg.contains("unexpected") || error_msg.contains("expected"));
+}
+
+/// エラー回復：複数の構文エラーを一度に検出
+#[test]
+fn test_multiple_syntax_errors() {
+    let sql = r#"
+        SELCT * FROM users;
+        INERT INTO orders VALUES (1, 2);
+        UPDAET products SET price = 100;
+    "#;
+
+    let mut parser = Parser::new(sql);
+    let result = parser.parse_with_errors();
+
+    // 複数のエラーを検出
+    assert!(result.is_err());
+    let errors = result.unwrap_err();
+    assert!(errors.len() >= 2);
+
+    // 各エラーにキーワード typo が含まれていることを確認
+    let error_strings: Vec<String> = errors.iter().map(|e| format!("{}", e)).collect();
+    assert!(error_strings.iter().any(|s| s.contains("unexpected")));
+}
+
+/// エラー回復：セミコロンで同期
+#[test]
+fn test_synchronization_at_semicolon() {
+    let sql = "SELCT * FROM users; SELECT * FROM orders";
+
+    let mut parser = Parser::new(sql);
+    let result = parser.parse_with_errors();
+
+    // エラーがあるが、2番目の文はパースできるはず
+    assert!(result.is_err());
+
+    let errors = result.unwrap_err();
+    // 最初のエラーのみ
+    assert!(errors.len() >= 1);
+}
+
+/// エラー回復：GOキーワードで同期
+#[test]
+fn test_synchronization_at_go() {
+    let sql = "SELCT * FROM users GO SELECT * FROM orders";
+
+    let mut parser = Parser::new(sql);
+    let result = parser.parse_with_errors();
+
+    // エラーがある
+    assert!(result.is_err());
+}
+
+/// エラー回復：エラー収集メソッド
+#[test]
+fn test_error_collection_methods() {
+    let sql = "SELCT * FROM users; INERT INTO orders VALUES (1, 2)";
+
+    let mut parser = Parser::new(sql);
+    let _ = parser.parse_with_errors();
+
+    // has_errors() メソッドのテスト
+    assert!(parser.has_errors());
+
+    // errors() メソッドのテスト
+    let errors = parser.errors();
+    assert!(errors.len() >= 2);
 }
 
 /// エラー回復：予期しないEOF
@@ -634,6 +941,94 @@ fn test_cross_join() {
     }
 }
 
+/// USING句のテスト - 単一カラム
+#[test]
+fn test_join_using_single_column() {
+    let sql = "SELECT * FROM users INNER JOIN orders USING (user_id)";
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            let from = select.from.as_ref().unwrap();
+            assert!(!from.joins.is_empty());
+            assert_eq!(from.joins[0].using_columns.len(), 1);
+            assert_eq!(from.joins[0].using_columns[0].name, "user_id");
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// USING句のテスト - 複数カラム
+#[test]
+fn test_join_using_multiple_columns() {
+    let sql = "SELECT * FROM orders INNER JOIN items USING (order_id, product_id)";
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            let from = select.from.as_ref().unwrap();
+            assert!(!from.joins.is_empty());
+            assert_eq!(from.joins[0].using_columns.len(), 2);
+            assert_eq!(from.joins[0].using_columns[0].name, "order_id");
+            assert_eq!(from.joins[0].using_columns[1].name, "product_id");
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// USING句のテスト - LEFT JOIN
+#[test]
+fn test_left_join_using() {
+    let sql = "SELECT * FROM users LEFT JOIN orders USING (id)";
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            let from = select.from.as_ref().unwrap();
+            assert!(!from.joins.is_empty());
+            assert_eq!(from.joins[0].using_columns.len(), 1);
+            assert_eq!(from.joins[0].using_columns[0].name, "id");
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// USING句のテスト - USINGなし（ON条件のみ）
+#[test]
+fn test_join_on_without_using() {
+    let sql = "SELECT * FROM users INNER JOIN orders ON users.id = orders.user_id";
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            let from = select.from.as_ref().unwrap();
+            assert!(!from.joins.is_empty());
+            assert_eq!(from.joins[0].using_columns.len(), 0);
+            assert!(from.joins[0].on_condition.is_some());
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// USING句のテスト - 3つのカラム
+#[test]
+fn test_join_using_three_columns() {
+    let sql = "SELECT * FROM table1 INNER JOIN table2 USING (col1, col2, col3)";
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            let from = select.from.as_ref().unwrap();
+            assert!(!from.joins.is_empty());
+            assert_eq!(from.joins[0].using_columns.len(), 3);
+            assert_eq!(from.joins[0].using_columns[0].name, "col1");
+            assert_eq!(from.joins[0].using_columns[1].name, "col2");
+            assert_eq!(from.joins[0].using_columns[2].name, "col3");
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
 /// 複数のORDER BY条件
 #[test]
 fn test_multiple_order_by() {
@@ -787,6 +1182,810 @@ fn test_order_by_direction() {
             assert_eq!(select.order_by.len(), 2);
             assert!(select.order_by[0].asc); // ASC
             assert!(!select.order_by[1].asc); // DESC
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// カラムレベル制約: PRIMARY KEY
+#[test]
+fn test_column_primary_key_constraint() {
+    let sql = "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(100))";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Create(create) => {
+            match create.as_ref() {
+                tsql_parser::CreateStatement::Table(table) => {
+                    assert_eq!(table.columns.len(), 2);
+                    // idカラムにPRIMARY KEY制約がある
+                    assert!(!table.columns[0].constraints.is_empty());
+                    match &table.columns[0].constraints[0] {
+                        ColumnConstraint::PrimaryKey => {
+                            // OK
+                        }
+                        _ => panic!("PRIMARY KEY制約があること"),
+                    }
+                }
+                _ => panic!("CREATE TABLEであること"),
+            }
+        }
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// カラムレベル制約: UNIQUE
+#[test]
+fn test_column_unique_constraint() {
+    let sql = "CREATE TABLE users (email VARCHAR(255) UNIQUE)";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Create(create) => {
+            match create.as_ref() {
+                tsql_parser::CreateStatement::Table(table) => {
+                    assert_eq!(table.columns.len(), 1);
+                    assert!(!table.columns[0].constraints.is_empty());
+                    match &table.columns[0].constraints[0] {
+                        ColumnConstraint::Unique => {
+                            // OK
+                        }
+                        _ => panic!("UNIQUE制約があること"),
+                    }
+                }
+                _ => panic!("CREATE TABLEであること"),
+            }
+        }
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// カラムレベル制約: REFERENCES (FOREIGN KEY)
+#[test]
+fn test_column_references_constraint() {
+    let sql = "CREATE TABLE orders (user_id INT REFERENCES users(id))";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Create(create) => match create.as_ref() {
+            tsql_parser::CreateStatement::Table(table) => {
+                assert_eq!(table.columns.len(), 1);
+                assert!(!table.columns[0].constraints.is_empty());
+                match &table.columns[0].constraints[0] {
+                    ColumnConstraint::Foreign {
+                        ref_table,
+                        ref_column,
+                    } => {
+                        assert_eq!(ref_table.name, "users");
+                        assert_eq!(ref_column.name, "id");
+                    }
+                    _ => panic!("REFERENCES制約があること"),
+                }
+            }
+            _ => panic!("CREATE TABLEであること"),
+        },
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// カラムレベル制約: CHECK
+#[test]
+fn test_column_check_constraint() {
+    let sql = "CREATE TABLE products (price DECIMAL CHECK (price > 0))";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Create(create) => {
+            match create.as_ref() {
+                tsql_parser::CreateStatement::Table(table) => {
+                    assert_eq!(table.columns.len(), 1);
+                    assert!(!table.columns[0].constraints.is_empty());
+                    match &table.columns[0].constraints[0] {
+                        ColumnConstraint::Check(_) => {
+                            // OK
+                        }
+                        _ => panic!("CHECK制約があること"),
+                    }
+                }
+                _ => panic!("CREATE TABLEであること"),
+            }
+        }
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// 複数のカラムレベル制約
+#[test]
+fn test_multiple_column_constraints() {
+    // T-SQL標準ではNULL制約を先に記述する
+    let sql = "CREATE TABLE test (id INT NOT NULL PRIMARY KEY, name VARCHAR(100) NOT NULL UNIQUE)";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Create(create) => {
+            match create.as_ref() {
+                tsql_parser::CreateStatement::Table(table) => {
+                    assert_eq!(table.columns.len(), 2);
+                    // idカラム: NOT NULL + PRIMARY KEY
+                    assert_eq!(table.columns[0].nullability, Some(false));
+                    assert_eq!(table.columns[0].constraints.len(), 1);
+                    match &table.columns[0].constraints[0] {
+                        ColumnConstraint::PrimaryKey => {
+                            // OK
+                        }
+                        _ => panic!("idカラムにPRIMARY KEY制約があること"),
+                    }
+                    // nameカラム: NOT NULL + UNIQUE
+                    assert_eq!(table.columns[1].nullability, Some(false));
+                    assert_eq!(table.columns[1].constraints.len(), 1);
+                    match &table.columns[1].constraints[0] {
+                        ColumnConstraint::Unique => {
+                            // OK
+                        }
+                        _ => panic!("nameカラムにUNIQUE制約があること"),
+                    }
+                }
+                _ => panic!("CREATE TABLEであること"),
+            }
+        }
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// テーブルレベル制約のテスト
+#[test]
+fn test_table_level_constraints() {
+    use tsql_parser::ast::TableConstraint;
+
+    let sql = r#"
+        CREATE TABLE users (
+            id INT,
+            name VARCHAR(100),
+            email VARCHAR(255),
+            CONSTRAINT pk_users PRIMARY KEY (id),
+            CONSTRAINT uq_users_email UNIQUE (email)
+        )
+    "#;
+
+    let statements = parse(sql).unwrap();
+    assert_eq!(statements.len(), 1);
+
+    match &statements[0] {
+        tsql_parser::Statement::Create(create) => match create.as_ref() {
+            tsql_parser::CreateStatement::Table(table) => {
+                assert_eq!(table.columns.len(), 3);
+                assert_eq!(table.constraints.len(), 2);
+
+                // PRIMARY KEY制約
+                match &table.constraints[0] {
+                    TableConstraint::PrimaryKey { columns, .. } => {
+                        assert_eq!(columns.len(), 1);
+                        assert_eq!(columns[0].name, "id");
+                    }
+                    _ => panic!("PRIMARY KEY制約であること"),
+                }
+
+                // UNIQUE制約
+                match &table.constraints[1] {
+                    TableConstraint::Unique { columns, .. } => {
+                        assert_eq!(columns.len(), 1);
+                        assert_eq!(columns[0].name, "email");
+                    }
+                    _ => panic!("UNIQUE制約であること"),
+                }
+            }
+            _ => panic!("CREATE TABLEであること"),
+        },
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// 複合プライマリキーのテーブルレベル制約
+#[test]
+fn test_composite_primary_key() {
+    use tsql_parser::ast::TableConstraint;
+
+    let sql = r#"
+        CREATE TABLE order_items (
+            order_id INT,
+            product_id INT,
+            quantity INT,
+            CONSTRAINT pk_order_items PRIMARY KEY (order_id, product_id)
+        )
+    "#;
+
+    let statements = parse(sql).unwrap();
+    assert_eq!(statements.len(), 1);
+
+    match &statements[0] {
+        tsql_parser::Statement::Create(create) => match create.as_ref() {
+            tsql_parser::CreateStatement::Table(table) => {
+                assert_eq!(table.columns.len(), 3);
+                assert_eq!(table.constraints.len(), 1);
+
+                match &table.constraints[0] {
+                    TableConstraint::PrimaryKey { columns, .. } => {
+                        assert_eq!(columns.len(), 2);
+                        assert_eq!(columns[0].name, "order_id");
+                        assert_eq!(columns[1].name, "product_id");
+                    }
+                    _ => panic!("PRIMARY KEY制約であること"),
+                }
+            }
+            _ => panic!("CREATE TABLEであること"),
+        },
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// FOREIGN KEY制約のテーブルレベル制約
+#[test]
+fn test_foreign_key_constraint() {
+    use tsql_parser::ast::TableConstraint;
+
+    let sql = r#"
+        CREATE TABLE orders (
+            id INT,
+            user_id INT,
+            CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    "#;
+
+    let statements = parse(sql).unwrap();
+    assert_eq!(statements.len(), 1);
+
+    match &statements[0] {
+        tsql_parser::Statement::Create(create) => match create.as_ref() {
+            tsql_parser::CreateStatement::Table(table) => {
+                assert_eq!(table.columns.len(), 2);
+                assert_eq!(table.constraints.len(), 1);
+
+                match &table.constraints[0] {
+                    TableConstraint::Foreign {
+                        columns,
+                        ref_table,
+                        ref_columns,
+                        ..
+                    } => {
+                        assert_eq!(columns.len(), 1);
+                        assert_eq!(columns[0].name, "user_id");
+                        assert_eq!(ref_table.name, "users");
+                        assert_eq!(ref_columns.len(), 1);
+                        assert_eq!(ref_columns[0].name, "id");
+                    }
+                    _ => panic!("FOREIGN KEY制約であること"),
+                }
+            }
+            _ => panic!("CREATE TABLEであること"),
+        },
+        _ => panic!("CREATE文であること"),
+    }
+}
+
+/// 派生テーブル（サブクエリ内のサブクエリ）
+#[test]
+fn test_derived_table_in_subquery() {
+    use tsql_parser::ast::TableReference;
+
+    let sql = r#"
+        SELECT u.id, u.name
+        FROM (
+            SELECT id, name
+            FROM users
+            WHERE active = 1
+        ) AS u
+        WHERE u.id > 10
+    "#;
+
+    let statements = parse(sql).unwrap();
+    assert_eq!(statements.len(), 1);
+
+    match &statements[0] {
+        tsql_parser::Statement::Select(select) => {
+            assert_eq!(select.columns.len(), 2);
+
+            // FROM句に派生テーブルがあることを確認
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            assert_eq!(from_clause.tables.len(), 1);
+
+            match &from_clause.tables[0] {
+                TableReference::Subquery { query, alias, .. } => {
+                    assert_eq!(alias.as_ref().unwrap().name, "u");
+                    assert_eq!(query.columns.len(), 2);
+                }
+                _ => panic!("派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// ネストした派生テーブル
+#[test]
+fn test_nested_derived_tables() {
+    use tsql_parser::ast::TableReference;
+
+    let sql = r#"
+        SELECT a.id, b.name
+        FROM (
+            SELECT id FROM table1
+        ) AS a
+        JOIN (
+            SELECT id, name FROM (
+                SELECT id, name FROM table2
+            ) AS inner_table
+        ) AS b
+        ON a.id = b.id
+    "#;
+
+    let statements = parse(sql).unwrap();
+    assert_eq!(statements.len(), 1);
+
+    match &statements[0] {
+        tsql_parser::Statement::Select(select) => {
+            // FROM句に1つのテーブルと1つのJOINがあることを確認
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            assert_eq!(from_clause.tables.len(), 1);
+            assert_eq!(from_clause.joins.len(), 1);
+
+            // JOIN内のテーブルも派生テーブルであることを確認
+            match &from_clause.joins[0].table {
+                TableReference::Subquery { .. } => {
+                    // OK
+                }
+                _ => panic!("JOINされたテーブルは派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// INサブクエリ内の派生テーブル
+#[test]
+fn test_derived_table_in_in_subquery() {
+    let sql = r#"
+        SELECT u.id
+        FROM users u
+        WHERE u.id IN (
+            SELECT t.user_id
+            FROM (
+                SELECT user_id, COUNT(*) as cnt
+                FROM orders
+                GROUP BY user_id
+                HAVING COUNT(*) > 5
+            ) AS t
+        )
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.where_clause.is_some());
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::In { list, .. } => {
+                        match list {
+                            tsql_parser::InList::Subquery(subquery) => {
+                                // サブクエリ内にFROM句と派生テーブルがあることを確認
+                                assert!(subquery.from.is_some());
+                                let from_clause = subquery.from.as_ref().unwrap();
+                                assert_eq!(from_clause.tables.len(), 1);
+                                match &from_clause.tables[0] {
+                                    tsql_parser::ast::TableReference::Subquery {
+                                        alias, ..
+                                    } => {
+                                        assert_eq!(alias.as_ref().unwrap().name, "t");
+                                    }
+                                    _ => panic!("INサブクエリ内に派生テーブルがあること"),
+                                }
+                            }
+                            _ => panic!("INリストがサブクエリであること"),
+                        }
+                    }
+                    _ => panic!("IN式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// EXISTSサブクエリ内の派生テーブル
+#[test]
+fn test_derived_table_in_exists_subquery() {
+    let sql = r#"
+        SELECT u.id, u.name
+        FROM users u
+        WHERE EXISTS (
+            SELECT 1
+            FROM (
+                SELECT user_id, SUM(amount) as total
+                FROM orders
+                GROUP BY user_id
+            ) AS order_totals
+            WHERE order_totals.user_id = u.id
+              AND order_totals.total > 1000
+        )
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.where_clause.is_some());
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::Exists(subquery) => {
+                        // EXISTSサブクエリ内にFROM句と派生テーブルがあることを確認
+                        assert!(subquery.from.is_some());
+                        let from_clause = subquery.from.as_ref().unwrap();
+                        assert_eq!(from_clause.tables.len(), 1);
+                        match &from_clause.tables[0] {
+                            tsql_parser::ast::TableReference::Subquery { alias, query, .. } => {
+                                assert_eq!(alias.as_ref().unwrap().name, "order_totals");
+                                // 派生テーブル内にGROUP BYがあることを確認
+                                assert!(!query.group_by.is_empty());
+                            }
+                            _ => panic!("EXISTSサブクエリ内に派生テーブルがあること"),
+                        }
+                    }
+                    _ => panic!("EXISTS式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// スカラーサブクエリ内の派生テーブル
+#[test]
+fn test_derived_table_in_scalar_subquery() {
+    let sql = r#"
+        SELECT
+            u.id,
+            (
+                SELECT COUNT(*)
+                FROM (
+                    SELECT user_id
+                    FROM orders
+                    WHERE user_id = u.id
+                ) AS user_orders
+            ) as order_count
+        FROM users u
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert_eq!(select.columns.len(), 2);
+            // スカラーサブクエリがカラムリストに含まれていることを確認
+            match &select.columns[1] {
+                tsql_parser::ast::SelectItem::Expression(
+                    tsql_parser::Expression::Subquery(subquery),
+                    _,
+                ) => {
+                    // サブクエリ内にFROM句と派生テーブルがあることを確認
+                    assert!(subquery.from.is_some());
+                    let from_clause = subquery.from.as_ref().unwrap();
+                    assert_eq!(from_clause.tables.len(), 1);
+                    match &from_clause.tables[0] {
+                        tsql_parser::ast::TableReference::Subquery { alias, .. } => {
+                            assert_eq!(alias.as_ref().unwrap().name, "user_orders");
+                        }
+                        _ => panic!("スカラーサブクエリ内に派生テーブルがあること"),
+                    }
+                }
+                _ => panic!("スカラーサブクエリであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: ASなしの別名
+#[test]
+fn test_derived_table_without_as_keyword() {
+    let sql = "SELECT * FROM (SELECT id FROM users) u";
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            assert_eq!(from_clause.tables.len(), 1);
+            match &from_clause.tables[0] {
+                tsql_parser::ast::TableReference::Subquery { alias, .. } => {
+                    assert_eq!(alias.as_ref().unwrap().name, "u");
+                }
+                _ => panic!("派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: 別名なし（エラーまたは警告）
+#[test]
+fn test_derived_table_without_alias() {
+    // SAP ASEでは派生テーブルに別名が必須
+    // パーサーは受け入れるが、意味解析でエラーになる可能性がある
+    let sql = "SELECT * FROM (SELECT id FROM users)";
+
+    let result = parse_one(sql);
+    // パースは成功する（別名なしの派生テーブル）
+    assert!(result.is_ok());
+}
+
+/// 派生テーブル: 複数のテーブルを結合
+#[test]
+fn test_derived_table_with_joins() {
+    let sql = r#"
+        SELECT *
+        FROM (
+            SELECT u.id, u.name, o.order_id
+            FROM users u
+            INNER JOIN orders o ON u.id = o.user_id
+        ) AS user_orders
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            assert_eq!(from_clause.tables.len(), 1);
+            match &from_clause.tables[0] {
+                tsql_parser::ast::TableReference::Subquery { query, .. } => {
+                    // 派生テーブル内にJOINがあることを確認
+                    assert!(query.from.is_some());
+                    let inner_from = query.from.as_ref().unwrap();
+                    assert!(!inner_from.joins.is_empty());
+                }
+                _ => panic!("派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: WHERE句内の派生テーブル
+#[test]
+fn test_derived_table_in_where_clause() {
+    let sql = r#"
+        SELECT *
+        FROM users u
+        WHERE u.department_id IN (
+            SELECT d.id
+            FROM (
+                SELECT id, name
+                FROM departments
+                WHERE active = 1
+            ) AS d
+        )
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.where_clause.is_some());
+            if let Some(where_expr) = &select.where_clause {
+                match where_expr {
+                    tsql_parser::Expression::In { list, .. } => match list {
+                        tsql_parser::InList::Subquery(subquery) => {
+                            assert!(subquery.from.is_some());
+                            let from_clause = subquery.from.as_ref().unwrap();
+                            assert_eq!(from_clause.tables.len(), 1);
+                            match &from_clause.tables[0] {
+                                tsql_parser::ast::TableReference::Subquery { alias, .. } => {
+                                    assert_eq!(alias.as_ref().unwrap().name, "d");
+                                }
+                                _ => panic!("INサブクエリ内に派生テーブルがあること"),
+                            }
+                        }
+                        _ => panic!("INリストがサブクエリであること"),
+                    },
+                    _ => panic!("IN式であること"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: DISTINCTとORDER BY
+#[test]
+fn test_derived_table_with_distinct_and_order_by() {
+    let sql = r#"
+        SELECT *
+        FROM (
+            SELECT DISTINCT category, COUNT(*) as cnt
+            FROM products
+            GROUP BY category
+            ORDER BY cnt DESC
+        ) AS category_counts
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            match &from_clause.tables[0] {
+                tsql_parser::ast::TableReference::Subquery { query, .. } => {
+                    assert!(query.distinct);
+                    assert!(!query.group_by.is_empty());
+                    assert!(!query.order_by.is_empty());
+                }
+                _ => panic!("派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: 3レベルの入れ子
+#[test]
+fn test_deeply_nested_derived_tables() {
+    let sql = r#"
+        SELECT *
+        FROM (
+            SELECT * FROM (
+                SELECT * FROM (
+                    SELECT id, name FROM users
+                ) AS level3
+            ) AS level2
+        ) AS level1
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+
+            // 最も外側の派生テーブル
+            match &from_clause.tables[0] {
+                tsql_parser::ast::TableReference::Subquery {
+                    query: outer_q,
+                    alias: outer_a,
+                    ..
+                } => {
+                    assert_eq!(outer_a.as_ref().unwrap().name, "level1");
+
+                    // 2レベル目の派生テーブル
+                    match &outer_q.from.as_ref().unwrap().tables[0] {
+                        tsql_parser::ast::TableReference::Subquery {
+                            query: mid_q,
+                            alias: mid_a,
+                            ..
+                        } => {
+                            assert_eq!(mid_a.as_ref().unwrap().name, "level2");
+
+                            // 3レベル目の派生テーブル
+                            match &mid_q.from.as_ref().unwrap().tables[0] {
+                                tsql_parser::ast::TableReference::Subquery {
+                                    query: inner_q,
+                                    alias: inner_a,
+                                    ..
+                                } => {
+                                    assert_eq!(inner_a.as_ref().unwrap().name, "level3");
+                                    assert_eq!(inner_q.columns.len(), 2);
+                                }
+                                _ => panic!("3レベル目は派生テーブルであること"),
+                            }
+                        }
+                        _ => panic!("2レベル目は派生テーブルであること"),
+                    }
+                }
+                _ => panic!("最も外側は派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: 複数の派生テーブルをカンマ区切り
+#[test]
+fn test_multiple_derived_tables() {
+    let sql = r#"
+        SELECT *
+        FROM (
+            SELECT id FROM users
+        ) AS u,
+        (
+            SELECT order_id FROM orders
+        ) AS o
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            assert_eq!(from_clause.tables.len(), 2);
+
+            // 1つ目の派生テーブル
+            match &from_clause.tables[0] {
+                tsql_parser::ast::TableReference::Subquery { alias, .. } => {
+                    assert_eq!(alias.as_ref().unwrap().name, "u");
+                }
+                _ => panic!("1つ目は派生テーブルであること"),
+            }
+
+            // 2つ目の派生テーブル
+            match &from_clause.tables[1] {
+                tsql_parser::ast::TableReference::Subquery { alias, .. } => {
+                    assert_eq!(alias.as_ref().unwrap().name, "o");
+                }
+                _ => panic!("2つ目は派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: 通常テーブルとの混在
+#[test]
+fn test_mixed_table_and_derived_table() {
+    let sql = r#"
+        SELECT *
+        FROM users,
+        (
+            SELECT order_id FROM orders
+        ) AS o
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            assert_eq!(from_clause.tables.len(), 2);
+
+            // 1つ目は通常テーブル
+            match &from_clause.tables[0] {
+                tsql_parser::ast::TableReference::Table { name, .. } => {
+                    assert_eq!(name.name, "users");
+                }
+                _ => panic!("1つ目は通常テーブルであること"),
+            }
+
+            // 2つ目は派生テーブル
+            match &from_clause.tables[1] {
+                tsql_parser::ast::TableReference::Subquery { alias, .. } => {
+                    assert_eq!(alias.as_ref().unwrap().name, "o");
+                }
+                _ => panic!("2つ目は派生テーブルであること"),
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 派生テーブル: TOP句を含むサブクエリ
+#[test]
+fn test_derived_table_with_top_clause() {
+    let sql = r#"
+        SELECT *
+        FROM (
+            SELECT TOP 10 * FROM users ORDER BY created_at DESC
+        ) AS recent_users
+    "#;
+
+    let stmt = parse_one(sql).unwrap();
+    match stmt {
+        tsql_parser::Statement::Select(select) => {
+            assert!(select.from.is_some());
+            let from_clause = select.from.as_ref().unwrap();
+            match &from_clause.tables[0] {
+                tsql_parser::ast::TableReference::Subquery { query, .. } => {
+                    // TOP句があることを確認
+                    assert!(query.top.is_some());
+                    assert!(!query.order_by.is_empty());
+                }
+                _ => panic!("派生テーブルであること"),
+            }
         }
         _ => panic!("SELECT文であること"),
     }

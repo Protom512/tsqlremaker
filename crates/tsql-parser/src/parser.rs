@@ -4,7 +4,7 @@
 
 use crate::ast::*;
 use crate::buffer::TokenBuffer;
-use crate::error::{ParseError, ParseResult};
+use crate::error::{ParseError, ParseErrors, ParseResult, ParseResultWithErrors};
 use crate::expression::ExpressionParser;
 use tsql_lexer::Lexer;
 use tsql_token::{Span, TokenKind};
@@ -94,6 +94,63 @@ impl<'src> Parser<'src> {
         Ok(statements)
     }
 
+    /// 入力全体を解析（エラー回復付き）
+    ///
+    /// エラー回復機能を使用して、構文エラーがあってもパースを継続し、
+    /// 複数のエラーを一度に報告する。
+    ///
+    /// # Returns
+    ///
+    /// 文のリストとエラーリスト、または単一のエラー
+    pub fn parse_with_errors(
+        &mut self,
+    ) -> ParseResultWithErrors<(Vec<Statement>, Vec<ParseError>)> {
+        let mut statements = Vec::new();
+
+        while !self.is_at_eof() {
+            match self.parse_statement() {
+                Ok(stmt) => statements.push(stmt),
+                Err(e) => {
+                    self.errors.push(e.clone());
+                    self.synchronize();
+                }
+            }
+
+            // セミコロンを消費
+            let _ = self.buffer.consume_if(TokenKind::Semicolon);
+        }
+
+        // エラーリストをクローンして返す
+        let errors = self.errors.clone();
+
+        // エラーがあった場合はParseErrorsを返す
+        if !errors.is_empty() {
+            return Err(ParseErrors::new(errors));
+        }
+
+        Ok((statements, Vec::new()))
+    }
+
+    /// 収集されたエラーを返す
+    ///
+    /// # Returns
+    ///
+    /// エラーリストのコピー
+    #[must_use]
+    pub fn errors(&self) -> Vec<ParseError> {
+        self.errors.clone()
+    }
+
+    /// エラーがあるかどうかを確認
+    ///
+    /// # Returns
+    ///
+    /// エラーがある場合はtrue
+    #[must_use]
+    pub fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
+    }
+
     /// 単一の文を解析
     ///
     /// # Returns
@@ -121,14 +178,30 @@ impl<'src> Parser<'src> {
             TokenKind::If => self.parse_if_statement(),
             // WHILE文
             TokenKind::While => self.parse_while_statement(),
-            // BEGINブロック
-            TokenKind::Begin => self.parse_block(),
+            // BEGINブロック（BEGIN TRY は TRY...CATCH、BEGIN TRANSACTION はトランザクション）
+            TokenKind::Begin => {
+                if self.check_try_begin() {
+                    self.parse_try_catch_statement()
+                } else if self.check_transaction_begin() {
+                    self.parse_transaction_statement()
+                } else {
+                    self.parse_block()
+                }
+            }
             // BREAK文
             TokenKind::Break => self.parse_break_statement(),
             // CONTINUE文
             TokenKind::Continue => self.parse_continue_statement(),
             // RETURN文
             TokenKind::Return => self.parse_return_statement(),
+            // トランザクション制御（COMMIT, ROLLBACK, SAVE）
+            TokenKind::Commit | TokenKind::Rollback | TokenKind::Save => {
+                self.parse_transaction_statement()
+            }
+            // THROW 文
+            TokenKind::Throw => self.parse_throw_statement(),
+            // RAISERROR 文
+            TokenKind::Raiserror => self.parse_raiserror_statement(),
             // GOバッチ区切り（BatchModeのみ）
             TokenKind::Go => {
                 if matches!(self.mode, ParserMode::BatchMode) {
@@ -311,7 +384,17 @@ impl<'src> Parser<'src> {
     /// FROM句を解析
     fn parse_from_clause(&mut self) -> ParseResult<FromClause> {
         self.buffer.consume()?; // FROM
-        let tables = vec![self.parse_table_reference()?];
+
+        // テーブル参照リスト（カンマ区切り）
+        let mut tables = Vec::new();
+        loop {
+            tables.push(self.parse_table_reference()?);
+
+            // カンマで区切られた複数テーブル
+            if !self.buffer.consume_if(TokenKind::Comma)? {
+                break;
+            }
+        }
 
         // JOINを解析
         let mut joins = Vec::new();
@@ -369,8 +452,41 @@ impl<'src> Parser<'src> {
             None
         };
 
-        // USINGはT-SQLの標準構文ではないため未実装
-        let using_columns = Vec::new();
+        // USING句のパース
+        let using_columns = if self.buffer.check(TokenKind::Using) {
+            self.buffer.consume()?; // USING
+                                    // USING (col1, col2, ...)
+            if !self.buffer.check(TokenKind::LParen) {
+                return Err(ParseError::unexpected_token(
+                    vec![TokenKind::LParen],
+                    self.buffer.current()?.kind,
+                    self.buffer.current()?.span,
+                ));
+            }
+            self.buffer.consume()?; // LParen
+
+            let mut columns = Vec::new();
+            loop {
+                columns.push(self.parse_identifier()?);
+
+                if !self.buffer.consume_if(TokenKind::Comma)? {
+                    break;
+                }
+            }
+
+            if !self.buffer.check(TokenKind::RParen) {
+                return Err(ParseError::unexpected_token(
+                    vec![TokenKind::RParen],
+                    self.buffer.current()?.kind,
+                    self.buffer.current()?.span,
+                ));
+            }
+            self.buffer.consume()?; // RParen
+
+            columns
+        } else {
+            Vec::new()
+        };
 
         let end_span = self.buffer.current()?.span;
         Ok(Join {
@@ -804,21 +920,33 @@ impl<'src> Parser<'src> {
 
         while !self.buffer.check(TokenKind::RParen) {
             let token = self.buffer.current()?;
-            // キーワードでも識別子として使用可能なものをチェック
-            let is_identifier = matches!(
-                token.kind,
-                TokenKind::Ident
-                    | TokenKind::QuotedIdent
-                    | TokenKind::Table
-                    | TokenKind::View
-                    | TokenKind::Index
-                    | TokenKind::Key
-                    | TokenKind::Constraint
-                    | TokenKind::Go
-            );
 
-            if is_identifier {
+            // まずテーブル制約をチェック
+            if self.is_table_constraint_start() {
+                let constraint = self.parse_table_constraint()?;
+                constraints.push(constraint);
+            } else {
                 // カラム定義（カラムレベル制約を含む）
+                let token_kind = token.kind;
+                let token_span = token.span;
+                let is_identifier = matches!(
+                    token_kind,
+                    TokenKind::Ident
+                        | TokenKind::QuotedIdent
+                        | TokenKind::Table
+                        | TokenKind::View
+                        | TokenKind::Index
+                        | TokenKind::Go
+                );
+
+                if !is_identifier {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::Ident, TokenKind::RParen],
+                        token_kind,
+                        token_span,
+                    ));
+                }
+
                 let name = self.parse_identifier()?;
                 let data_type = self.parse_data_type()?;
 
@@ -847,12 +975,69 @@ impl<'src> Parser<'src> {
                     self.buffer.consume()?;
                 }
 
-                // カラムレベル制約のチェック（PRIMARY KEY等）
-                // 現在はこれらをスキップする（簡易実装）
-                if self.buffer.check(TokenKind::Primary) {
-                    self.buffer.consume()?;
-                    if self.buffer.check(TokenKind::Key) {
+                // DEFAULT句のパース
+                let default_value = if self.buffer.check(TokenKind::Default) {
+                    self.buffer.consume()?; // DEFAULT
+                                            // NULLまたは定数式
+                    if self.buffer.check(TokenKind::Null) {
                         self.buffer.consume()?;
+                        Some(Expression::Literal(Literal::Null(Span {
+                            start: self.buffer.current()?.span.start,
+                            end: self.buffer.current()?.span.end,
+                        })))
+                    } else {
+                        let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+                        Some(expr_parser.parse()?)
+                    }
+                } else {
+                    None
+                };
+
+                // カラムレベル制約のパース
+                let mut constraints = Vec::new();
+                loop {
+                    if self.buffer.check(TokenKind::Primary) {
+                        self.buffer.consume()?;
+                        if self.buffer.check(TokenKind::Key) {
+                            self.buffer.consume()?;
+                        }
+                        constraints.push(ColumnConstraint::PrimaryKey);
+                    } else if self.buffer.check(TokenKind::Unique) {
+                        self.buffer.consume()?;
+                        constraints.push(ColumnConstraint::Unique);
+                    } else if self.buffer.check(TokenKind::References) {
+                        self.buffer.consume()?; // REFERENCES
+                        let ref_table = self.parse_identifier()?;
+                        // 参照カラムのパース（オプションの括弧）
+                        let ref_column = if self.buffer.check(TokenKind::LParen) {
+                            self.buffer.consume()?;
+                            let col = self.parse_identifier()?;
+                            if !self.buffer.check(TokenKind::RParen) {
+                                return Err(ParseError::unexpected_token(
+                                    vec![TokenKind::RParen],
+                                    self.buffer.current()?.kind,
+                                    self.buffer.current()?.span,
+                                ));
+                            }
+                            self.buffer.consume()?;
+                            col
+                        } else {
+                            // 括弧なしの場合は参照テーブルと同じ名前のカラム
+                            Identifier {
+                                name: ref_table.name.clone(),
+                                span: ref_table.span,
+                            }
+                        };
+                        constraints.push(ColumnConstraint::Foreign {
+                            ref_table,
+                            ref_column,
+                        });
+                    } else if self.buffer.check(TokenKind::Check) {
+                        self.buffer.consume()?;
+                        let expr = ExpressionParser::new(&mut self.buffer).parse()?;
+                        constraints.push(ColumnConstraint::Check(expr));
+                    } else {
+                        break;
                     }
                 }
 
@@ -860,33 +1045,10 @@ impl<'src> Parser<'src> {
                     name,
                     data_type,
                     nullability,
-                    default_value: None,
+                    default_value,
                     identity,
+                    constraints,
                 });
-            } else {
-                // テーブル制約（CONSTRAINT keywordまたは直接の制約キーワード）
-                // 例: CONSTRAINT pk_name PRIMARY KEY (id)
-                // 例: PRIMARY KEY (id)
-                if self.buffer.check(TokenKind::Constraint) || self.is_constraint_keyword() {
-                    let name = if self.buffer.check(TokenKind::Ident)
-                        || self.buffer.check(TokenKind::QuotedIdent)
-                    {
-                        self.parse_identifier()?
-                    } else {
-                        Identifier {
-                            name: String::new(),
-                            span: self.buffer.current()?.span,
-                        }
-                    };
-                    let constraint = self.parse_table_constraint(name)?;
-                    constraints.push(constraint);
-                } else {
-                    return Err(ParseError::unexpected_token(
-                        vec![TokenKind::Ident, TokenKind::RParen],
-                        token.kind,
-                        token.span,
-                    ));
-                }
             }
 
             if !self.buffer.consume_if(TokenKind::Comma)? {
@@ -918,21 +1080,37 @@ impl<'src> Parser<'src> {
         ))))
     }
 
-    /// 制約キーワードかチェック
-    fn is_constraint_keyword(&self) -> bool {
+    /// テーブル制約の開始かどうかを判定
+    fn is_table_constraint_start(&self) -> bool {
         let kind = match self.buffer.current() {
             Ok(t) => t.kind,
             Err(_) => return false,
         };
+        // CONSTRAINTキーワードまたは制約タイプキーワード
         matches!(
             kind,
-            TokenKind::Primary | TokenKind::Foreign | TokenKind::Unique | TokenKind::Check
+            TokenKind::Constraint
+                | TokenKind::Primary
+                | TokenKind::Foreign
+                | TokenKind::Unique
+                | TokenKind::Check
         )
     }
 
     /// テーブル制約を解析
-    fn parse_table_constraint(&mut self, name: Identifier) -> ParseResult<TableConstraint> {
-        match self.buffer.current()?.kind {
+    fn parse_table_constraint(&mut self) -> ParseResult<TableConstraint> {
+        // CONSTRAINT constraint_name の部分をパース（オプション）
+        let constraint_name = if self.buffer.check(TokenKind::Constraint) {
+            self.buffer.consume()?;
+            Some(self.parse_identifier()?)
+        } else {
+            None
+        };
+
+        // 制約タイプを判定
+        let constraint_type = self.buffer.current()?.kind;
+
+        match constraint_type {
             TokenKind::Primary => {
                 self.buffer.consume()?;
                 if !self.buffer.check(TokenKind::Key) {
@@ -943,7 +1121,17 @@ impl<'src> Parser<'src> {
                     ));
                 }
                 self.buffer.consume()?;
-                self.buffer.consume()?; // LEFT PAREN
+
+                // カラムリストをパース
+                if !self.buffer.check(TokenKind::LParen) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::LParen],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?;
+
                 let mut columns = Vec::new();
                 while !self.buffer.check(TokenKind::RParen) {
                     columns.push(self.parse_identifier()?);
@@ -952,11 +1140,145 @@ impl<'src> Parser<'src> {
                     }
                 }
                 self.buffer.consume()?; // RIGHT PAREN
-                Ok(TableConstraint::PrimaryKey { columns })
+
+                Ok(TableConstraint::PrimaryKey {
+                    name: constraint_name,
+                    columns,
+                })
             }
-            _ => Ok(TableConstraint::Unique {
-                columns: vec![name],
-            }),
+            TokenKind::Unique => {
+                self.buffer.consume()?;
+
+                // カラムリストをパース
+                if !self.buffer.check(TokenKind::LParen) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::LParen],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?;
+
+                let mut columns = Vec::new();
+                while !self.buffer.check(TokenKind::RParen) {
+                    columns.push(self.parse_identifier()?);
+                    if !self.buffer.consume_if(TokenKind::Comma)? {
+                        break;
+                    }
+                }
+                self.buffer.consume()?; // RIGHT PAREN
+
+                Ok(TableConstraint::Unique {
+                    name: constraint_name,
+                    columns,
+                })
+            }
+            TokenKind::Foreign => {
+                self.buffer.consume()?;
+                if !self.buffer.check(TokenKind::Key) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::Key],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?;
+
+                // カラムリストをパース
+                if !self.buffer.check(TokenKind::LParen) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::LParen],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?;
+
+                let mut columns = Vec::new();
+                while !self.buffer.check(TokenKind::RParen) {
+                    columns.push(self.parse_identifier()?);
+                    if !self.buffer.consume_if(TokenKind::Comma)? {
+                        break;
+                    }
+                }
+                self.buffer.consume()?; // RIGHT PAREN
+
+                // REFERENCES
+                if !self.buffer.check(TokenKind::References) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::References],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?;
+
+                let ref_table = self.parse_identifier()?;
+
+                // 参照カラム（オプションの括弧）
+                let ref_columns = if self.buffer.check(TokenKind::LParen) {
+                    self.buffer.consume()?;
+                    let mut cols = Vec::new();
+                    while !self.buffer.check(TokenKind::RParen) {
+                        cols.push(self.parse_identifier()?);
+                        if !self.buffer.consume_if(TokenKind::Comma)? {
+                            break;
+                        }
+                    }
+                    self.buffer.consume()?;
+                    cols
+                } else {
+                    // 括弧がない場合、単一カラムとして処理
+                    vec![self.parse_identifier()?]
+                };
+
+                Ok(TableConstraint::Foreign {
+                    name: constraint_name,
+                    columns,
+                    ref_table,
+                    ref_columns,
+                })
+            }
+            TokenKind::Check => {
+                self.buffer.consume()?;
+
+                // CHECK式をパース
+                if !self.buffer.check(TokenKind::LParen) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::LParen],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?;
+
+                let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+                let expr = expr_parser.parse()?;
+
+                if !self.buffer.check(TokenKind::RParen) {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::RParen],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?; // RIGHT PAREN
+
+                Ok(TableConstraint::Check {
+                    name: constraint_name,
+                    expr,
+                })
+            }
+            _ => Err(ParseError::unexpected_token(
+                vec![
+                    TokenKind::Primary,
+                    TokenKind::Unique,
+                    TokenKind::Foreign,
+                    TokenKind::Check,
+                ],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            )),
         }
     }
 
@@ -1582,6 +1904,402 @@ impl<'src> Parser<'src> {
         })))
     }
 
+    /// TRY...CATCH ブロックを解析
+    ///
+    /// T-SQL構文: BEGIN TRY ... END TRY BEGIN CATCH ... END CATCH
+    fn parse_try_catch_statement(&mut self) -> ParseResult<Statement> {
+        let start = self.buffer.current()?.span.start;
+
+        // BEGIN TRY
+        self.buffer.consume()?; // BEGIN
+        if !self.buffer.check(TokenKind::Try) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::Try],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // TRY
+
+        // TRY ブロックの本体をパース
+        let try_block = if self.buffer.check(TokenKind::Begin) {
+            match self.parse_block()? {
+                Statement::Block(block) => block,
+                _ => {
+                    return Err(ParseError::invalid_syntax(
+                        "Expected block statement".to_string(),
+                        self.buffer.current()?.span,
+                    ))
+                }
+            }
+        } else {
+            // 単一の文も許容
+            let stmt = self.parse_statement()?;
+            Box::new(Block {
+                span: stmt.span(),
+                statements: vec![stmt],
+            })
+        };
+
+        // END TRY
+        if !self.buffer.check(TokenKind::End) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::End],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // END
+
+        if !self.buffer.check(TokenKind::Try) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::Try],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // TRY
+
+        // BEGIN CATCH
+        if !self.buffer.check(TokenKind::Begin) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::Begin],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // BEGIN
+
+        if !self.buffer.check(TokenKind::Catch) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::Catch],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // CATCH
+
+        // CATCH ブロックの本体をパース
+        let catch_block = if self.buffer.check(TokenKind::Begin) {
+            match self.parse_block()? {
+                Statement::Block(block) => block,
+                _ => {
+                    return Err(ParseError::invalid_syntax(
+                        "Expected block statement".to_string(),
+                        self.buffer.current()?.span,
+                    ))
+                }
+            }
+        } else {
+            // 単一の文も許容
+            let stmt = self.parse_statement()?;
+            Box::new(Block {
+                span: stmt.span(),
+                statements: vec![stmt],
+            })
+        };
+
+        // END CATCH
+        if !self.buffer.check(TokenKind::End) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::End],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // END
+
+        if !self.buffer.check(TokenKind::Catch) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::Catch],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?; // CATCH
+
+        let end_span = self.buffer.current()?.span;
+
+        Ok(Statement::TryCatch(Box::new(TryCatchStatement {
+            span: Span {
+                start,
+                end: end_span.end,
+            },
+            try_block,
+            catch_block,
+        })))
+    }
+
+    /// トランザクション制御文を解析
+    ///
+    /// T-SQL構文: BEGIN TRANSACTION [name], COMMIT TRANSACTION [name],
+    ///             ROLLBACK TRANSACTION [name], SAVE TRANSACTION name
+    fn parse_transaction_statement(&mut self) -> ParseResult<Statement> {
+        let kind = self.buffer.current()?.kind;
+        let start = self.buffer.current()?.span.start;
+
+        match kind {
+            // BEGIN TRANSACTION [name]
+            TokenKind::Begin => {
+                self.buffer.consume()?; // BEGIN
+
+                if !self.buffer.check(TokenKind::Transaction) && !self.buffer.check(TokenKind::Tran)
+                {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::Transaction, TokenKind::Tran],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?; // TRANSACTION | TRAN
+
+                let name = if self.buffer.check(TokenKind::Ident)
+                    || self.buffer.check(TokenKind::QuotedIdent)
+                {
+                    Some(self.parse_identifier()?)
+                } else {
+                    None
+                };
+
+                let end_span = self.buffer.current()?.span;
+
+                Ok(Statement::Transaction(TransactionStatement::Begin {
+                    span: Span {
+                        start,
+                        end: end_span.end,
+                    },
+                    name,
+                }))
+            }
+
+            // COMMIT TRANSACTION [name]
+            TokenKind::Commit => {
+                self.buffer.consume()?; // COMMIT
+
+                let (name, end_span) = if self.buffer.check(TokenKind::Transaction)
+                    || self.buffer.check(TokenKind::Tran)
+                {
+                    self.buffer.consume()?; // TRANSACTION | TRAN
+                    (
+                        if self.buffer.check(TokenKind::Ident)
+                            || self.buffer.check(TokenKind::QuotedIdent)
+                        {
+                            Some(self.parse_identifier()?)
+                        } else {
+                            None
+                        },
+                        self.buffer.current()?.span,
+                    )
+                } else {
+                    // COMMIT だけの場合（TRANSACTION 省略）
+                    (None, self.buffer.current()?.span)
+                };
+
+                Ok(Statement::Transaction(TransactionStatement::Commit {
+                    span: Span {
+                        start,
+                        end: end_span.end,
+                    },
+                    name,
+                }))
+            }
+
+            // ROLLBACK TRANSACTION [name]
+            TokenKind::Rollback => {
+                self.buffer.consume()?; // ROLLBACK
+
+                let (name, end_span) = if self.buffer.check(TokenKind::Transaction)
+                    || self.buffer.check(TokenKind::Tran)
+                {
+                    self.buffer.consume()?; // TRANSACTION | TRAN
+                    (
+                        if self.buffer.check(TokenKind::Ident)
+                            || self.buffer.check(TokenKind::QuotedIdent)
+                        {
+                            Some(self.parse_identifier()?)
+                        } else {
+                            None
+                        },
+                        self.buffer.current()?.span,
+                    )
+                } else {
+                    // ROLLBACK だけの場合（TRANSACTION 省略）
+                    (None, self.buffer.current()?.span)
+                };
+
+                Ok(Statement::Transaction(TransactionStatement::Rollback {
+                    span: Span {
+                        start,
+                        end: end_span.end,
+                    },
+                    name,
+                }))
+            }
+
+            // SAVE TRANSACTION name
+            TokenKind::Save => {
+                self.buffer.consume()?; // SAVE
+
+                if !self.buffer.check(TokenKind::Transaction) && !self.buffer.check(TokenKind::Tran)
+                {
+                    return Err(ParseError::unexpected_token(
+                        vec![TokenKind::Transaction, TokenKind::Tran],
+                        self.buffer.current()?.kind,
+                        self.buffer.current()?.span,
+                    ));
+                }
+                self.buffer.consume()?; // TRANSACTION | TRAN
+
+                let name = self.parse_identifier()?;
+                let end_span = self.buffer.current()?.span;
+
+                Ok(Statement::Transaction(TransactionStatement::Save {
+                    span: Span {
+                        start,
+                        end: end_span.end,
+                    },
+                    name,
+                }))
+            }
+
+            _ => Err(ParseError::unexpected_token(
+                vec![
+                    TokenKind::Begin,
+                    TokenKind::Commit,
+                    TokenKind::Rollback,
+                    TokenKind::Save,
+                ],
+                kind,
+                self.buffer.current()?.span,
+            )),
+        }
+    }
+
+    /// THROW 文を解析
+    ///
+    /// T-SQL構文: THROW [error_number, message, state]
+    fn parse_throw_statement(&mut self) -> ParseResult<Statement> {
+        let span = self.buffer.current()?.span;
+        self.buffer.consume()?; // THROW
+
+        let error_number = if self.buffer.check(TokenKind::Semicolon)
+            || self.buffer.check(TokenKind::End)
+            || self.is_at_eof()
+        {
+            None
+        } else {
+            let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+            Some(expr_parser.parse()?)
+        };
+
+        let message = if error_number.is_some() && (self.buffer.check(TokenKind::Comma)) {
+            self.buffer.consume()?;
+            let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+            Some(expr_parser.parse()?)
+        } else {
+            None
+        };
+
+        let state = if message.is_some() && self.buffer.check(TokenKind::Comma) {
+            self.buffer.consume()?;
+            let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+            Some(expr_parser.parse()?)
+        } else {
+            None
+        };
+
+        let end_span = self.buffer.current()?.span;
+
+        Ok(Statement::Throw(Box::new(ThrowStatement {
+            span: Span {
+                start: span.start,
+                end: end_span.end,
+            },
+            error_number,
+            message,
+            state,
+        })))
+    }
+
+    /// RAISERROR 文を解析
+    ///
+    /// T-SQL構文: RAISERROR(message, severity, state)
+    fn parse_raiserror_statement(&mut self) -> ParseResult<Statement> {
+        let span = self.buffer.current()?.span;
+        self.buffer.consume()?; // RAISERROR
+
+        // 左括弧
+        if !self.buffer.check(TokenKind::LParen) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::LParen],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?;
+
+        let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+        let message = expr_parser.parse()?;
+
+        let severity = if self.buffer.check(TokenKind::Comma) {
+            self.buffer.consume()?;
+            let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+            Some(expr_parser.parse()?)
+        } else {
+            None
+        };
+
+        let state = if severity.is_some() && self.buffer.check(TokenKind::Comma) {
+            self.buffer.consume()?;
+            let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+            Some(expr_parser.parse()?)
+        } else {
+            None
+        };
+
+        // 右括弧
+        if !self.buffer.check(TokenKind::RParen) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::RParen],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.span,
+            ));
+        }
+        self.buffer.consume()?;
+
+        let end_span = self.buffer.current()?.span;
+
+        Ok(Statement::Raiserror(Box::new(RaiserrorStatement {
+            span: Span {
+                start: span.start,
+                end: end_span.end,
+            },
+            message,
+            severity,
+            state,
+        })))
+    }
+
+    /// BEGIN TRY かどうかをチェック
+    ///
+    /// BEGIN の後ろに TRY が続く場合のみ true
+    fn check_try_begin(&self) -> bool {
+        // 現在のトークンは BEGIN なので、次のトークンをチェック
+        self.buffer
+            .peek(1)
+            .is_ok_and(|t| matches!(t.kind, TokenKind::Try))
+    }
+
+    /// BEGIN TRANSACTION かどうかをチェック
+    ///
+    /// BEGIN の後ろに TRANSACTION または TRAN が続く場合のみ true
+    fn check_transaction_begin(&self) -> bool {
+        // 現在のトークンは BEGIN なので、次のトークンをチェック
+        self.buffer
+            .peek(1)
+            .is_ok_and(|t| matches!(t.kind, TokenKind::Transaction | TokenKind::Tran))
+    }
+
     /// バッチ区切り（GO）を解析
     fn parse_batch_separator(&mut self) -> ParseResult<Statement> {
         let span = self.buffer.current()?.span;
@@ -1716,12 +2434,6 @@ impl<'src> Parser<'src> {
             }
         }
         Ok(items)
-    }
-
-    /// 収集されたエラーを返す
-    #[must_use]
-    pub fn errors(&self) -> &[ParseError] {
-        &self.errors
     }
 
     /// エラーを消費して取得
@@ -2578,7 +3290,7 @@ mod tests {
 
     #[test]
     fn test_create_table_with_constraints() {
-        // 制約付きCREATE TABLE（簡易実装：カラム制約は解析するがconstraintsリストには追加しない）
+        // カラム制約付きCREATE TABLE
         let result = parse_sql(
             "CREATE TABLE users ( \
              id INT PRIMARY KEY, \
@@ -3429,5 +4141,470 @@ mod tests {
         let result = parse_sql("SELECT 1; GO; INVALID");
         // GO後の無効なステートメント
         assert!(result.is_err());
+    }
+
+    // Table-level constraint tests
+
+    #[test]
+    fn test_table_level_primary_key() {
+        // テーブルレベルPRIMARY KEY制約
+        let result =
+            parse_sql("CREATE TABLE t (id INT, CONSTRAINT pk_t PRIMARY KEY (id))").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::PrimaryKey { columns, .. } => {
+                            assert_eq!(columns.len(), 1);
+                            assert_eq!(columns[0].name, "id");
+                        }
+                        _ => panic!("Expected PrimaryKey constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_primary_key_multiple_columns() {
+        // 複数カラムのPRIMARY KEY制約
+        let result = parse_sql(
+            "CREATE TABLE t (id INT, user_id INT, CONSTRAINT pk_t PRIMARY KEY (id, user_id))",
+        )
+        .unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::PrimaryKey { columns, .. } => {
+                            assert_eq!(columns.len(), 2);
+                            assert_eq!(columns[0].name, "id");
+                            assert_eq!(columns[1].name, "user_id");
+                        }
+                        _ => panic!("Expected PrimaryKey constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_primary_key_without_constraint_name() {
+        // 制約名なしのPRIMARY KEY
+        let result = parse_sql("CREATE TABLE t (id INT, PRIMARY KEY (id))").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::PrimaryKey { columns, .. } => {
+                            assert_eq!(columns.len(), 1);
+                            assert_eq!(columns[0].name, "id");
+                        }
+                        _ => panic!("Expected PrimaryKey constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_foreign_key() {
+        // テーブルレベルFOREIGN KEY制約
+        let result = parse_sql("CREATE TABLE orders (id INT, user_id INT, CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users(id))").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::Foreign {
+                            columns,
+                            ref_table,
+                            ref_columns,
+                            ..
+                        } => {
+                            assert_eq!(columns.len(), 1);
+                            assert_eq!(columns[0].name, "user_id");
+                            assert_eq!(ref_table.name, "users");
+                            assert_eq!(ref_columns.len(), 1);
+                            assert_eq!(ref_columns[0].name, "id");
+                        }
+                        _ => panic!("Expected Foreign constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_foreign_key_multiple_columns() {
+        // 複数カラムのFOREIGN KEY制約
+        let result = parse_sql("CREATE TABLE t (a INT, b INT, CONSTRAINT fk_t FOREIGN KEY (a, b) REFERENCES other(x, y))").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::Foreign {
+                            columns,
+                            ref_table,
+                            ref_columns,
+                            ..
+                        } => {
+                            assert_eq!(columns.len(), 2);
+                            assert_eq!(columns[0].name, "a");
+                            assert_eq!(columns[1].name, "b");
+                            assert_eq!(ref_table.name, "other");
+                            assert_eq!(ref_columns.len(), 2);
+                            assert_eq!(ref_columns[0].name, "x");
+                            assert_eq!(ref_columns[1].name, "y");
+                        }
+                        _ => panic!("Expected Foreign constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_foreign_key_without_parens() {
+        // 括弧なしの参照カラム（単一カラムの場合）
+        let result = parse_sql("CREATE TABLE t (id INT, user_id INT, CONSTRAINT fk_t FOREIGN KEY (user_id) REFERENCES users id)").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::Foreign { ref_columns, .. } => {
+                            assert_eq!(ref_columns.len(), 1);
+                            assert_eq!(ref_columns[0].name, "id");
+                        }
+                        _ => panic!("Expected Foreign constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_unique() {
+        // テーブルレベルUNIQUE制約
+        let result = parse_sql(
+            "CREATE TABLE t (id INT, email VARCHAR(100), CONSTRAINT uq_t_email UNIQUE (email))",
+        )
+        .unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::Unique { columns, .. } => {
+                            assert_eq!(columns.len(), 1);
+                            assert_eq!(columns[0].name, "email");
+                        }
+                        _ => panic!("Expected Unique constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_unique_multiple_columns() {
+        // 複数カラムのUNIQUE制約
+        let result = parse_sql("CREATE TABLE t (id INT, email VARCHAR(100), username VARCHAR(50), CONSTRAINT uq_t UNIQUE (email, username))").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::Unique { columns, .. } => {
+                            assert_eq!(columns.len(), 2);
+                            assert_eq!(columns[0].name, "email");
+                            assert_eq!(columns[1].name, "username");
+                        }
+                        _ => panic!("Expected Unique constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_unique_without_constraint_name() {
+        // 制約名なしのUNIQUE
+        let result =
+            parse_sql("CREATE TABLE t (id INT, email VARCHAR(100), UNIQUE (email))").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::Unique { columns, .. } => {
+                            assert_eq!(columns.len(), 1);
+                            assert_eq!(columns[0].name, "email");
+                        }
+                        _ => panic!("Expected Unique constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_check() {
+        // テーブルレベルCHECK制約
+        let result =
+            parse_sql("CREATE TABLE t (id INT, age INT, CONSTRAINT chk_t_age CHECK (age >= 18))")
+                .unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => {
+                match stmt.as_ref() {
+                    CreateStatement::Table(table) => {
+                        assert_eq!(table.constraints.len(), 1);
+                        match &table.constraints[0] {
+                            TableConstraint::Check { expr, .. } => {
+                                // CHECK式がパースされていることを確認
+                                // パースされた式をそのままチェック（詳細な構造までは検証しない）
+                                match expr {
+                                    Expression::BinaryOp {
+                                        op: BinaryOperator::Ge,
+                                        ..
+                                    } => {
+                                        // >=演算子が使われていればOK
+                                    }
+                                    _ => {
+                                        // デバッグのためにパニックの代わりに式を表示
+                                        eprintln!("Parsed expr: {:?}", expr);
+                                        panic!("Expected BinaryOp expression with Ge operator, got {:?}", expr);
+                                    }
+                                }
+                            }
+                            _ => panic!("Expected Check constraint"),
+                        }
+                    }
+                    _ => panic!("Expected Create Table statement"),
+                }
+            }
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_table_level_check_without_constraint_name() {
+        // 制約名なしのCHECK
+        let result = parse_sql("CREATE TABLE t (id INT, age INT, CHECK (age >= 18))").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 1);
+                    match &table.constraints[0] {
+                        TableConstraint::Check { .. } => {
+                            // CHECK制約が存在すればOK
+                        }
+                        _ => panic!("Expected Check constraint"),
+                    }
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_multiple_table_level_constraints() {
+        // 複数のテーブルレベル制約
+        let result = parse_sql(
+            "CREATE TABLE t (id INT, user_id INT, email VARCHAR(100), age INT, \
+             CONSTRAINT pk_t PRIMARY KEY (id), \
+             CONSTRAINT fk_t_user FOREIGN KEY (user_id) REFERENCES users(id), \
+             CONSTRAINT uq_t_email UNIQUE (email), \
+             CONSTRAINT chk_t_age CHECK (age >= 18))",
+        )
+        .unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    assert_eq!(table.constraints.len(), 4);
+                    // 各制約が正しくパースされていることを確認
+                    let mut found_pk = false;
+                    let mut found_fk = false;
+                    let mut found_uq = false;
+                    let mut found_chk = false;
+
+                    for constraint in &table.constraints {
+                        match constraint {
+                            TableConstraint::PrimaryKey { .. } => found_pk = true,
+                            TableConstraint::Foreign { .. } => found_fk = true,
+                            TableConstraint::Unique { .. } => found_uq = true,
+                            TableConstraint::Check { .. } => found_chk = true,
+                        }
+                    }
+
+                    assert!(found_pk, "PrimaryKey constraint not found");
+                    assert!(found_fk, "Foreign constraint not found");
+                    assert!(found_uq, "Unique constraint not found");
+                    assert!(found_chk, "Check constraint not found");
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_mix_column_and_table_level_constraints() {
+        // カラムレベルとテーブルレベルの制約の混合
+        let result = parse_sql(
+            "CREATE TABLE t (id INT PRIMARY KEY, user_id INT, email VARCHAR(100) NOT NULL, \
+             FOREIGN KEY (user_id) REFERENCES users(id), \
+             UNIQUE (email))",
+        )
+        .unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Table(table) => {
+                    // カラムレベル制約はColumnDefinition.constraintsに含まれる
+                    assert_eq!(table.columns.len(), 3);
+                    // idカラムのPRIMARY KEY制約
+                    assert!(!table.columns[0].constraints.is_empty());
+                    // emailカラムはNOT NULL（nullabilityフィールド）
+                    assert_eq!(table.columns[2].nullability, Some(false));
+                    // テーブルレベル制約
+                    assert_eq!(table.constraints.len(), 2);
+                }
+                _ => panic!("Expected Create Table statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    // TRY...CATCH tests
+
+    #[test]
+    fn test_try_catch_basic() {
+        // 基本的なTRY...CATCHブロック
+        let result = parse_sql(
+            "BEGIN TRY \
+             SELECT 1 \
+             END TRY \
+             BEGIN CATCH \
+             SELECT 2 \
+             END CATCH",
+        )
+        .unwrap();
+        match &result[0] {
+            Statement::TryCatch(tc) => {
+                assert!(!tc.try_block.statements.is_empty());
+                assert!(!tc.catch_block.statements.is_empty());
+            }
+            _ => panic!("Expected TryCatch statement"),
+        }
+    }
+
+    // Transaction tests
+
+    #[test]
+    fn test_begin_transaction() {
+        // BEGIN TRANSACTION
+        let result = parse_sql("BEGIN TRANSACTION").unwrap();
+        match &result[0] {
+            Statement::Transaction(TransactionStatement::Begin { name, .. }) => {
+                assert!(name.is_none());
+            }
+            _ => panic!("Expected Begin Transaction statement"),
+        }
+    }
+
+    #[test]
+    fn test_begin_transaction_with_name() {
+        // BEGIN TRANSACTION tran_name
+        let result = parse_sql("BEGIN TRANSACTION my_tran").unwrap();
+        match &result[0] {
+            Statement::Transaction(TransactionStatement::Begin { name, .. }) => {
+                assert_eq!(name.as_ref().unwrap().name, "my_tran");
+            }
+            _ => panic!("Expected Begin Transaction statement"),
+        }
+    }
+
+    #[test]
+    fn test_commit_transaction() {
+        // COMMIT TRANSACTION
+        let result = parse_sql("COMMIT TRANSACTION").unwrap();
+        match &result[0] {
+            Statement::Transaction(TransactionStatement::Commit { name, .. }) => {
+                assert!(name.is_none());
+            }
+            _ => panic!("Expected Commit Transaction statement"),
+        }
+    }
+
+    #[test]
+    fn test_rollback_transaction() {
+        // ROLLBACK TRANSACTION
+        let result = parse_sql("ROLLBACK TRANSACTION").unwrap();
+        match &result[0] {
+            Statement::Transaction(TransactionStatement::Rollback { name, .. }) => {
+                assert!(name.is_none());
+            }
+            _ => panic!("Expected Rollback Transaction statement"),
+        }
+    }
+
+    #[test]
+    fn test_save_transaction() {
+        // SAVE TRANSACTION savepoint_name
+        let result = parse_sql("SAVE TRANSACTION my_savepoint").unwrap();
+        match &result[0] {
+            Statement::Transaction(TransactionStatement::Save { name, .. }) => {
+                assert_eq!(name.name, "my_savepoint");
+            }
+            _ => panic!("Expected Save Transaction statement"),
+        }
+    }
+
+    // THROW tests
+
+    #[test]
+    fn test_throw_basic() {
+        // 基本的なTHROW
+        let result = parse_sql("THROW").unwrap();
+        match &result[0] {
+            Statement::Throw(_) => {}
+            _ => panic!("Expected Throw statement"),
+        }
+    }
+
+    // RAISERROR tests
+
+    #[test]
+    fn test_raiserror_basic() {
+        // 基本的なRAISERROR
+        let result = parse_sql("RAISERROR('Error message', 16, 1)").unwrap();
+        match &result[0] {
+            Statement::Raiserror(_) => {}
+            _ => panic!("Expected Raiserror statement"),
+        }
     }
 }

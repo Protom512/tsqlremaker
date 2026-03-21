@@ -29,6 +29,7 @@ static KEYWORDS: Lazy<HashMap<&'static str, TokenKind>> = Lazy::new(|| {
     m.insert("full", TokenKind::Full);
     m.insert("cross", TokenKind::Cross);
     m.insert("on", TokenKind::On);
+    m.insert("using", TokenKind::Using);
     m.insert("and", TokenKind::And);
     m.insert("or", TokenKind::Or);
     m.insert("not", TokenKind::Not);
@@ -36,6 +37,7 @@ static KEYWORDS: Lazy<HashMap<&'static str, TokenKind>> = Lazy::new(|| {
     m.insert("exists", TokenKind::Exists);
     m.insert("between", TokenKind::Between);
     m.insert("like", TokenKind::Like);
+    m.insert("escape", TokenKind::Escape);
     m.insert("is", TokenKind::Is);
     m.insert("null", TokenKind::Null);
     m.insert("order", TokenKind::Order);

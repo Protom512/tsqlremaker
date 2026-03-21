@@ -128,3 +128,12 @@ $RECYCLE.BIN/
 
 # End of https://www.toptal.com/developers/gitignore/api/rust,nvim,macOs,windows,emacs,vscode
 .claude/settings.local.json
+
+# WASM build artifacts
+web/pkg/
+*.wasm
+*.wasm.optim
+crates/wasm/pkg/
+
+# Node modules (if using npm for testing)
+node_modules/

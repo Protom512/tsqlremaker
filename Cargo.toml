@@ -1,5 +1,13 @@
 [workspace]
-members = ["crates/*"]
+members = [
+    "crates/tsql-token",
+    "crates/tsql-lexer",
+    "crates/tsql-parser",
+    "crates/mysql-emitter",
+    "crates/postgresql-emitter",
+    "crates/sqlite-emitter",
+    "crates/wasm",
+]
 resolver = "2"
 
 [workspace.dependencies]

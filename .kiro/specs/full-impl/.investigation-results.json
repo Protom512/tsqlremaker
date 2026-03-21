@@ -1,0 +1,207 @@
+{
+  "scan_timestamp": "2026-03-19T13:15:00Z",
+  "total_issues": 12,
+  "issues": [
+    {
+      "id": "T001",
+      "file_path": "crates/tsql-parser/src/expression/tests/mod.rs",
+      "line": 13,
+      "type": "TODO",
+      "description": "サブクエリテストモジュールがコメントアウトされている (mod subquery; // TODO: 別タスクで実装)。ただしsubquery.rsファイルは存在し、テストも実装済みのため、モジュールの有効化のみ必要。",
+      "priority": "P2",
+      "estimated_effort": "0.5h",
+      "dependencies": [],
+      "impact_area": "Parser",
+      "status": "READY_TO_FIX"
+    },
+    {
+      "id": "T002",
+      "file_path": "crates/wasm/src/lib.rs",
+      "line": 223-228,
+      "type": "UNIMPLEMENTED",
+      "description": "MySQL EmitterがWASMコンバージョン関数で未実装 (MySQL emitter is not yet implemented)。MySqlEmitterクレートは実装済みだが、WASM側で統合されていない。",
+      "priority": "P1",
+      "estimated_effort": "4h",
+      "dependencies": [],
+      "impact_area": "Emitter",
+      "status": "IMPLEMENTATION_EXISTS"
+    },
+    {
+      "id": "T003",
+      "file_path": "crates/wasm/src/lib.rs",
+      "line": 230-235,
+      "type": "UNIMPLEMENTED",
+      "description": "SQLite Emitterが完全に未実装 (SQLite emitter is not yet implemented)。SQLite用Emitterクレートも存在しない。",
+      "priority": "P2",
+      "estimated_effort": "16h",
+      "dependencies": [],
+      "impact_area": "Emitter",
+      "status": "NOT_STARTED"
+    },
+    {
+      "id": "T004",
+      "file_path": "crates/postgresql-emitter/src/mappers/datatype.rs",
+      "line": 134-138,
+      "type": "BUG",
+      "description": "DataTypeMapper::map()のテストでTINYINTをTINYINTにマッピングしているが、実装ではSMALLINTにマッピングされている。テストが実装と合っていない。",
+      "priority": "P1",
+      "estimated_effort": "0.5h",
+      "dependencies": [],
+      "impact_area": "Emitter",
+      "status": "TEST_MISMATCH"
+    },
+    {
+      "id": "T005",
+      "file_path": ".kiro/specs/tsql-parser/tasks.md",
+      "line": 154-158,
+      "type": "TODO",
+      "description": "LIKE式のESCAPE句が未実装 (ESCAPE TODO)。parse_like_expression()でESCAPE句のパースと処理が必要。",
+      "priority": "P2",
+      "estimated_effort": "2h",
+      "dependencies": ["ExpressionParser"],
+      "impact_area": "Parser",
+      "status": "NOT_STARTED"
+    },
+    {
+      "id": "T006",
+      "file_path": ".kiro/specs/tsql-parser/tasks.md",
+      "line": 178,
+      "type": "TODO",
+      "description": "FROM句でのサブクエリ（派生テーブル）の完全な実装が必要。部分的に実装済みだが、複雑なケースに対応できていない可能性がある。",
+      "priority": "P2",
+      "estimated_effort": "4h",
+      "dependencies": ["ExpressionParser"],
+      "impact_area": "Parser",
+      "status": "PARTIALLY_IMPLEMENTED"
+    },
+    {
+      "id": "T007",
+      "file_path": ".kiro/specs/postgresql-emitter/requirements.md",
+      "line": 98-99,
+      "type": "TODO",
+      "description": "T-SQL変数（DECLARE @var）のPostgreSQLへの変換が未実装。PostgreSQLではDOブロック内での変数宣言が必要。",
+      "priority": "P2",
+      "estimated_effort": "8h",
+      "dependencies": [],
+      "impact_area": "Emitter",
+      "status": "NOT_STARTED"
+    },
+    {
+      "id": "T008",
+      "file_path": "crates/postgresql-emitter/src/mappers/expression.rs",
+      "line": 99-102,
+      "type": "LIMITATION",
+      "description": "LIKE式のESCAPE句は実装されているが、式として評価されるため、単純な文字リテラル以外で正しく動作しない可能性がある。",
+      "priority": "P3",
+      "estimated_effort": "2h",
+      "dependencies": [],
+      "impact_area": "Emitter",
+      "status": "NEEDS_REVIEW"
+    },
+    {
+      "id": "T009",
+      "file_path": "crates/tsql-parser/tests/integration_test.rs",
+      "line": 660,
+      "type": "TODO",
+      "description": "エラー回復（error recovery）が実装されていないため、テストが更新できない状態。",
+      "priority": "P2",
+      "estimated_effort": "12h",
+      "dependencies": ["Parser"],
+      "impact_area": "Parser",
+      "status": "NOT_STARTED"
+    },
+    {
+      "id": "T010",
+      "file_path": "docs/SDD.md",
+      "line": 2927,
+      "type": "UNIMPLEMENTED",
+      "description": "ドキュメント内にtodo!(\"PostgreSQL emitter not yet implemented\")があるが、PostgreSQL Emitterは実装済み。ドキュメントの更新が必要。",
+      "priority": "P3",
+      "estimated_effort": "0.5h",
+      "dependencies": [],
+      "impact_area": "Documentation",
+      "status": "DOC_OUTDATED"
+    },
+    {
+      "id": "T011",
+      "file_path": "crates/postgresql-emitter/src/mappers/datatype.rs",
+      "line": 30,
+      "type": "FEATURE_LIMITATION",
+      "description": "TINYINTをSMALLINTにマッピングしているが、PostgreSQLにはSMALLINT（2バイト）とINTEGER（4バイト）しかないため正しい。ただし、TINYINT(1)のようなMySQL構文のパースに対応していない可能性がある。",
+      "priority": "P3",
+      "estimated_effort": "2h",
+      "dependencies": [],
+      "impact_area": "Emitter",
+      "status": "NEEDS_REVIEW"
+    },
+    {
+      "id": "T012",
+      "file_path": ".kiro/specs/postgresql-emitter/design.md",
+      "line": 504,
+      "type": "TODO",
+      "description": "SelectItemのdistinctフラグの取り扱いが未確定。CREATE TABLE内のカラム制約とテーブル制約の分離も検討が必要。",
+      "priority": "P3",
+      "estimated_effort": "4h",
+      "dependencies": [],
+      "impact_area": "Emitter",
+      "status": "DESIGN_NEEDED"
+    }
+  ],
+  "statistics": {
+    "by_priority": {
+      "P0": 0,
+      "P1": 2,
+      "P2": 6,
+      "P3": 4
+    },
+    "by_type": {
+      "TODO": 5,
+      "UNIMPLEMENTED": 3,
+      "BUG": 1,
+      "FEATURE_LIMITATION": 1,
+      "LIMITATION": 1,
+      "DOC_OUTDATED": 1
+    },
+    "by_area": {
+      "Parser": 4,
+      "Emitter": 7,
+      "Documentation": 1
+    },
+    "by_status": {
+      "NOT_STARTED": 4,
+      "PARTIALLY_IMPLEMENTED": 1,
+      "IMPLEMENTATION_EXISTS": 1,
+      "READY_TO_FIX": 1,
+      "TEST_MISMATCH": 1,
+      "NEEDS_REVIEW": 2,
+      "DOC_OUTDATED": 1,
+      "DESIGN_NEEDED": 1
+    }
+  },
+  "summary": {
+    "total_files_scanned": 62,
+    "test_files": 11,
+    "critical_issues": 0,
+    "high_priority": 2,
+    "medium_priority": 6,
+    "low_priority": 4,
+    "estimated_total_effort_hours": 56.5,
+    "quick_wins": [
+      "T001: サブクエリテストモジュールの有効化 (0.5h)",
+      "T004: DataTypeMapperテストの修正 (0.5h)",
+      "T010: ドキュメント更新 (0.5h)"
+    ],
+    "major_implementations": [
+      "T002: MySQL Emitter WASM統合 (4h)",
+      "T003: SQLite Emitter新規実装 (16h)",
+      "T009: エラー回復実装 (12h)",
+      "T007: T-SQL変数変換 (8h)"
+    ]
+  },
+  "recommendations": [
+    "T001, T004, T010はクイックウィンとして優先的に対応することを推奨",
+    "MySQL Emitterは実装済みのため、WASM統合のみで比較的早く完了可能",
+    "SQLite Emitterは新規実装が必要で工数が大きいため、優先度を検討",
+    "エラー回復はパーサーの品質に大きく影響するため、中長期で対応推奨"
+  ]
+}

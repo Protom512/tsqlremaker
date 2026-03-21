@@ -10,6 +10,7 @@
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
   [Documentation](https://github.com/protom512/tsqlremaker/wiki) •
+  [Interactive Demo](https://protom512.github.io/tsqlremaker/) •
   [Contributing](#contributing) •
   [Changelog](CHANGELOG.md)
 
@@ -59,6 +60,8 @@
 | **Lexer** | ✅ Implemented | 76 | 90%+ |
 | **Parser** | ✅ Implemented | 305+ | 90%+ |
 | **Common SQL AST** | ✅ Implemented | 22 | - |
+| **WASM Bindings** | ✅ Implemented | 3 | - |
+| **Web Demo** | ✅ Deployed | - | - |
 | **MySQL Emitter** | 📝 Planned | - | - |
 | **PostgreSQL Emitter** | 📝 Planned | - | - |
 
@@ -133,9 +136,40 @@ tsql-token = "0.1"
 tsql-parser = "0.1"
 ```
 
+#### WebAssembly (for JavaScript integration)
+
+```toml
+[dependencies]
+tsql-remaker-wasm = { version = "0.1", features = ["wasm"] }
+```
+
 ---
 
 ## Usage
+
+### Interactive Web Demo
+
+Try the interactive demo online: **[https://protom512.github.io/tsqlremaker/](https://protom512.github.io/tsqlremaker/)**
+
+The web demo provides:
+- Live tokenization of SAP ASE T-SQL code
+- Interactive parsing with visual feedback
+- AST inspection in JSON format
+- Cross-platform compatibility (runs in any modern browser)
+
+You can also build and run the WASM demo locally:
+
+```bash
+# Build WASM package
+cd crates/wasm
+wasm-pack build --release --target web --out-dir ../../web/pkg
+
+# Serve the demo (requires a local server)
+cd ../..
+python -m http.server 8080 -d web
+
+# Open http://localhost:8080 in your browser
+```
 
 ### Command Line (Future)
 
@@ -203,6 +237,28 @@ match stmt {
         println!("Found SELECT with {} columns", select_stmt.columns.len());
     }
     _ => println!("Not a SELECT statement"),
+}
+```
+
+#### WebAssembly (JavaScript/TypeScript)
+
+```javascript
+import init, { tokenize, parse } from './pkg/tsql_remaker_wasm.js';
+
+// Initialize WASM
+await init();
+
+// Tokenize SQL
+const sql = "SELECT TOP 10 * FROM users WHERE @status = 'active'";
+const tokens = tokenize(sql);
+console.log(tokens);
+
+// Parse SQL
+const result = parse(sql);
+if (result.type === 'success') {
+    console.log('Statements:', result.statements);
+} else {
+    console.error('Error:', result.error);
 }
 ```
 
@@ -289,10 +345,22 @@ tsqlremaker/
 │   │   │   ├── common/    # Common SQL AST conversion
 │   │   │   └── parser.rs  # Main recursive descent parser
 │   │   └── benches/       # Criterion benchmarks
+│   ├── wasm/              # WebAssembly bindings for JavaScript/TypeScript
+│   │   └── src/
+│   │       ├── token_js.rs # JavaScript-friendly token types
+│   │       ├── ast_js.rs  # JavaScript-friendly AST types
+│   │       └── lib.rs     # WASM entry point
 │   ├── common-sql/        # Common SQL AST (planned)
 │   └── mysql-emitter/     # MySQL code generator (planned)
+├── web/                   # Web demo frontend
+│   ├── index.html         # Main HTML page
+│   ├── style.css          # Styles
+│   ├── app.js             # WASM integration
+│   └── pkg/               # Built WASM package (generated)
 ├── .github/
 │   ├── workflows/         # CI/CD configurations
+│   │   ├── ci.yml         # Main CI pipeline
+│   │   └── wasm-deploy.yml # WASM build & GitHub Pages deployment
 │   └── ISSUE_TEMPLATE/    # Issue templates
 ├── .claude/
 │   ├── agents/            # MAGI multi-agent quality judgment system

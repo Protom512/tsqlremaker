@@ -152,6 +152,67 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+/// 複数エラーを含むパース結果型エイリアス
+pub type ParseResultWithErrors<T> = Result<T, ParseErrors>;
+
+/// 複数のパースエラーを表す型
+///
+/// エラー回復機能により、1回のパースで複数の構文エラーを検出できる場合に使用する。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParseErrors {
+    /// 検出されたエラーのリスト
+    pub errors: Vec<ParseError>,
+}
+
+impl ParseErrors {
+    /// 新しいParseErrorsを作成
+    #[must_use]
+    pub fn new(errors: Vec<ParseError>) -> Self {
+        Self { errors }
+    }
+
+    /// エラーが空かどうかを確認
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.errors.is_empty()
+    }
+
+    /// エラーの数を返す
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.errors.len()
+    }
+
+    /// 最初のエラーを返す
+    #[must_use]
+    pub fn first(&self) -> Option<&ParseError> {
+        self.errors.first()
+    }
+
+    /// イテレータを返す
+    pub fn iter(&self) -> impl Iterator<Item = &ParseError> {
+        self.errors.iter()
+    }
+}
+
+impl fmt::Display for ParseErrors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "found {} parse error(s):", self.errors.len())?;
+        for (i, error) in self.errors.iter().enumerate() {
+            writeln!(f, "  {}: {}", i + 1, error)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ParseErrors {}
+
+impl From<ParseError> for ParseErrors {
+    fn from(error: ParseError) -> Self {
+        Self::new(vec![error])
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::panic)]

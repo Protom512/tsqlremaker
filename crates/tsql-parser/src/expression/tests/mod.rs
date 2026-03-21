@@ -10,3 +10,4 @@ mod functions;
 mod literals;
 mod operators;
 mod special;
+mod subquery;

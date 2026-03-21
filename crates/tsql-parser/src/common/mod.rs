@@ -3,12 +3,14 @@
 //! 方言非依存のSQL抽象構文木（AST）を定義する。
 //! T-SQL 固有の構文から方言に依存しない表現への変換を目的とする。
 
+mod data_type;
 mod expression;
 mod statement;
 
+pub use data_type::CommonDataType;
 pub use expression::{
     CommonBinaryOperator, CommonCaseExpression, CommonColumnReference, CommonExpression,
-    CommonFunctionCall, CommonIdentifier, CommonLiteral, CommonUnaryOperator,
+    CommonFunctionCall, CommonIdentifier, CommonInList, CommonLiteral, CommonUnaryOperator,
 };
 pub use statement::{
     CommonAssignment, CommonDeleteStatement, CommonInsertSource, CommonInsertStatement,

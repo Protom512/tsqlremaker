@@ -41,6 +41,28 @@ fn test_case_insensitive_keywords() {
     assert_eq!(lexer.next_token().unwrap().kind, TokenKind::Where);
 }
 
+/// ESCAPE キーワードのテスト
+#[test]
+fn test_escape_keyword() {
+    let sql = "ESCAPE";
+    let mut lexer = Lexer::new(sql);
+
+    let token = lexer.next_token().unwrap();
+    assert_eq!(token.kind, TokenKind::Escape);
+    assert_eq!(token.text, "ESCAPE");
+}
+
+/// ESCAPE キーワードの大文字小文字非区別テスト
+#[test]
+fn test_escape_case_insensitive() {
+    let tests = vec!["ESCAPE", "escape", "EsCaPe"];
+
+    for sql in tests {
+        let mut lexer = Lexer::new(sql);
+        assert_eq!(lexer.next_token().unwrap().kind, TokenKind::Escape);
+    }
+}
+
 /// 演算子のテスト
 #[test]
 fn test_operators() {

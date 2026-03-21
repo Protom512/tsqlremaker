@@ -1,0 +1,165 @@
+name: Build and Deploy WASM
+
+on:
+  push:
+    branches: ["master"]
+    paths:
+      - "crates/wasm/**"
+      - "web/**"
+      - "crates/tsql-lexer/**"
+      - "crates/tsql-parser/**"
+      - "crates/tsql-token/**"
+      - "crates/common-sql/**"
+      - "crates/mysql-emitter/**"
+      - "crates/postgresql-emitter/**"
+      - ".github/workflows/wasm-deploy.yml"
+  pull_request:
+    branches: ["master"]
+    paths:
+      - "crates/wasm/**"
+      - "web/**"
+      - "crates/tsql-lexer/**"
+      - "crates/tsql-parser/**"
+      - "crates/tsql-token/**"
+      - "crates/common-sql/**"
+      - "crates/mysql-emitter/**"
+      - "crates/postgresql-emitter/**"
+      - ".github/workflows/wasm-deploy.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  build-wasm:
+    name: Build WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-wasm-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-wasm-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v5
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-wasm-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build WASM package
+        run: |
+          cd crates/wasm
+          wasm-pack build --release --target web --out-dir ../../web/pkg --features wasm
+
+      - name: Optimize WASM
+        run: |
+          # Install wasm-opt if not available
+          if ! command -v wasm-opt &> /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y binaryen
+          fi
+          wasm-opt -Oz -o web/pkg/tsql_remaker_wasm_bg.wasm.optim web/pkg/tsql_remaker_wasm_bg.wasm
+          mv web/pkg/tsql_remaker_wasm_bg.wasm.optim web/pkg/tsql_remaker_wasm_bg.wasm
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: wasm-package
+          path: web/pkg/
+          retention-days: 7
+
+  deploy-pages:
+    name: Deploy to GitHub Pages
+    needs: build-wasm
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: wasm-package
+          path: web/pkg/
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload artifact for Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  test-wasm:
+    name: Test WASM Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-wasm-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-wasm-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v5
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-wasm-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build WASM for testing
+        run: |
+          cd crates/wasm
+          wasm-pack build --dev --target web --out-dir ../../web/pkg --features wasm
+
+      - name: Run WASM tests
+        run: |
+          cd crates/wasm
+          wasm-pack test --node --features wasm
+
+      - name: Check build size
+        run: |
+          echo "WASM file size:"
+          ls -lh web/pkg/tsql_remaker_wasm_bg.wasm || true

@@ -2,6 +2,7 @@
 //!
 //! 方言非依存のSQL式（Expression）ノードを定義する。
 
+use super::statement::CommonSelectStatement;
 use tsql_token::Span;
 
 /// Common SQL 式
@@ -43,8 +44,8 @@ pub enum CommonExpression {
     In {
         /// 対象の式
         expr: Box<CommonExpression>,
-        /// 値リスト
-        list: Vec<CommonExpression>,
+        /// 値リストまたはサブクエリ
+        list: CommonInList,
         /// NOT INの場合はtrue
         negated: bool,
         /// 位置情報
@@ -69,6 +70,8 @@ pub enum CommonExpression {
         expr: Box<CommonExpression>,
         /// パターン
         pattern: Box<CommonExpression>,
+        /// ESCAPE句（省略可能）
+        escape: Option<Box<CommonExpression>>,
         /// NOT LIKEの場合はtrue
         negated: bool,
         /// 位置情報
@@ -79,6 +82,22 @@ pub enum CommonExpression {
         /// 対象の式
         expr: Box<CommonExpression>,
         /// IS NOT NULLの場合はtrue
+        negated: bool,
+        /// 位置情報
+        span: Span,
+    },
+    /// スカラサブクエリ
+    Subquery {
+        /// サブクエリ
+        query: Box<CommonSelectStatement>,
+        /// 位置情報
+        span: Span,
+    },
+    /// EXISTS式
+    Exists {
+        /// サブクエリ
+        query: Box<CommonSelectStatement>,
+        /// NOT EXISTSの場合はtrue
         negated: bool,
         /// 位置情報
         span: Span,
@@ -178,4 +197,13 @@ pub struct CommonCaseExpression {
     pub branches: Vec<(CommonExpression, CommonExpression)>,
     /// ELSE節
     pub else_result: Option<Box<CommonExpression>>,
+}
+
+/// Common IN式の値リストまたはサブクエリ
+#[derive(Debug, Clone, PartialEq)]
+pub enum CommonInList {
+    /// 値リスト
+    Values(Vec<CommonExpression>),
+    /// サブクエリ
+    Subquery(Box<CommonSelectStatement>),
 }

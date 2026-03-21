@@ -393,7 +393,14 @@ fn test_expression_in_conversion() {
                 match common_expr {
                     tsql_parser::common::CommonExpression::In { negated, list, .. } => {
                         assert!(!negated, "NOT INではない");
-                        assert_eq!(list.len(), 3);
+                        match list {
+                            tsql_parser::common::CommonInList::Values(values) => {
+                                assert_eq!(values.len(), 3);
+                            }
+                            tsql_parser::common::CommonInList::Subquery(_) => {
+                                panic!("サブクエリではない");
+                            }
+                        }
                     }
                     _ => panic!("IN式に変換されるべき"),
                 }

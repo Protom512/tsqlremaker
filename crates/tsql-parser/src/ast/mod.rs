@@ -21,14 +21,15 @@ pub use base::AstNode;
 pub use batch::BatchSeparator;
 pub use control_flow::{
     Assignment, Block, BreakStatement, ContinueStatement, DeclareStatement, IfStatement,
-    ReturnStatement, SetStatement, VariableAssignment, VariableDeclaration, WhileStatement,
+    RaiserrorStatement, ReturnStatement, SetStatement, ThrowStatement, TransactionStatement,
+    TryCatchStatement, VariableAssignment, VariableDeclaration, WhileStatement,
 };
 pub use data_modification::{
     Assignment as ColumnAssignment, DeleteStatement, InsertSource, InsertStatement, UpdateStatement,
 };
 pub use ddl::{
-    ColumnDefinition, CreateStatement, DataType, IndexDefinition, ParameterDefinition,
-    ProcedureDefinition, TableConstraint, TableDefinition, ViewDefinition,
+    ColumnConstraint, ColumnDefinition, CreateStatement, DataType, IndexDefinition,
+    ParameterDefinition, ProcedureDefinition, TableConstraint, TableDefinition, ViewDefinition,
 };
 pub use select::{
     FromClause, Join, JoinType, LimitClause, OrderByItem, SelectItem, SelectStatement,
@@ -77,6 +78,14 @@ pub enum Statement {
     Continue(Box<ContinueStatement>),
     /// RETURN文
     Return(Box<ReturnStatement>),
+    /// TRY...CATCH ブロック
+    TryCatch(Box<TryCatchStatement>),
+    /// トランザクション制御文
+    Transaction(TransactionStatement),
+    /// THROW 文
+    Throw(Box<ThrowStatement>),
+    /// RAISERROR 文
+    Raiserror(Box<RaiserrorStatement>),
     /// バッチ区切り（GO）
     BatchSeparator(BatchSeparator),
 }
@@ -98,6 +107,10 @@ impl AstNode for Statement {
             Statement::Break(s) => s.span,
             Statement::Continue(s) => s.span,
             Statement::Return(s) => s.span,
+            Statement::TryCatch(s) => s.span,
+            Statement::Transaction(s) => s.span(),
+            Statement::Throw(s) => s.span,
+            Statement::Raiserror(s) => s.span,
             Statement::BatchSeparator(s) => s.span,
         }
     }

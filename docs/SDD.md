@@ -2924,7 +2924,15 @@ pub mod api {
                 })
             }
             Target::PostgreSQL => {
-                todo!("PostgreSQL emitter not yet implemented")
+                // PostgreSQL エミッターで変換
+                use postgresql_emitter::PostgreSqlEmitter;
+                let emitter = PostgreSqlEmitter::new();
+                let sql = emitter.emit(&ast)?;
+                Ok(ConversionResult {
+                    sql,
+                    warnings: emitter.warnings,
+                    source_map: None,
+                })
             }
         }
     }
@@ -3550,7 +3558,7 @@ tsqlremaker/
 │   ├── proto-mapper/                   # Rust ⇄ Protobuf変換
 │   ├── tsql-indexer/                   # シンボルインデックス
 │   ├── mysql-emitter/                  # MySQL出力
-│   ├── postgres-emitter/               # PostgreSQL出力（将来）
+│   ├── postgresql-emitter/             # PostgreSQL出力
 │   └── tsql-cli/                       # CLIバイナリ
 │
 ├── tests/
