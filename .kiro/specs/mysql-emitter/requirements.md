@@ -14,7 +14,7 @@ MySQL Emitter は、Common SQL AST を入力として受け取り、MySQL 方言
 
 本仕様の範囲は以下の通り：
 
-- **含む**: Common SQL AST から MySQL SQL ちのコード生成
+- **含む**: Common SQL AST から MySQL SQL のコード生成
 - **含む**: T-SQL 固有の構文を MySQL 相当の構文へ変換
 - **含む**: データ型、関数、一時テーブルの変換
 - **除く**: Common SQL AST の構築（Parser の責務）
@@ -244,7 +244,7 @@ As a 移行ツールユーザー, I want エラーが明確に報告される, s
 #### Acceptance Criteria
 
 1. When サポートされない AST ノードが入力される, the MySQL Emitter shall エラーを返す
-2. When 変換不能な構文が検出される, the MySQL Emittershall エラーメッセージに位置情報を含める
+2. When 変換不能な構文が検出される, the MySQL Emitter shall エラーメッセージに位置情報を含める
 3. When 生成される SQL が不完全である, the MySQL Emitter shall 警告をログに記録する
 
 ### Requirement 14: パフォーマンス
@@ -280,7 +280,7 @@ As a 移行ツールユーザー, I want 整形された SQL が出力される,
 #### Acceptance Criteria
 
 1. When SQL が生成される, the MySQL Emitter shall 適切なインデントを使用する
-2. When 長いクエリが生成される, the MySQL Emittershall 適切な位置で改行する
+2. When 長いクエリが生成される, the MySQL Emitter shall 適切な位置で改行する
 3. When 複数のステートメントが生成される, the MySQL Emitter shall セミコロンで区切る
 
 ### Requirement 17: 依存関係ルール

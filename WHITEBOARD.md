@@ -7,7 +7,7 @@
 > **Orchestratorへ**: チームメイトの発見をこのファイルに転記・構造化する責務を持つ。
 > 「作業指示」ではなく「知識のファシリテーション」が役割。
 
-**最終更新:** 2026-03-19 21:15 / Orchestrator (T003完了、PostgreSQL Emitterテスト修正)
+**最終更新:** 2026-03-21 22:00 / Orchestrator (DATEADD/DATEDIFF完全実装、ドキュメント修正)
 
 ---
 
@@ -86,6 +86,21 @@
 - 📝 エラー発生後もパースを継続する機能実装済み
 - ✅ 全4件テストパス確認
 
+### 2026-03-21 22:00 - Orchestrator (新規課題発見・完全実装)
+- ✅ T013: SQLite EmitterのDATEADD関数完全実装
+  - `emit_dateadd`メソッドを実装（引数解析・datepart変換）
+  - T-SQL `DATEADD(day, 7, GETDATE())` → SQLite `date('now', '+7 days')`
+  - T-SQL `DATEADD(hour, -2, GETDATE())` → SQLite `datetime('now', '-2 hours')`
+  - quarter/weekの変換、時刻単位のdatetime/date切替を実装
+- ✅ T014: SQLite EmitterのDATEDIFF関数完全実装
+  - `emit_datediff`メソッドを実装
+  - T-SQL `DATEDIFF(day, '2024-01-01', '2024-01-10')` → SQLite `(julianday('2024-01-10') - julianday('2024-01-01'))`
+- ✅ T015: MySQL Emitterドキュメントのタイポ修正
+  - `MySQL SQL ちのコード生成` → `MySQL SQL のコード生成`
+  - `MySQL Emittershall` → `MySQL Emitter shall` (2箇所)
+- ✅ 全9件のテスト追加・パス確認
+- ✅ cargo fmt, cargo clippyパス確認
+
 ---
 
 ---
@@ -132,7 +147,7 @@ Investigator ──→ 調査結果・申し送り ──→ Designer
 | 項目 | 内容 |
 |------|------|
 | 現在フェーズ | Phase 2: 設計・実装完了（T007保留） |
-| 全体進捗 | 6 / 9 タスク完了 |
+| 全体進捗 | 9 / 12 タスク完了 |
 | アクティブエージェント | Orchestrator |
 | 最終更新者 | Orchestrator |
 | 次のレビューポイント | コミット準備 |
@@ -148,7 +163,7 @@ Investigator ──→ 調査結果・申し送り ──→ Designer
 
 **調査対象:** 62 Rustファイル、11テストファイル
 
-### 検出した課題一覧（12件）
+### 検出した課題一覧（15件）
 
 | ID | ファイル | 種別 | 説明 | 優先度 | 状態 |
 |----|---------|------|------|--------|------|
@@ -162,6 +177,11 @@ Investigator ──→ 調査結果・申し送り ──→ Designer
 | T008 | postgresql-emitter/src/mappers/expression.rs | LIMITATION | LIKE ESCAPE句の実装制限 | P3 | ✅ 完了 |
 | T009 | tsql-parser/tests/integration_test.rs | TODO | エラー回復未実装 | P2 | ✅ 完了 |
 | T010 | docs/SDD.md | DOC_OUTDATED | PostgreSQL Emitter未実装の記述残存 | P3 | ✅ 完了 |
+| T011 | postgresql-emitter/src/mappers/datatype.rs | FEATURE_LIMITATION | TINYINTマッピングの検討 | P3 | ✅ 完了 |
+| T012 | .kiro/specs/postgresql-emitter/design.md | DESIGN_NEEDED | SelectItem distinctフラグ設計未確定 | P3 | ✅ 完了 |
+| T013 | sqlite-emitter/src/lib.rs | SIMPLE_IMPL | DATEADD関数が簡易実装（引数変換なし） | P2 | ✅ 完了 |
+| T014 | sqlite-emitter/src/lib.rs | SIMPLE_IMPL | DATEDIFF関数が簡易実装（引数変換なし） | P2 | ✅ 完了 |
+| T015 | .kiro/specs/mysql-emitter/requirements.md | DOC_TYPO | ドキュメントのタイポ（3箇所） | P3 | ✅ 完了 |
 | T011 | postgresql-emitter/src/mappers/datatype.rs | FEATURE_LIMITATION | TINYINTマッピングの検討 | P3 | ✅ 完了 |
 | T012 | .kiro/specs/postgresql-emitter/design.md | DESIGN_NEEDED | SelectItem distinctフラグ設計未確定 | P3 | ✅ 完了 |
 
@@ -336,7 +356,9 @@ resume_instruction: "Investigatorのスキャンから再開"
 | T004 | subqueryテストモジュールの有効化と修正 | 2026-03-19 13:45 | de395fb |
 | T009 | エラー回復実装確認（既に実装済み） | 2026-03-19 21:20 | - |
 | T010 | SDD.mdのPostgreSQL Emitter記述更新 | 2026-03-19 14:00 | 5a7e547 |
-|--------|------|---------|------------|
+| T013 | SQLite EmitterのDATEADD関数完全実装 | 2026-03-21 22:00 | （未コミット） |
+| T014 | SQLite EmitterのDATEDIFF関数完全実装 | 2026-03-21 22:00 | （未コミット） |
+| T015 | MySQL Emitterドキュメントのタイポ修正 | 2026-03-21 22:00 | （未コミット） |
 | T001 | postgresql-emitterのTINYINTテスト修正 | 2026-03-19 13:30 | 967f527 |
 | T002 | MySQL Emitter WASM統合 | 2026-03-19 15:30 | 5ca3934 |
 | T004 | subqueryテストモジュールの有効化と修正 | 2026-03-19 13:45 | de395fb |

@@ -582,6 +582,16 @@ impl SqliteEmitter {
 
     /// 関数呼び出しを訪問
     fn visit_function(&mut self, func: &CommonFunctionCall) -> Result<(), EmitError> {
+        // DATEADD関数の特殊処理
+        if func.name.to_uppercase() == "DATEADD" {
+            return self.emit_dateadd(func);
+        }
+
+        // DATEDIFF関数の特殊処理
+        if func.name.to_uppercase() == "DATEDIFF" {
+            return self.emit_datediff(func);
+        }
+
         // 関数名を変換（T-SQL → SQLite）
         let sqlite_name = self.convert_function_name(&func.name);
         self.write(&sqlite_name);
@@ -602,6 +612,212 @@ impl SqliteEmitter {
         Ok(())
     }
 
+    /// DATEADD関数をSQLite形式に変換
+    ///
+    /// T-SQL: DATEADD(datepart, number, date)
+    /// SQLite: date(date_expression, '+N days') または datetime(date_expression, '+N hours')
+    fn emit_dateadd(&mut self, func: &CommonFunctionCall) -> Result<(), EmitError> {
+        use tsql_parser::common::{CommonExpression, CommonLiteral};
+
+        if func.args.len() != 3 {
+            return Err(EmitError::UnsupportedFunction(format!(
+                "DATEADD: expected 3 arguments, got {}",
+                func.args.len()
+            )));
+        }
+
+        // 第1引数: datepart (文字列リテラルまたは識別子)
+        let datepart = match &func.args[0] {
+            CommonExpression::Literal(CommonLiteral::String(s)) => s.to_lowercase(),
+            CommonExpression::Identifier(ident) => ident.name.to_lowercase(),
+            _ => {
+                return Err(EmitError::UnsupportedFunction(
+                    "DATEADD: first argument must be a string literal or identifier".to_string(),
+                ));
+            }
+        };
+
+        // 第2引数: number (整数リテラル)
+        let number = match &func.args[1] {
+            CommonExpression::Literal(CommonLiteral::Integer(n)) => *n,
+            _ => {
+                return Err(EmitError::UnsupportedFunction(
+                    "DATEADD: second argument must be an integer literal".to_string(),
+                ));
+            }
+        };
+
+        // datepartをSQLite修飾子に変換
+        let modifier_unit = match datepart.as_str() {
+            "year" | "yyyy" | "yy" => "years",
+            "quarter" | "qq" | "q" => "months", // SQLiteにquarterはない、3ヶ月として扱う
+            "month" | "mm" | "m" => "months",
+            "dayofyear" | "dy" | "y" => "days",
+            "day" | "dd" | "d" => "days",
+            "week" | "ww" | "wk" => "days", // SQLiteにweekはない、7日として扱う
+            "hour" | "hh" => "hours",
+            "minute" | "mi" | "n" => "minutes",
+            "second" | "ss" | "s" => "seconds",
+            "millisecond" | "ms" => {
+                return Err(EmitError::UnsupportedFunction(
+                    "DATEADD: SQLite does not support millisecond precision".to_string(),
+                ));
+            }
+            _ => {
+                return Err(EmitError::UnsupportedFunction(format!(
+                    "DATEADD: unsupported datepart: {}",
+                    datepart
+                )));
+            }
+        };
+
+        // quarter/weekの場合は数値を調整
+        let adjusted_number = match datepart.as_str() {
+            "quarter" | "qq" | "q" => number * 3, // quarter → 3ヶ月
+            "week" | "ww" | "wk" => number * 7,   // week → 7日
+            _ => number,
+        };
+
+        // SQLiteの修飾子を生成
+        let modifier = if adjusted_number >= 0 {
+            format!("+{} {}", adjusted_number, modifier_unit)
+        } else {
+            format!("{} {}", adjusted_number, modifier_unit)
+        };
+
+        // 第3引数: date (式)
+        // 時刻を含む関数の場合はdatetime、それ以外はdateを使用
+        let use_datetime = matches!(
+            datepart.as_str(),
+            "hour" | "hh" | "minute" | "mi" | "n" | "second" | "ss" | "s"
+        );
+
+        // 第3引数がGETDATE/GETUTCDATEの場合は特別処理
+        // GETDATE/GETUTCDATEは常にdatetime('now')を使い、修飾子を直接適用
+        let is_getdate = matches!(&func.args[2], CommonExpression::FunctionCall(f)
+            if f.name.to_uppercase() == "GETDATE" || f.name.to_uppercase() == "GETUTCDATE");
+
+        if is_getdate {
+            // GETDATE/GETUTCDATE: datetime('now', modifier) または date('now', modifier)
+            if use_datetime {
+                self.write(&format!("datetime('now', '{}')", modifier));
+            } else {
+                self.write(&format!("date('now', '{}')", modifier));
+            }
+        } else {
+            // その他の式: date(base_expr, modifier) または datetime(base_expr, modifier)
+            let base_expr = match &func.args[2] {
+                CommonExpression::Literal(CommonLiteral::String(s)) => format!("'{}'", s),
+                CommonExpression::Literal(CommonLiteral::Integer(n)) => n.to_string(),
+                CommonExpression::Identifier(ident) => ident.name.clone(),
+                CommonExpression::ColumnReference(col) => {
+                    if let Some(table) = &col.table {
+                        format!("{}.{}", table, col.column)
+                    } else {
+                        col.column.clone()
+                    }
+                }
+                _ => {
+                    // 複雑な式は一時的に文字列表現を使用
+                    // 本来はvisitorを再帰的に呼び出すべき
+                    return Err(EmitError::UnsupportedFunction(
+                        "DATEADD: complex expressions in date argument are not yet supported"
+                            .to_string(),
+                    ));
+                }
+            };
+
+            // SQLite形式の式を生成
+            if use_datetime {
+                self.write(&format!("datetime({}, '{}')", base_expr, modifier));
+            } else {
+                self.write(&format!("date({}, '{}')", base_expr, modifier));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// DATEDIFF関数をSQLite形式に変換
+    ///
+    /// T-SQL: DATEDIFF(datepart, startdate, enddate)
+    /// SQLite: julianday(enddate) - julianday(startdate)  (日数差分)
+    fn emit_datediff(&mut self, func: &CommonFunctionCall) -> Result<(), EmitError> {
+        use tsql_parser::common::{CommonExpression, CommonLiteral};
+
+        if func.args.len() != 3 {
+            return Err(EmitError::UnsupportedFunction(format!(
+                "DATEDIFF: expected 3 arguments, got {}",
+                func.args.len()
+            )));
+        }
+
+        // 第1引数: datepart (文字列リテラルまたは識別子)
+        let datepart = match &func.args[0] {
+            CommonExpression::Literal(CommonLiteral::String(s)) => s.to_lowercase(),
+            CommonExpression::Identifier(ident) => ident.name.to_lowercase(),
+            _ => {
+                return Err(EmitError::UnsupportedFunction(
+                    "DATEDIFF: first argument must be a string literal or identifier".to_string(),
+                ));
+            }
+        };
+
+        // SQLiteのjuliandayは日数を返すので、日付関連のみサポート
+        match datepart.as_str() {
+            "year" | "yyyy" | "yy" | "quarter" | "qq" | "q" | "month" | "mm" | "m"
+            | "dayofyear" | "dy" | "y" | "day" | "dd" | "d" | "week" | "ww" | "wk" => {
+                // サポート: juliandayで計算
+            }
+            _ => {
+                return Err(EmitError::UnsupportedFunction(format!(
+                    "DATEDIFF: unsupported datepart: {} (only date-based dateparts are supported)",
+                    datepart
+                )));
+            }
+        };
+
+        // 第2引数: startdate
+        let start_date = self.extract_date_expression(&func.args[1])?;
+
+        // 第3引数: enddate
+        let end_date = self.extract_date_expression(&func.args[2])?;
+
+        // SQLite形式の式を生成
+        self.write(&format!(
+            "(julianday({}) - julianday({}))",
+            end_date, start_date
+        ));
+
+        Ok(())
+    }
+
+    /// 日付式を文字列表現として抽出
+    fn extract_date_expression(&self, expr: &CommonExpression) -> Result<String, EmitError> {
+        use tsql_parser::common::{CommonExpression, CommonLiteral};
+
+        match expr {
+            CommonExpression::Literal(CommonLiteral::String(s)) => Ok(format!("'{}'", s)),
+            CommonExpression::Literal(CommonLiteral::Integer(n)) => Ok(n.to_string()),
+            CommonExpression::Identifier(ident) => Ok(ident.name.clone()),
+            CommonExpression::ColumnReference(col) => {
+                if let Some(table) = &col.table {
+                    Ok(format!("{}.{}", table, col.column))
+                } else {
+                    Ok(col.column.clone())
+                }
+            }
+            CommonExpression::FunctionCall(f)
+                if f.name.to_uppercase() == "GETDATE" || f.name.to_uppercase() == "GETUTCDATE" =>
+            {
+                Ok("datetime('now')".to_string())
+            }
+            _ => Err(EmitError::UnsupportedFunction(
+                "DATEADD/DATEDIFF: complex date expressions are not yet supported".to_string(),
+            )),
+        }
+    }
+
     /// T-SQL 関数名を SQLite 関数名に変換
     fn convert_function_name(&self, name: &str) -> String {
         // 大文字小文字を区別せずにマッチング
@@ -609,8 +825,7 @@ impl SqliteEmitter {
         match name_upper.as_str() {
             // 日付時刻関数
             "GETDATE" | "GETUTCDATE" => "datetime('now')".to_string(),
-            "DATEADD" => "date".to_string(), // 引数の変換が必要だが、簡易実装
-            "DATEDIFF" => "julianday".to_string(), // 引数の変換が必要
+            // DATEADD/DATEDIFFはvisit_functionで特殊処理
             "DATENAME" => "strftime".to_string(),
             "DATEPART" => "strftime".to_string(),
 
@@ -1094,5 +1309,230 @@ mod tests {
         // 変換不要な関数はそのまま
         assert_eq!(emitter.convert_function_name("SUM"), "sum");
         assert_eq!(emitter.convert_function_name("AVG"), "avg");
+    }
+
+    #[test]
+    fn test_dateadd_day() {
+        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+
+        let mut emitter = SqliteEmitter::default();
+
+        // DATEADD(day, 7, GETDATE()) → date('now', '+7 days')
+        let func = CommonFunctionCall {
+            name: "DATEADD".to_string(),
+            args: vec![
+                CommonExpression::Literal(CommonLiteral::String("day".to_string())),
+                CommonExpression::Literal(CommonLiteral::Integer(7)),
+                CommonExpression::FunctionCall(CommonFunctionCall {
+                    name: "GETDATE".to_string(),
+                    args: vec![],
+                    distinct: false,
+                }),
+            ],
+            distinct: false,
+        };
+
+        let result = emitter.visit_expression(&CommonExpression::FunctionCall(func));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "date('now', '+7 days')");
+    }
+
+    #[test]
+    fn test_dateadd_month() {
+        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+
+        let mut emitter = SqliteEmitter::default();
+
+        // DATEADD(month, 3, '2024-01-01') → date('2024-01-01', '+3 months')
+        let func = CommonFunctionCall {
+            name: "DATEADD".to_string(),
+            args: vec![
+                CommonExpression::Literal(CommonLiteral::String("month".to_string())),
+                CommonExpression::Literal(CommonLiteral::Integer(3)),
+                CommonExpression::Literal(CommonLiteral::String("2024-01-01".to_string())),
+            ],
+            distinct: false,
+        };
+
+        let result = emitter.visit_expression(&CommonExpression::FunctionCall(func));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "date('2024-01-01', '+3 months')");
+    }
+
+    #[test]
+    fn test_dateadd_hour() {
+        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+
+        let mut emitter = SqliteEmitter::default();
+
+        // DATEADD(hour, -2, GETDATE()) → datetime('now', '-2 hours')
+        let func = CommonFunctionCall {
+            name: "DATEADD".to_string(),
+            args: vec![
+                CommonExpression::Literal(CommonLiteral::String("hour".to_string())),
+                CommonExpression::Literal(CommonLiteral::Integer(-2)),
+                CommonExpression::FunctionCall(CommonFunctionCall {
+                    name: "GETDATE".to_string(),
+                    args: vec![],
+                    distinct: false,
+                }),
+            ],
+            distinct: false,
+        };
+
+        let result = emitter.visit_expression(&CommonExpression::FunctionCall(func));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "datetime('now', '-2 hours')");
+    }
+
+    #[test]
+    fn test_dateadd_quarter() {
+        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+
+        let mut emitter = SqliteEmitter::default();
+
+        // DATEADD(quarter, 1, GETDATE()) → date('now', '+3 months')
+        let func = CommonFunctionCall {
+            name: "DATEADD".to_string(),
+            args: vec![
+                CommonExpression::Literal(CommonLiteral::String("quarter".to_string())),
+                CommonExpression::Literal(CommonLiteral::Integer(1)),
+                CommonExpression::FunctionCall(CommonFunctionCall {
+                    name: "GETDATE".to_string(),
+                    args: vec![],
+                    distinct: false,
+                }),
+            ],
+            distinct: false,
+        };
+
+        let result = emitter.visit_expression(&CommonExpression::FunctionCall(func));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "date('now', '+3 months')");
+    }
+
+    #[test]
+    fn test_dateadd_week() {
+        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+
+        let mut emitter = SqliteEmitter::default();
+
+        // DATEADD(week, 2, GETDATE()) → date('now', '+14 days')
+        let func = CommonFunctionCall {
+            name: "DATEADD".to_string(),
+            args: vec![
+                CommonExpression::Literal(CommonLiteral::String("week".to_string())),
+                CommonExpression::Literal(CommonLiteral::Integer(2)),
+                CommonExpression::FunctionCall(CommonFunctionCall {
+                    name: "GETDATE".to_string(),
+                    args: vec![],
+                    distinct: false,
+                }),
+            ],
+            distinct: false,
+        };
+
+        let result = emitter.visit_expression(&CommonExpression::FunctionCall(func));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "date('now', '+14 days')");
+    }
+
+    #[test]
+    fn test_datediff_day() {
+        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+
+        let mut emitter = SqliteEmitter::default();
+
+        // DATEDIFF(day, '2024-01-01', '2024-01-10') → (julianday('2024-01-10') - julianday('2024-01-01'))
+        let func = CommonFunctionCall {
+            name: "DATEDIFF".to_string(),
+            args: vec![
+                CommonExpression::Literal(CommonLiteral::String("day".to_string())),
+                CommonExpression::Literal(CommonLiteral::String("2024-01-01".to_string())),
+                CommonExpression::Literal(CommonLiteral::String("2024-01-10".to_string())),
+            ],
+            distinct: false,
+        };
+
+        let result = emitter.visit_expression(&CommonExpression::FunctionCall(func));
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "(julianday('2024-01-10') - julianday('2024-01-01'))"
+        );
+    }
+
+    #[test]
+    fn test_dateadd_with_identifier_datepart() {
+        use tsql_parser::common::{
+            CommonExpression, CommonFunctionCall, CommonIdentifier, CommonLiteral,
+        };
+
+        let mut emitter = SqliteEmitter::default();
+
+        // DATEADD(day, 7, created_at) → date(created_at, '+7 days')
+        let func = CommonFunctionCall {
+            name: "DATEADD".to_string(),
+            args: vec![
+                CommonExpression::Identifier(CommonIdentifier {
+                    name: "day".to_string(),
+                }),
+                CommonExpression::Literal(CommonLiteral::Integer(7)),
+                CommonExpression::Identifier(CommonIdentifier {
+                    name: "created_at".to_string(),
+                }),
+            ],
+            distinct: false,
+        };
+
+        let result = emitter.visit_expression(&CommonExpression::FunctionCall(func));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "date(created_at, '+7 days')");
+    }
+
+    #[test]
+    fn test_dateadd_error_invalid_args() {
+        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+
+        let mut emitter = SqliteEmitter::default();
+
+        // DATEADD with only 2 arguments should error
+        let func = CommonFunctionCall {
+            name: "DATEADD".to_string(),
+            args: vec![
+                CommonExpression::Literal(CommonLiteral::String("day".to_string())),
+                CommonExpression::Literal(CommonLiteral::Integer(7)),
+            ],
+            distinct: false,
+        };
+
+        let result = emitter.visit_expression(&CommonExpression::FunctionCall(func));
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("expected 3 arguments"));
+    }
+
+    #[test]
+    fn test_dateadd_error_unsupported_datepart() {
+        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+
+        let mut emitter = SqliteEmitter::default();
+
+        // DATEADD with millisecond should error
+        let func = CommonFunctionCall {
+            name: "DATEADD".to_string(),
+            args: vec![
+                CommonExpression::Literal(CommonLiteral::String("millisecond".to_string())),
+                CommonExpression::Literal(CommonLiteral::Integer(100)),
+                CommonExpression::Literal(CommonLiteral::String("2024-01-01".to_string())),
+            ],
+            distinct: false,
+        };
+
+        let result = emitter.visit_expression(&CommonExpression::FunctionCall(func));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("millisecond"));
     }
 }
