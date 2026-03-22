@@ -137,3 +137,4 @@ crates/wasm/pkg/
 
 # Node modules (if using npm for testing)
 node_modules/
+coverage/
