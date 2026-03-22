@@ -65,7 +65,7 @@ impl super::ExpressionParser<'_, '_> {
                         return Err(ParseError::unexpected_token(
                             vec![TokenKind::RParen],
                             self.buffer.current()?.kind,
-                            self.buffer.current()?.span,
+                            self.buffer.current()?.position,
                         ));
                     }
                     self.buffer.consume()?;
@@ -80,7 +80,7 @@ impl super::ExpressionParser<'_, '_> {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::RParen],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ));
                 }
                 self.buffer.consume()?;
@@ -181,7 +181,7 @@ impl super::ExpressionParser<'_, '_> {
                     TokenKind::LParen,
                 ],
                 current.kind,
-                span,
+                current.position,
             )),
         }
     }

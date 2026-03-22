@@ -21,7 +21,7 @@ pub enum ParseError {
         /// 見つかったトークン種別
         found: TokenKind,
         /// 位置情報
-        span: Span,
+        position: Position,
     },
     /// 予期しないEOF
     UnexpectedEof {
@@ -35,7 +35,7 @@ pub enum ParseError {
         /// エラーメッセージ
         message: String,
         /// 位置情報
-        span: Span,
+        position: Position,
     },
     /// 再帰深度制限超過
     RecursionLimitExceeded {
@@ -56,11 +56,15 @@ pub enum ParseError {
 impl ParseError {
     /// 予期しないトークンエラーを作成
     #[must_use]
-    pub fn unexpected_token(expected: Vec<TokenKind>, found: TokenKind, span: Span) -> Self {
+    pub fn unexpected_token(
+        expected: Vec<TokenKind>,
+        found: TokenKind,
+        position: Position,
+    ) -> Self {
         Self::UnexpectedToken {
             expected,
             found,
-            span,
+            position,
         }
     }
 
@@ -72,8 +76,8 @@ impl ParseError {
 
     /// 無効な構文エラーを作成
     #[must_use]
-    pub fn invalid_syntax(message: String, span: Span) -> Self {
-        Self::InvalidSyntax { message, span }
+    pub fn invalid_syntax(message: String, position: Position) -> Self {
+        Self::InvalidSyntax { message, position }
     }
 
     /// 再帰制限超過エラーを作成
@@ -82,12 +86,13 @@ impl ParseError {
         Self::RecursionLimitExceeded { limit, position }
     }
 
-    /// エラーの位置情報を返す
+    /// エラーの位置情報をSpanとして返す
     #[must_use]
     pub fn span(&self) -> Option<Span> {
         match self {
-            Self::UnexpectedToken { span, .. } | Self::InvalidSyntax { span, .. } => Some(*span),
-            Self::UnexpectedEof { position, .. }
+            Self::UnexpectedToken { position, .. }
+            | Self::InvalidSyntax { position, .. }
+            | Self::UnexpectedEof { position, .. }
             | Self::RecursionLimitExceeded { position, .. } => Some(Span {
                 start: position.offset,
                 end: position.offset,
@@ -100,12 +105,9 @@ impl ParseError {
     #[must_use]
     pub fn position(&self) -> Position {
         match self {
-            Self::UnexpectedToken { span, .. } | Self::InvalidSyntax { span, .. } => Position {
-                line: 0, // 行番号はSpanからは取得できない
-                column: 0,
-                offset: span.start,
-            },
-            Self::UnexpectedEof { position, .. }
+            Self::UnexpectedToken { position, .. }
+            | Self::InvalidSyntax { position, .. }
+            | Self::UnexpectedEof { position, .. }
             | Self::RecursionLimitExceeded { position, .. } => *position,
             Self::BatchError { error, .. } => error.position(),
         }
@@ -118,9 +120,13 @@ impl fmt::Display for ParseError {
             Self::UnexpectedToken {
                 expected,
                 found,
-                span,
+                position,
             } => {
-                write!(f, "unexpected token at offset {}: expected ", span.start)?;
+                write!(
+                    f,
+                    "unexpected token at offset {}: expected ",
+                    position.offset
+                )?;
                 for (i, kind) in expected.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -134,8 +140,12 @@ impl fmt::Display for ParseError {
                 "unexpected EOF at offset {}: expected {}",
                 position.offset, expected
             ),
-            Self::InvalidSyntax { message, span } => {
-                write!(f, "invalid syntax at offset {}: {}", span.start, message)
+            Self::InvalidSyntax { message, position } => {
+                write!(
+                    f,
+                    "invalid syntax at offset {}: {}",
+                    position.offset, message
+                )
             }
             Self::RecursionLimitExceeded { limit, position } => write!(
                 f,
@@ -222,11 +232,11 @@ mod tests {
 
     #[test]
     fn test_unexpected_token_error() {
-        let span = Span::new(10, 15);
+        let position = Position::new(1, 11, 10);
         let error = ParseError::unexpected_token(
             vec![TokenKind::Select, TokenKind::From],
             TokenKind::Ident,
-            span,
+            position,
         );
 
         assert_eq!(
@@ -234,7 +244,7 @@ mod tests {
             ParseError::UnexpectedToken {
                 expected: vec![TokenKind::Select, TokenKind::From],
                 found: TokenKind::Ident,
-                span
+                position
             }
         );
     }
@@ -255,14 +265,14 @@ mod tests {
 
     #[test]
     fn test_invalid_syntax_error() {
-        let span = Span::new(0, 10);
-        let error = ParseError::invalid_syntax("missing FROM clause".to_string(), span);
+        let position = Position::new(1, 1, 0);
+        let error = ParseError::invalid_syntax("missing FROM clause".to_string(), position);
 
         assert_eq!(
             error,
             ParseError::InvalidSyntax {
                 message: "missing FROM clause".to_string(),
-                span
+                position
             }
         );
     }
@@ -283,9 +293,9 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        let span = Span::new(10, 15);
+        let position = Position::new(1, 11, 10);
         let error =
-            ParseError::unexpected_token(vec![TokenKind::Semicolon], TokenKind::Ident, span);
+            ParseError::unexpected_token(vec![TokenKind::Semicolon], TokenKind::Ident, position);
 
         let display = format!("{}", error);
         assert!(display.contains("unexpected token"));
@@ -295,19 +305,23 @@ mod tests {
 
     #[test]
     fn test_error_span() {
-        let span = Span::new(10, 15);
-        let error = ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, span);
+        let position = Position::new(1, 11, 10);
+        let error =
+            ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, position);
 
-        assert_eq!(error.span(), Some(span));
+        assert_eq!(error.span(), Some(Span { start: 10, end: 10 }));
     }
 
     #[test]
     fn test_error_position() {
-        let span = Span::new(100, 105);
-        let error = ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, span);
+        let position = Position::new(1, 101, 100);
+        let error =
+            ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, position);
 
         let pos = error.position();
         assert_eq!(pos.offset, 100);
+        assert_eq!(pos.line, 1);
+        assert_eq!(pos.column, 101);
     }
 
     #[test]
@@ -360,20 +374,22 @@ mod tests {
 
     #[test]
     fn test_batch_error_span() {
-        let span = Span::new(10, 15);
-        let inner = ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, span);
+        let position = Position::new(1, 11, 10);
+        let inner =
+            ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, position);
         let error = ParseError::BatchError {
             batch_number: 1,
             error: Box::new(inner),
         };
 
-        assert_eq!(error.span(), Some(span));
+        assert_eq!(error.span(), Some(Span { start: 10, end: 10 }));
     }
 
     #[test]
     fn test_batch_error_position() {
-        let span = Span::new(10, 15);
-        let inner = ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, span);
+        let position = Position::new(1, 11, 10);
+        let inner =
+            ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, position);
         let error = ParseError::BatchError {
             batch_number: 1,
             error: Box::new(inner),
@@ -381,6 +397,8 @@ mod tests {
 
         let pos = error.position();
         assert_eq!(pos.offset, 10);
+        assert_eq!(pos.line, 1);
+        assert_eq!(pos.column, 11);
     }
 
     #[test]
@@ -395,8 +413,8 @@ mod tests {
 
     #[test]
     fn test_display_invalid_syntax() {
-        let span = Span::new(0, 10);
-        let error = ParseError::invalid_syntax("missing FROM clause".to_string(), span);
+        let position = Position::new(1, 1, 0);
+        let error = ParseError::invalid_syntax("missing FROM clause".to_string(), position);
 
         let display = format!("{}", error);
         assert!(display.contains("invalid syntax"));
@@ -415,8 +433,9 @@ mod tests {
 
     #[test]
     fn test_display_batch_error() {
-        let span = Span::new(10, 15);
-        let inner = ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, span);
+        let position = Position::new(1, 11, 10);
+        let inner =
+            ParseError::unexpected_token(vec![TokenKind::Select], TokenKind::Ident, position);
         let error = ParseError::BatchError {
             batch_number: 2,
             error: Box::new(inner),

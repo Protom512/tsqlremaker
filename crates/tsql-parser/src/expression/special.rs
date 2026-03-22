@@ -22,7 +22,7 @@ impl super::ExpressionParser<'_, '_> {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::Then],
                     self.buffer.current()?.kind,
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ));
             }
             self.buffer.consume()?; // THEN
@@ -43,7 +43,7 @@ impl super::ExpressionParser<'_, '_> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::End],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         let end_span = self.buffer.current()?.span;
@@ -68,7 +68,7 @@ impl super::ExpressionParser<'_, '_> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::LParen],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?; // LParen
@@ -81,7 +81,7 @@ impl super::ExpressionParser<'_, '_> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::RParen],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?; // RParen
@@ -108,8 +108,8 @@ impl super::ExpressionParser<'_, '_> {
             IsValue::Null
         } else {
             let current = self.buffer.current()?;
-            let span = current.span;
             let text = current.text.to_uppercase();
+            let position = current.position;
             self.buffer.consume()?;
             match text.as_str() {
                 "TRUE" => IsValue::True,
@@ -121,7 +121,7 @@ impl super::ExpressionParser<'_, '_> {
                             "Expected NULL, TRUE, FALSE, or UNKNOWN after IS, found '{}'",
                             text
                         ),
-                        span,
+                        position,
                     ))
                 }
             }
@@ -162,7 +162,7 @@ impl super::ExpressionParser<'_, '_> {
             _ => Err(ParseError::unexpected_token(
                 vec![TokenKind::In, TokenKind::Between, TokenKind::Like],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             )),
         }
     }
@@ -215,7 +215,7 @@ impl super::ExpressionParser<'_, '_> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::LParen],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         };
 
@@ -246,7 +246,7 @@ impl super::ExpressionParser<'_, '_> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::And],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?; // AND

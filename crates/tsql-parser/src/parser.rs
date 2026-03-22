@@ -216,7 +216,7 @@ impl<'src> Parser<'src> {
                             TokenKind::Declare,
                         ],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ))
                 }
             }
@@ -230,7 +230,7 @@ impl<'src> Parser<'src> {
                     TokenKind::Declare,
                 ],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             )),
         }
     }
@@ -288,7 +288,7 @@ impl<'src> Parser<'src> {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::By],
                     self.buffer.current()?.kind,
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ));
             }
             self.buffer.consume()?;
@@ -316,7 +316,7 @@ impl<'src> Parser<'src> {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::By],
                     self.buffer.current()?.kind,
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ));
             }
             self.buffer.consume()?;
@@ -433,7 +433,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::Join],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?;
@@ -458,7 +458,7 @@ impl<'src> Parser<'src> {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::LParen],
                     self.buffer.current()?.kind,
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ));
             }
             self.buffer.consume()?; // LParen
@@ -476,7 +476,7 @@ impl<'src> Parser<'src> {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::RParen],
                     self.buffer.current()?.kind,
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ));
             }
             self.buffer.consume()?; // RParen
@@ -552,7 +552,7 @@ impl<'src> Parser<'src> {
                     TokenKind::Join,
                 ],
                 current.kind,
-                current.span,
+                current.position,
             )),
         }
     }
@@ -571,7 +571,7 @@ impl<'src> Parser<'src> {
                 _ => {
                     return Err(ParseError::invalid_syntax(
                         "Expected SELECT statement in subquery".to_string(),
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ))
                 }
             };
@@ -581,7 +581,7 @@ impl<'src> Parser<'src> {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::RParen],
                     self.buffer.current()?.kind,
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ));
             }
             self.buffer.consume()?; // RParen
@@ -657,7 +657,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::Into],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?; // INTO
@@ -678,7 +678,7 @@ impl<'src> Parser<'src> {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::RParen],
                     self.buffer.current()?.kind,
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ));
             }
             self.buffer.consume()?;
@@ -693,7 +693,7 @@ impl<'src> Parser<'src> {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::LParen],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ));
                 }
                 self.buffer.consume()?; // LEFT PAREN
@@ -709,7 +709,7 @@ impl<'src> Parser<'src> {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::RParen],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ));
                 }
                 self.buffer.consume()?;
@@ -725,7 +725,7 @@ impl<'src> Parser<'src> {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::Values],
                     self.buffer.current()?.kind,
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ));
             }
             self.buffer.consume()?;
@@ -738,7 +738,7 @@ impl<'src> Parser<'src> {
                 _ => {
                     return Err(ParseError::invalid_syntax(
                         "Expected SELECT statement".to_string(),
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ))
                 }
             }
@@ -768,7 +768,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::Set],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?;
@@ -781,7 +781,7 @@ impl<'src> Parser<'src> {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::Eq, TokenKind::Assign],
                     self.buffer.current()?.kind,
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ));
             }
             self.buffer.consume()?;
@@ -893,7 +893,7 @@ impl<'src> Parser<'src> {
                     TokenKind::Procedure,
                 ],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             )),
         }
     }
@@ -908,7 +908,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::LParen],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?; // LEFT PAREN
@@ -926,7 +926,7 @@ impl<'src> Parser<'src> {
             } else {
                 // カラム定義（カラムレベル制約を含む）
                 let token_kind = token.kind;
-                let token_span = token.span;
+                let token_span = token.position;
                 let is_identifier = matches!(
                     token_kind,
                     TokenKind::Ident
@@ -958,7 +958,7 @@ impl<'src> Parser<'src> {
                         return Err(ParseError::unexpected_token(
                             vec![TokenKind::Null],
                             self.buffer.current()?.kind,
-                            self.buffer.current()?.span,
+                            self.buffer.current()?.position,
                         ));
                     }
                     self.buffer.consume()?;
@@ -1014,7 +1014,7 @@ impl<'src> Parser<'src> {
                                 return Err(ParseError::unexpected_token(
                                     vec![TokenKind::RParen],
                                     self.buffer.current()?.kind,
-                                    self.buffer.current()?.span,
+                                    self.buffer.current()?.position,
                                 ));
                             }
                             self.buffer.consume()?;
@@ -1058,7 +1058,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::RParen],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?;
@@ -1115,7 +1115,7 @@ impl<'src> Parser<'src> {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::Key],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ));
                 }
                 self.buffer.consume()?;
@@ -1125,7 +1125,7 @@ impl<'src> Parser<'src> {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::LParen],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ));
                 }
                 self.buffer.consume()?;
@@ -1152,7 +1152,7 @@ impl<'src> Parser<'src> {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::LParen],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ));
                 }
                 self.buffer.consume()?;
@@ -1177,7 +1177,7 @@ impl<'src> Parser<'src> {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::Key],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ));
                 }
                 self.buffer.consume()?;
@@ -1187,7 +1187,7 @@ impl<'src> Parser<'src> {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::LParen],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ));
                 }
                 self.buffer.consume()?;
@@ -1206,7 +1206,7 @@ impl<'src> Parser<'src> {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::References],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ));
                 }
                 self.buffer.consume()?;
@@ -1245,7 +1245,7 @@ impl<'src> Parser<'src> {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::LParen],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ));
                 }
                 self.buffer.consume()?;
@@ -1257,7 +1257,7 @@ impl<'src> Parser<'src> {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::RParen],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ));
                 }
                 self.buffer.consume()?; // RIGHT PAREN
@@ -1275,7 +1275,7 @@ impl<'src> Parser<'src> {
                     TokenKind::Check,
                 ],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             )),
         }
     }
@@ -1299,7 +1299,7 @@ impl<'src> Parser<'src> {
                         let n = num_str.parse::<u32>().map_err(|_| {
                             ParseError::invalid_syntax(
                                 format!("Invalid number for VARCHAR length: {}", num_str),
-                                token.span,
+                                token.position,
                             )
                         })?;
                         self.buffer.consume()?;
@@ -1313,7 +1313,7 @@ impl<'src> Parser<'src> {
                         return Err(ParseError::unexpected_token(
                             vec![TokenKind::RParen],
                             self.buffer.current()?.kind,
-                            self.buffer.current()?.span,
+                            self.buffer.current()?.position,
                         ));
                     }
                     self.buffer.consume()?;
@@ -1331,7 +1331,7 @@ impl<'src> Parser<'src> {
                         let parsed = num_str.parse::<u32>().map_err(|_| {
                             ParseError::invalid_syntax(
                                 format!("Invalid number for CHAR length: {}", num_str),
-                                token.span,
+                                token.position,
                             )
                         })?;
                         self.buffer.consume()?;
@@ -1343,7 +1343,7 @@ impl<'src> Parser<'src> {
                         return Err(ParseError::unexpected_token(
                             vec![TokenKind::RParen],
                             self.buffer.current()?.kind,
-                            self.buffer.current()?.span,
+                            self.buffer.current()?.position,
                         ));
                     }
                     self.buffer.consume()?;
@@ -1362,7 +1362,7 @@ impl<'src> Parser<'src> {
                         let parsed = num_str.parse::<u8>().map_err(|_| {
                             ParseError::invalid_syntax(
                                 format!("Invalid number for DECIMAL precision: {}", num_str),
-                                token.span,
+                                token.position,
                             )
                         })?;
                         self.buffer.consume()?;
@@ -1378,7 +1378,7 @@ impl<'src> Parser<'src> {
                             let parsed = num_str.parse::<u8>().map_err(|_| {
                                 ParseError::invalid_syntax(
                                     format!("Invalid number for DECIMAL scale: {}", num_str),
-                                    token.span,
+                                    token.position,
                                 )
                             })?;
                             self.buffer.consume()?;
@@ -1393,7 +1393,7 @@ impl<'src> Parser<'src> {
                         return Err(ParseError::unexpected_token(
                             vec![TokenKind::RParen],
                             self.buffer.current()?.kind,
-                            self.buffer.current()?.span,
+                            self.buffer.current()?.position,
                         ));
                     }
                     self.buffer.consume()?;
@@ -1430,7 +1430,7 @@ impl<'src> Parser<'src> {
                         return Err(ParseError::unexpected_token(
                             vec![TokenKind::RParen],
                             self.buffer.current()?.kind,
-                            self.buffer.current()?.span,
+                            self.buffer.current()?.position,
                         ));
                     }
                     self.buffer.consume()?;
@@ -1447,7 +1447,7 @@ impl<'src> Parser<'src> {
             _ => {
                 return Err(ParseError::invalid_syntax(
                     format!("Unknown data type: {:?}", self.buffer.current()?.kind),
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ))
             }
         })
@@ -1461,7 +1461,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::On],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?;
@@ -1471,7 +1471,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::LParen],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?; // LEFT PAREN
@@ -1508,7 +1508,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::As],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?;
@@ -1519,7 +1519,7 @@ impl<'src> Parser<'src> {
             _ => {
                 return Err(ParseError::invalid_syntax(
                     "Expected SELECT statement".to_string(),
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ))
             }
         };
@@ -1572,7 +1572,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::As],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?;
@@ -1679,7 +1679,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::Eq, TokenKind::Assign],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?;
@@ -1728,7 +1728,7 @@ impl<'src> Parser<'src> {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::LocalVar],
                     self.buffer.current()?.kind,
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ));
             }
 
@@ -1742,7 +1742,7 @@ impl<'src> Parser<'src> {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::Eq, TokenKind::Assign],
                     self.buffer.current()?.kind,
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ));
             }
             self.buffer.consume()?;
@@ -1763,7 +1763,7 @@ impl<'src> Parser<'src> {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::LocalVar],
                     self.buffer.current()?.kind,
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ));
             }
         }
@@ -1874,7 +1874,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::End],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         let end_span = self.buffer.current()?.span;
@@ -1936,7 +1936,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::Try],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?; // TRY
@@ -1948,7 +1948,7 @@ impl<'src> Parser<'src> {
                 _ => {
                     return Err(ParseError::invalid_syntax(
                         "Expected block statement".to_string(),
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ))
                 }
             }
@@ -1969,7 +1969,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::End],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?; // END
@@ -1978,7 +1978,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::Try],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?; // TRY
@@ -1988,7 +1988,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::Begin],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?; // BEGIN
@@ -1997,7 +1997,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::Catch],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?; // CATCH
@@ -2009,7 +2009,7 @@ impl<'src> Parser<'src> {
                 _ => {
                     return Err(ParseError::invalid_syntax(
                         "Expected block statement".to_string(),
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ))
                 }
             }
@@ -2030,7 +2030,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::End],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?; // END
@@ -2039,7 +2039,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::Catch],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?; // CATCH
@@ -2074,7 +2074,7 @@ impl<'src> Parser<'src> {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::Transaction, TokenKind::Tran],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ));
                 }
                 self.buffer.consume()?; // TRANSACTION | TRAN
@@ -2114,17 +2114,17 @@ impl<'src> Parser<'src> {
                         } else {
                             None
                         },
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     )
                 } else {
                     // COMMIT だけの場合（TRANSACTION 省略）
-                    (None, self.buffer.current()?.span)
+                    (None, self.buffer.current()?.position)
                 };
 
                 Ok(Statement::Transaction(TransactionStatement::Commit {
                     span: Span {
                         start,
-                        end: end_span.end,
+                        end: end_span.offset,
                     },
                     name,
                 }))
@@ -2146,17 +2146,17 @@ impl<'src> Parser<'src> {
                         } else {
                             None
                         },
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     )
                 } else {
                     // ROLLBACK だけの場合（TRANSACTION 省略）
-                    (None, self.buffer.current()?.span)
+                    (None, self.buffer.current()?.position)
                 };
 
                 Ok(Statement::Transaction(TransactionStatement::Rollback {
                     span: Span {
                         start,
-                        end: end_span.end,
+                        end: end_span.offset,
                     },
                     name,
                 }))
@@ -2171,7 +2171,7 @@ impl<'src> Parser<'src> {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::Transaction, TokenKind::Tran],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ));
                 }
                 self.buffer.consume()?; // TRANSACTION | TRAN
@@ -2196,7 +2196,7 @@ impl<'src> Parser<'src> {
                     TokenKind::Save,
                 ],
                 kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             )),
         }
     }
@@ -2259,7 +2259,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::LParen],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?;
@@ -2288,7 +2288,7 @@ impl<'src> Parser<'src> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::RParen],
                 self.buffer.current()?.kind,
-                self.buffer.current()?.span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?;
@@ -2387,7 +2387,7 @@ impl<'src> Parser<'src> {
                     TokenKind::GlobalTempTable,
                 ],
                 current.kind,
-                span,
+                current.position,
             ));
         };
 

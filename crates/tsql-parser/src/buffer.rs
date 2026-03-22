@@ -87,12 +87,18 @@ impl<'src> TokenBuffer<'src> {
                 .as_ref()
                 .ok_or_else(|| ParseError::unexpected_eof("token".to_string(), position_at_eof()))
         } else {
-            // EOFトークンを返す
-            Ok(&Token {
+            // EOFトークンを返す（スタティックなトークンを返す）
+            static EOF_TOKEN: Token<'static> = Token {
                 kind: TokenKind::Eof,
                 text: "",
                 span: Span { start: 0, end: 0 },
-            })
+                position: tsql_token::Position {
+                    line: 1,
+                    column: 1,
+                    offset: 0,
+                },
+            };
+            Ok(&EOF_TOKEN)
         }
     }
 
@@ -117,10 +123,15 @@ impl<'src> TokenBuffer<'src> {
             Ok(token)
         } else {
             // EOF
+            let pos = position_at_eof();
             Ok(Token {
                 kind: TokenKind::Eof,
                 text: "",
-                span: Span { start: 0, end: 0 },
+                span: Span {
+                    start: pos.offset,
+                    end: pos.offset,
+                },
+                position: pos,
             })
         }
     }
@@ -197,11 +208,15 @@ impl<'src> TokenBuffer<'src> {
     }
 }
 
-/// EOF時のダミー位置
+/// EOF時のデフォルト位置
+///
+/// 注意: TokenBufferはEOF時の正確な位置情報を追跡していないため、
+/// デフォルト位置（1行目、1列目、オフセット0）を返す。
+/// 改善にはLexerの最終位置を追跡する必要がある。
 fn position_at_eof() -> tsql_token::Position {
     tsql_token::Position {
-        line: 0,
-        column: 0,
+        line: 1,
+        column: 1,
         offset: 0,
     }
 }

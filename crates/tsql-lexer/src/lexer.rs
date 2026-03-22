@@ -21,8 +21,10 @@ pub struct Token<'src> {
     pub kind: TokenKind,
     /// ソースコードへの参照（コピーなし）
     pub text: &'src str,
-    /// 位置情報
+    /// 位置情報（バイトオフセット）
     pub span: Span,
+    /// 開始位置（行・列・オフセット）
+    pub position: Position,
 }
 
 impl<'src> Token<'src> {
@@ -43,16 +45,25 @@ impl<'src> Token<'src> {
                 start: position.offset,
                 end: position.offset + len,
             },
+            position,
         }
     }
 
     /// EOF トークンを作成する
+    ///
+    /// # Arguments
+    ///
+    /// * `position` - EOF位置
     #[must_use]
-    pub const fn eof() -> Self {
+    pub const fn eof(position: Position) -> Self {
         Self {
             kind: TokenKind::Eof,
             text: "",
-            span: Span { start: 0, end: 0 },
+            span: Span {
+                start: position.offset,
+                end: position.offset,
+            },
+            position,
         }
     }
 }
@@ -849,7 +860,7 @@ impl<'src> Lexer<'src> {
         }
 
         if self.cursor.is_eof() {
-            return Ok(Token::eof());
+            return Ok(Token::eof(self.cursor.position()));
         }
 
         let start_pos = self.cursor.position();
@@ -1039,9 +1050,12 @@ mod tests {
 
     #[test]
     fn test_token_eof() {
-        let eof = Token::eof();
+        let pos = Position::new(1, 7, 6);
+        let eof = Token::eof(pos);
         assert_eq!(eof.kind, TokenKind::Eof);
         assert_eq!(eof.text, "");
+        assert_eq!(eof.span.start, 6);
+        assert_eq!(eof.span.end, 6);
     }
 
     #[test]

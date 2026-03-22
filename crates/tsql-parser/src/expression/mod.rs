@@ -210,7 +210,7 @@ impl<'a, 'src> ExpressionParser<'a, 'src> {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::By],
                     self.buffer.current()?.kind,
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ));
             }
             self.buffer.consume()?;
@@ -242,7 +242,7 @@ impl<'a, 'src> ExpressionParser<'a, 'src> {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::By],
                     self.buffer.current()?.kind,
-                    self.buffer.current()?.span,
+                    self.buffer.current()?.position,
                 ));
             }
             self.buffer.consume()?;
@@ -372,7 +372,7 @@ impl<'a, 'src> ExpressionParser<'a, 'src> {
                     _ => {
                         return Err(ParseError::invalid_syntax(
                             "Expected SELECT statement in subquery".to_string(),
-                            self.buffer.current()?.span,
+                            self.buffer.current()?.position,
                         ))
                     }
                 };
@@ -382,7 +382,7 @@ impl<'a, 'src> ExpressionParser<'a, 'src> {
                     return Err(ParseError::unexpected_token(
                         vec![TokenKind::RParen],
                         self.buffer.current()?.kind,
-                        self.buffer.current()?.span,
+                        self.buffer.current()?.position,
                     ));
                 }
                 self.buffer.consume()?; // RParen

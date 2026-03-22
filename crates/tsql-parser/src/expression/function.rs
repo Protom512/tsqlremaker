@@ -71,7 +71,7 @@ impl super::ExpressionParser<'_, '_> {
             return Err(ParseError::unexpected_token(
                 vec![TokenKind::RParen, TokenKind::Comma],
                 self.buffer.current()?.kind,
-                end_span,
+                self.buffer.current()?.position,
             ));
         }
         self.buffer.consume()?;
