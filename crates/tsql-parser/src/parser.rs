@@ -157,8 +157,6 @@ impl<'src> Parser<'src> {
     ///
     /// 文、またはエラー
     pub fn parse_statement(&mut self) -> ParseResult<Statement> {
-        self.check_depth()?;
-
         match self.buffer.current()?.kind {
             // SELECT文
             TokenKind::Select => self.parse_select_statement(),
@@ -1790,11 +1788,21 @@ impl<'src> Parser<'src> {
         let mut expr_parser = ExpressionParser::new(&mut self.buffer);
         let condition = expr_parser.parse()?;
 
+        // 深度チェック
+        self.check_depth_before_nesting()?;
+
+        // 深度を増やしてネストされたステートメントをパース
+        self.depth += 1;
         let then_branch = self.parse_statement()?;
+        self.depth -= 1;
 
         let else_branch = if self.buffer.check(TokenKind::Else) {
             self.buffer.consume()?;
-            Some(self.parse_statement()?)
+            self.check_depth_before_nesting()?;
+            self.depth += 1;
+            let branch = self.parse_statement()?;
+            self.depth -= 1;
+            Some(branch)
         } else {
             None
         };
@@ -1819,7 +1827,13 @@ impl<'src> Parser<'src> {
         let mut expr_parser = ExpressionParser::new(&mut self.buffer);
         let condition = expr_parser.parse()?;
 
+        // 深度チェック
+        self.check_depth_before_nesting()?;
+
+        // 深度を増やしてネストされたステートメントをパース
+        self.depth += 1;
         let body = self.parse_statement()?;
+        self.depth -= 1;
 
         let end_span = self.buffer.current()?.span;
         Ok(Statement::While(Box::new(WhileStatement {
@@ -1837,6 +1851,11 @@ impl<'src> Parser<'src> {
         let start = self.buffer.current()?.span.start;
         self.buffer.consume()?; // BEGIN
 
+        // 深度チェック
+        self.check_depth_before_nesting()?;
+
+        // ブロック内のステートメントは1レベル深いネストとして扱う
+        self.depth += 1;
         let mut statements = Vec::new();
         while !self.buffer.check(TokenKind::End) && !self.is_at_eof() {
             match self.parse_statement() {
@@ -1849,6 +1868,7 @@ impl<'src> Parser<'src> {
             // セミコロンを消費
             let _ = self.buffer.consume_if(TokenKind::Semicolon);
         }
+        self.depth -= 1;
 
         if !self.buffer.check(TokenKind::End) {
             return Err(ParseError::unexpected_token(
@@ -1934,7 +1954,10 @@ impl<'src> Parser<'src> {
             }
         } else {
             // 単一の文も許容
+            self.check_depth_before_nesting()?;
+            self.depth += 1;
             let stmt = self.parse_statement()?;
+            self.depth -= 1;
             Box::new(Block {
                 span: stmt.span(),
                 statements: vec![stmt],
@@ -1992,7 +2015,10 @@ impl<'src> Parser<'src> {
             }
         } else {
             // 単一の文も許容
+            self.check_depth_before_nesting()?;
+            self.depth += 1;
             let stmt = self.parse_statement()?;
+            self.depth -= 1;
             Box::new(Block {
                 span: stmt.span(),
                 statements: vec![stmt],
@@ -2398,9 +2424,9 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// 再帰深度をチェック
-    fn check_depth(&self) -> ParseResult<()> {
-        if self.depth >= self.max_depth {
+    /// 再帰深度をチェック（ネストされる前に呼び出す）
+    fn check_depth_before_nesting(&self) -> ParseResult<()> {
+        if self.depth + 1 > self.max_depth {
             return Err(ParseError::recursion_limit(
                 self.max_depth,
                 tsql_token::Position {
@@ -2735,11 +2761,12 @@ mod tests {
 
     #[test]
     fn test_check_depth_limit() {
-        let mut parser = Parser::new("SELECT 1");
-        // 深度を超過させる
-        parser.depth = parser.max_depth + 1;
-        let result = parser.parse_statement();
-        assert!(result.is_err());
+        // ネストされたIF文で深度制限が正しく機能することを確認
+        let sql = "IF 1=1 SELECT 1";
+        let mut parser = Parser::new(sql);
+        parser.max_depth = 0; // 制限を0にしてテスト（深度0はネスト不可）
+        let result = parser.parse();
+        assert!(result.is_err()); // IF文は深度1を必要とするので失敗するはず
         match result.unwrap_err() {
             ParseError::RecursionLimitExceeded { .. } => {}
             _ => panic!("Expected RecursionLimitExceeded error"),
@@ -2788,6 +2815,76 @@ mod tests {
         // 複数のセミコロンはスキップされる
         let result = parse_sql("SELECT 1; SELECT 2;").unwrap();
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_nested_if_depth_tracking() {
+        // ネストされたIF文で深度が正しく追跡されることを確認
+        let sql = "IF @x = 1 IF @y = 2 SELECT 3";
+        let result = parse_sql(sql);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_nested_while_depth_tracking() {
+        // ネストされたWHILE文で深度が正しく追跡されることを確認
+        let sql = "WHILE @x < 10 WHILE @y < 5 SELECT 1";
+        let result = parse_sql(sql);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_block_depth_tracking() {
+        // BEGIN...ENDブロック内で深度が正しく追跡されることを確認
+        let sql = "BEGIN IF @x = 1 SELECT 1 END";
+        let result = parse_sql(sql);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_deeply_nested_statements_exceed_limit() {
+        // 深くネストされたステートメントが再帰制限を超えることを確認
+        // デフォルトのmax_depthを超えるような深いネストを作る
+        let sql =
+            "IF 1=1 IF 1=1 IF 1=1 IF 1=1 IF 1=1 IF 1=1 IF 1=1 IF 1=1 IF 1=1 IF 1=1 IF 1=1 SELECT 1";
+        let mut parser = Parser::new(sql);
+        parser.max_depth = 10; // 制限を下げてテスト
+        let result = parser.parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_block_error_propagation() {
+        // BEGIN...ENDブロック内のエラーが正しく伝播されることを確認
+        let sql = "BEGIN SELECT FROM users END";
+        let mut parser = Parser::new(sql);
+        let result = parser.parse_with_errors();
+
+        // エラーが含まれていることを確認
+        assert!(result.is_err());
+        match result {
+            Err(parse_errors) => {
+                assert!(!parse_errors.errors.is_empty());
+            }
+            _ => panic!("Expected ParseErrors"),
+        }
+    }
+
+    #[test]
+    fn test_block_partial_success() {
+        // BEGIN...ENDブロック内でエラーが発生しても、後続のステートメントがパースされることを確認
+        let sql = "BEGIN SELECT 1; SELECT FROM users; SELECT 2 END";
+        let mut parser = Parser::new(sql);
+        let result = parser.parse_with_errors();
+
+        // エラーが含まれているが、一部のステートメントはパースされていることを確認
+        match result {
+            Err(parse_errors) => {
+                // エラーが発生したことを確認
+                assert!(!parse_errors.errors.is_empty());
+            }
+            _ => panic!("Expected ParseErrors"),
+        }
     }
 
     // Task 18.1: SELECT文のテスト

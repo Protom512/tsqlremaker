@@ -627,6 +627,8 @@ fn is_synchronization_point(kind: TokenKind) -> bool {
             | TokenKind::Update
             | TokenKind::Delete
             | TokenKind::Create
+            | TokenKind::Alter
+            | TokenKind::Drop
             | TokenKind::End
             | TokenKind::Go
     )

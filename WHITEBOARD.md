@@ -7,7 +7,7 @@
 > **Orchestratorへ**: チームメイトの発見をこのファイルに転記・構造化する責務を持つ。
 > 「作業指示」ではなく「知識のファシリテーション」が役割。
 
-**最終更新:** 2026-03-22 12:30 / Orchestrator (PR #27マージ完了・プロジェクト完了)
+**最終更新:** 2026-03-22 15:00 / Orchestrator (Issue対応セッション開始)
 
 ---
 
@@ -154,6 +154,28 @@
 - ✅ マージ日時: 2026-03-21T18:39:47Z
 - 🎉 **全13タスクがmasterブランチに統合完了！プロジェクト完了！**
 
+### 2026-03-22 15:00 - Orchestrator (Issue対応セッション開始)
+- 🔍 未解決のGitHub Issueを9件検出（#12-#20）
+- 📊 Issue分類完了: P0: 2件（バグ）, P1: 2件（重要機能）, P2: 3件（改善）, P3: 2件（リファクタ/ドキュメント）
+- 📝 推計工数: 約16時間
+- 🔄 Phase 1: 調査開始（Issue #14から着手）
+
+### 2026-03-22 16:00 - Orchestrator (Issue対応進捗)
+- ✅ Issue #14: パラメータ定義のDEFAULTキーワードチェック削除 - 既に修正済み（commit a382eb4）
+- ✅ Issue #13: すべてのテーブル制約タイプ実装 - 既に実装済み（Foreign/Unique/Check完全実装）
+- ✅ Issue #15: Parserの再帰深度トラッキング追加 - 実装完了
+  - `check_depth_before_nesting()` メソッド追加
+  - `parse_if_statement`, `parse_while_statement`, `parse_block`, `parse_try_catch_statement` で深度管理を実装
+  - テスト追加: `test_nested_if_depth_tracking`, `test_nested_while_depth_tracking`, `test_block_depth_tracking`, `test_check_depth_limit`
+- ✅ Issue #16: BEGIN...ENDブロックのエラー伝播 - 設計通りに機能（エラー回復）
+  - `parse_with_errors()` でエラーが正しく伝播されることを確認
+  - テスト追加: `test_block_error_propagation`, `test_block_partial_success`
+- ✅ Issue #12: EXISTS式のサブクエリ解析改善 - 既に実装済み（`parse_subquery_select`完全実装）
+- ✅ Issue #17: design.mdの矛盾修正 - 修正完了
+  - `is_synchronization_point` 定義に `TokenKind::Alter` と `TokenKind::Drop` を追加
+- 📝 残りIssue: #18（VecDequeリファクタリング）, #19（ParseError位置情報）, #20（EOF位置情報）
+- 📊 現状: 6/9 Issue完了
+
 ---
 
 ---
@@ -199,13 +221,41 @@ Investigator ──→ 調査結果・申し送り ──→ Designer
 
 | 項目 | 内容 |
 |------|------|
-| 現在フェーズ | Phase 3: プロジェクト完了 ✅ |
-| 全体進捗 | 13 / 13 タスク完了（T001-T016） |
+| 現在フェーズ | Phase 1: Issue対応（調査・実装） |
+| 全体進捗 | 0 / 9 Issue完了（#12-#20） |
 | アクティブエージェント | Orchestrator |
 | 最終更新者 | Orchestrator |
 | PR状態 | #27 マージ完了 (44ccd60) |
 | キャパシティ状態 | 正常 ✅ |
 | 未プッシュコミット | 0件 |
+
+---
+
+## 📋 Investigator Findings (Phase 1: Issue対応調査)
+
+**ステータ:** 🔄 進行中
+
+### GitHub Issueスキャン結果 (2026-03-22 15:00)
+
+**調査対象:** 9件の未解決Issue（#12-#20）
+
+### 検出した課題一覧（9件）
+
+| ID | ファイル | 種別 | 説明 | 優先度 | 状態 |
+|----|---------|------|------|--------|------|
+| #14 | crates/tsql-parser/src/parser.rs | BUG | パラメータ定義のDEFAULTキーワードチェック削除（T-SQL構文が間違っている） | P0 | 🔄 進行中 |
+| #13 | crates/tsql-parser/src/parser.rs | BUG | すべてのテーブル制約タイプ実装（Foreign/Unique/Checkが正しく動作しない） | P0 | pending |
+| #15 | crates/tsql-parser/src/parser.rs | ENHANCEMENT | Parserの再帰深度トラッキング追加（スタックオーバーフロー防止） | P1 | pending |
+| #16 | crates/tsql-parser/src/parser.rs | ENHANCEMENT | BEGIN...ENDブロックのエラー伝播 | P1 | pending |
+| #12 | crates/tsql-parser/src/expression/special.rs | ENHANCEMENT | EXISTS式のサブクエリ解析改善（プレースホルダー実装） | P2 | pending |
+| #19 | crates/tsql-parser/src/error.rs | ENHANCEMENT | ParseErrorの位置情報改善（UX改善） | P2 | pending |
+| #20 | crates/tsql-parser/src/buffer.rs | ENHANCEMENT | EOFエラーの位置情報改善 | P2 | pending |
+| #18 | crates/tsql-parser/src/buffer.rs | REFACTOR | TokenBufferのVecDequeリファクタリング | P3 | pending |
+| #17 | .kiro/specs/tsql-parser/design.md | DOCS | design.mdの矛盾修正 | P3 | pending |
+
+**統計:** P0: 2件 / P1: 2件 / P2: 3件 / P3: 2件 / 合計: 9件
+
+**推計工数:** 約16時間
 
 ---
 
