@@ -80,7 +80,7 @@ jobs:
           mv web/pkg/tsql_remaker_wasm_bg.wasm.optim web/pkg/tsql_remaker_wasm_bg.wasm
 
       - name: Upload WASM artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: wasm-package
           path: web/pkg/
