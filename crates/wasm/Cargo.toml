@@ -26,7 +26,7 @@ serde-wasm-bindgen = { version = "0.6", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 
 # getrandom with WASM JS support
-getrandom = { version = "0.3", features = ["wasm_js"], optional = true }
+getrandom = { version = "0.4", features = ["wasm_js"], optional = true }
 
 [features]
 default = ["console_error_panic_hook"]
