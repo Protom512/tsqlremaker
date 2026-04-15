@@ -111,7 +111,7 @@ jobs:
           path: artifacts/
 
       - name: Create release with changelog
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: false
           prerelease: false
