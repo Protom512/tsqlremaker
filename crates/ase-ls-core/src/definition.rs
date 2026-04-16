@@ -8,8 +8,8 @@
 //! - ビュー参照 → CREATE VIEW定義
 //! - インデックス参照 → CREATE INDEX定義
 
-use crate::symbol_table::{SymbolTable, SymbolTableBuilder};
 use crate::position_to_offset;
+use crate::symbol_table::{SymbolTable, SymbolTableBuilder};
 
 #[cfg(test)]
 use crate::offset_to_position;
