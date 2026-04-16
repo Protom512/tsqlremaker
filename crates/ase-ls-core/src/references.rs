@@ -6,7 +6,7 @@
 //! - プロシージャ: CREATE PROCEDURE + EXEC呼び出し
 //! - ビュー: CREATE VIEW + SELECT内の参照
 
-use crate::{offset_to_position, position_to_offset};
+use crate::{find_token_at, offset_to_position, position_to_offset};
 use lsp_types::{Position, Range};
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
@@ -87,25 +87,6 @@ fn is_definition_token(source: &str, token: &tsql_lexer::Token<'_>, is_var: bool
         }
     }
     false
-}
-
-/// カーソル位置のトークンを特定する
-fn find_token_at(source: &str, offset: usize) -> Option<(TokenKind, String)> {
-    for token_result in Lexer::new(source) {
-        let token = match token_result {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-        let start = token.span.start as usize;
-        let end = token.span.end as usize;
-        if offset >= start && offset < end {
-            return Some((token.kind, token.text.to_string()));
-        }
-        if start > offset {
-            break;
-        }
-    }
-    None
 }
 
 /// トークンのSpanからLSP Rangeを生成

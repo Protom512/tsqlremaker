@@ -66,6 +66,30 @@ pub(crate) fn position_to_offset(source: &str, position: lsp_types::Position) ->
     offset
 }
 
+/// カーソル位置のトークンを特定する（共有ユーティリティ）
+///
+/// 指定バイトオフセットに含まれるトークンの種類とテキストを返す。
+pub(crate) fn find_token_at(
+    source: &str,
+    offset: usize,
+) -> Option<(tsql_token::TokenKind, String)> {
+    for token_result in Lexer::new(source) {
+        let token = match token_result {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let start = token.span.start as usize;
+        let end = token.span.end as usize;
+        if offset >= start && offset < end {
+            return Some((token.kind, token.text.to_string()));
+        }
+        if start > offset {
+            break;
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::panic)]

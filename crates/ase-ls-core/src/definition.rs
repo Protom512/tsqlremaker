@@ -11,10 +11,10 @@
 use crate::position_to_offset;
 use crate::symbol_table::{SymbolTable, SymbolTableBuilder};
 
+use crate::find_token_at;
 #[cfg(test)]
 use crate::offset_to_position;
 use lsp_types::{Position, Range};
-use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
 
 /// カーソル位置のシンボルの定義箇所を検索する
@@ -84,25 +84,6 @@ fn find_object_definition(table: &SymbolTable, name: &str) -> Vec<Range> {
     }
 
     results
-}
-
-/// カーソル位置のトークンを特定する
-fn find_token_at(source: &str, offset: usize) -> Option<(TokenKind, String)> {
-    for token_result in Lexer::new(source) {
-        let token = match token_result {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-        let start = token.span.start as usize;
-        let end = token.span.end as usize;
-        if offset >= start && offset < end {
-            return Some((token.kind, token.text.to_string()));
-        }
-        if start > offset {
-            break;
-        }
-    }
-    None
 }
 
 #[cfg(test)]
