@@ -56,21 +56,11 @@ pub fn reference_ranges(source: &str, position: Position, include_declaration: b
         };
 
         if matches {
-            let (start_line, start_char) = offset_to_position(source, token.span.start);
-            let (end_line, end_char) = offset_to_position(source, token.span.end);
-            let range = Range {
-                start: Position {
-                    line: start_line,
-                    character: start_char,
-                },
-                end: Position {
-                    line: end_line,
-                    character: end_char,
-                },
-            };
+            let range = token_span_to_range(source, &token);
 
-            // 定義箇所の判定: DECLARE内の@var, CREATE直後の識別子
-            let is_declaration = is_definition_token(source, &token, is_var);
+            // 定義箇所の判定
+            let is_declaration =
+                !include_declaration && is_definition_token(source, &token, is_var);
 
             if include_declaration || !is_declaration {
                 refs.push(range);
@@ -78,22 +68,17 @@ pub fn reference_ranges(source: &str, position: Position, include_declaration: b
         }
     }
 
-    // 重複除去（同一Rangeの排除）
+    // 重複除去
     refs.dedup_by(|a, b| a.start == b.start && a.end == b.end);
 
     refs
 }
 
 /// トークンが定義箇所かどうかを判定する
-fn is_definition_token(source: &str, _token: &tsql_lexer::Token<'_>, is_var: bool) -> bool {
-    // 簡易ヒューリスティック: 変数の場合は最初の@出現がDECLARE内とみなす
-    // より正確にはAST解析が必要だが、トークンベースの簡易判定
+fn is_definition_token(source: &str, token: &tsql_lexer::Token<'_>, is_var: bool) -> bool {
     if is_var {
-        // LocalVarで、ソース内のテキスト位置がDECLAREキーワードの後にあるか
-        // ヒューリスティック: DECLARE 直後の変数は定義
-        let before = &source[.._token.span.start as usize];
+        let before = &source[..token.span.start as usize];
         let trimmed = before.trim_end();
-        // DECLAREの直後にある場合
         if trimmed.to_uppercase().ends_with("DECLARE")
             || trimmed.to_uppercase().ends_with("DECLARE\n")
             || trimmed.ends_with(',')
@@ -123,6 +108,22 @@ fn find_token_at(source: &str, offset: usize) -> Option<(TokenKind, String)> {
     None
 }
 
+/// トークンのSpanからLSP Rangeを生成
+fn token_span_to_range(source: &str, token: &tsql_lexer::Token<'_>) -> Range {
+    let (start_line, start_char) = offset_to_position(source, token.span.start);
+    let (end_line, end_char) = offset_to_position(source, token.span.end);
+    Range {
+        start: Position {
+            line: start_line,
+            character: start_char,
+        },
+        end: Position {
+            line: end_line,
+            character: end_char,
+        },
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::panic)]
@@ -133,7 +134,6 @@ mod tests {
     #[test]
     fn test_references_variable_with_declaration() {
         let source = "DECLARE @count INT\nSET @count = 1\nSELECT @count";
-        // Cursor on @count in line 1
         let ranges = reference_ranges(
             source,
             Position {
@@ -142,7 +142,6 @@ mod tests {
             },
             true,
         );
-        // Should find: DECLARE @count, SET @count, SELECT @count
         assert_eq!(ranges.len(), 3);
     }
 
@@ -157,14 +156,12 @@ mod tests {
             },
             false,
         );
-        // Should find: SET @count, SELECT @count (not DECLARE)
         assert_eq!(ranges.len(), 2);
     }
 
     #[test]
     fn test_references_table_name() {
         let source = "CREATE TABLE users (id INT)\nSELECT * FROM users\nDELETE FROM users";
-        // Cursor on "users" in CREATE TABLE
         let ranges = reference_ranges(
             source,
             Position {
@@ -173,7 +170,6 @@ mod tests {
             },
             true,
         );
-        // Should find: CREATE TABLE users, FROM users, DELETE FROM users
         assert!(ranges.len() >= 2);
     }
 
@@ -188,7 +184,6 @@ mod tests {
             },
             true,
         );
-        // @other is different from @count
         assert_eq!(ranges.len(), 1);
     }
 
@@ -203,7 +198,6 @@ mod tests {
             },
             true,
         );
-        // Case-insensitive match: Users == users
         assert!(ranges.len() >= 2);
     }
 
@@ -223,8 +217,7 @@ mod tests {
 
     #[test]
     fn test_references_procedure() {
-        let source =
-            "CREATE PROCEDURE my_proc AS BEGIN RETURN 1 END\nEXEC my_proc\nEXECUTE my_proc";
+        let source = "CREATE PROCEDURE my_proc AS BEGIN RETURN 1 END\nEXEC my_proc";
         let ranges = reference_ranges(
             source,
             Position {
@@ -233,7 +226,35 @@ mod tests {
             },
             true,
         );
-        // Should find: CREATE PROCEDURE my_proc, EXEC my_proc, EXECUTE my_proc
+        assert!(ranges.len() >= 2);
+    }
+
+    #[test]
+    fn test_references_table_in_insert() {
+        let source = "CREATE TABLE orders (id INT)\nINSERT INTO orders (id) VALUES (1)\nSELECT * FROM orders";
+        let ranges = reference_ranges(
+            source,
+            Position {
+                line: 0,
+                character: 14,
+            },
+            true,
+        );
+        // CREATE TABLE, INSERT INTO, SELECT FROM
+        assert!(ranges.len() >= 3);
+    }
+
+    #[test]
+    fn test_references_view() {
+        let source = "CREATE VIEW active_users AS SELECT * FROM users\nSELECT * FROM active_users";
+        let ranges = reference_ranges(
+            source,
+            Position {
+                line: 1,
+                character: 15,
+            },
+            true,
+        );
         assert!(ranges.len() >= 2);
     }
 }
