@@ -520,12 +520,12 @@ static FUNCTION_DOCS: Lazy<HashMap<&str, (&str, &str)>> = Lazy::new(|| {
 /// Hover情報を生成する
 ///
 /// カーソル位置のトークンを特定し、対応するドキュメントを返す。
+/// まずシンボルテーブルを検索し、見つからなければ静的ドキュメントにフォールバックする。
 pub fn hover(source: &str, position: Position) -> Option<Hover> {
     let offset = position_to_offset(source, position);
-    let lexer = Lexer::new(source);
 
     let mut hovered_token = None;
-    for token_result in lexer {
+    for token_result in Lexer::new(source) {
         let token = match token_result {
             Ok(t) => t,
             Err(_) => continue,
@@ -542,7 +542,11 @@ pub fn hover(source: &str, position: Position) -> Option<Hover> {
     }
 
     let (kind, text, start, end) = hovered_token?;
-    let content = build_hover_content(&kind, &text)?;
+
+    // シンボルテーブルからスキーマ情報を取得
+    let symbol_table = crate::symbol_table::SymbolTableBuilder::build_tolerant(source);
+    let content = build_schema_hover(&symbol_table, &kind, &text)
+        .or_else(|| build_hover_content(&kind, &text))?;
 
     let (start_line, start_char) = offset_to_position(source, start as u32);
     let (end_line, end_char) = offset_to_position(source, end as u32);
@@ -565,7 +569,97 @@ pub fn hover(source: &str, position: Position) -> Option<Hover> {
     })
 }
 
-/// トークンの種類に応じてHover内容を構築する
+/// シンボルテーブルからスキーマ情報のHoverを構築する
+fn build_schema_hover(
+    symbol_table: &crate::symbol_table::SymbolTable,
+    kind: &TokenKind,
+    text: &str,
+) -> Option<String> {
+    let upper = text.to_uppercase();
+
+    match kind {
+        TokenKind::LocalVar => {
+            // 変数の型情報を表示
+            if let Some(var) =
+                crate::symbol_table::SymbolTableBuilder::find_variable(symbol_table, text)
+            {
+                return Some(format!(
+                    "```tsql\n{}: {:?}\n```\n\n**Variable** — Declared with `DECLARE {} {:?}`",
+                    text, var.data_type, var.name, var.data_type
+                ));
+            }
+            // プロシージャボディ内変数
+            for proc in symbol_table.procedures.values() {
+                for body_var in &proc.body_variables {
+                    if body_var.name.to_uppercase() == upper {
+                        return Some(format!(
+                            "```tsql\n{}: {:?}\n```\n\n**Variable** in `{}` — `DECLARE {} {:?}`",
+                            text, body_var.data_type, proc.name, body_var.name, body_var.data_type
+                        ));
+                    }
+                }
+                for param in &proc.parameters {
+                    if param.name.to_uppercase() == upper {
+                        let output_marker = if param.is_output { " OUTPUT" } else { "" };
+                        return Some(format!(
+                            "```tsql\n{}: {:?}{}\n```\n\n**Parameter** of `{}`",
+                            text, param.data_type, output_marker, proc.name
+                        ));
+                    }
+                }
+            }
+            None
+        }
+        TokenKind::Ident => {
+            // テーブルのカラム情報を表示
+            if let Some(table) = symbol_table.tables.get(&upper) {
+                let mut cols = String::new();
+                for col in &table.columns {
+                    let nullable = match col.nullable {
+                        Some(true) => " NULL",
+                        Some(false) => " NOT NULL",
+                        None => "",
+                    };
+                    let identity = if col.is_identity { " IDENTITY" } else { "" };
+                    cols.push_str(&format!(
+                        "\n  `{} {:?}`{}{}",
+                        col.name, col.data_type, nullable, identity
+                    ));
+                }
+                return Some(format!(
+                    "```tsql\nCREATE TABLE {} ({}\n)\n```\n\n**Table** — {} column{}",
+                    table.name,
+                    cols,
+                    table.columns.len(),
+                    if table.columns.len() != 1 { "s" } else { "" }
+                ));
+            }
+            // プロシージャ情報を表示
+            if let Some(proc) = symbol_table.procedures.get(&upper) {
+                let mut params = String::new();
+                for p in &proc.parameters {
+                    let output = if p.is_output { " OUTPUT" } else { "" };
+                    params.push_str(&format!("\n  `{} {:?}{}`", p.name, p.data_type, output));
+                }
+                return Some(format!(
+                    "```tsql\nCREATE PROCEDURE {} ({}\n)\n```\n\n**Procedure** — {} parameter{}",
+                    proc.name,
+                    params,
+                    proc.parameters.len(),
+                    if proc.parameters.len() != 1 { "s" } else { "" }
+                ));
+            }
+            // ビュー情報を表示
+            if let Some(_view) = symbol_table.views.get(&upper) {
+                return Some(format!("**`{}`** — View", text));
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// トークンの種類に応じてHover内容を構築する（静的ドキュメント）
 fn build_hover_content(kind: &TokenKind, text: &str) -> Option<String> {
     let upper = text.to_uppercase();
 
@@ -730,5 +824,74 @@ mod tests {
         assert_eq!(range.start.line, 0);
         assert_eq!(range.start.character, 0);
         assert_eq!(range.end.character, 6);
+    }
+
+    #[test]
+    fn test_hover_table_shows_columns() {
+        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\nSELECT * FROM users";
+        let result = hover(
+            source,
+            Position {
+                line: 1,
+                character: 15,
+            },
+        );
+        assert!(result.is_some());
+        let h = result.unwrap();
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(mc.value.contains("users"));
+                assert!(mc.value.contains("id"));
+                assert!(mc.value.contains("name"));
+                assert!(mc.value.contains("Table"));
+            }
+            _ => panic!("Expected Markup content"),
+        }
+    }
+
+    #[test]
+    fn test_hover_variable_shows_type() {
+        let source = "DECLARE @count INT\nSET @count = 1";
+        let result = hover(
+            source,
+            Position {
+                line: 1,
+                character: 5,
+            },
+        );
+        assert!(result.is_some());
+        let h = result.unwrap();
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(mc.value.contains("@count"));
+                assert!(mc.value.contains("Int"));
+                assert!(mc.value.contains("Variable"));
+            }
+            _ => panic!("Expected Markup content"),
+        }
+    }
+
+    #[test]
+    fn test_hover_procedure_shows_params() {
+        let source =
+            "CREATE PROCEDURE my_proc @p1 INT, @p2 VARCHAR(50) OUTPUT AS BEGIN RETURN 1 END";
+        let result = hover(
+            source,
+            Position {
+                line: 0,
+                character: 18,
+            },
+        );
+        assert!(result.is_some());
+        let h = result.unwrap();
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(mc.value.contains("my_proc"));
+                assert!(mc.value.contains("@p1"));
+                assert!(mc.value.contains("@p2"));
+                assert!(mc.value.contains("Procedure"));
+            }
+            _ => panic!("Expected Markup content"),
+        }
     }
 }
