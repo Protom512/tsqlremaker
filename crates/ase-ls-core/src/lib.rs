@@ -17,6 +17,7 @@ pub mod hover;
 pub mod references;
 pub mod semantic_tokens;
 pub mod signature_help;
+pub mod symbol_table;
 pub mod symbols;
 
 pub use tsql_lexer::Lexer;
