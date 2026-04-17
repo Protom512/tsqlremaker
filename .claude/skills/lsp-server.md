@@ -19,14 +19,20 @@ ase-ls (tower-lsp サーバー)
   │
   └── ase-ls-core (LSP ロジック)
         │
-        ├── completion      → 補完候補生成
-        ├── diagnostics     → パースエラー → Diagnostic
-        ├── folding         → フォールディング範囲
-        ├── formatting      → SQLフォーマッティング（キーワード大文字化、改行）
-        ├── hover           → 型情報・ドキュメント表示
-        ├── semantic_tokens → セマンティックハイライト
-        ├── signature_help  → 関数シグネチャ・パラメータ表示
-        └── symbols         → ドキュメントシンボル
+        ├── code_actions      → DDLクイックフィックス（SELECT *展開、INSERT骨組み、TRY...CATCH）
+        ├── completion        → 補完候補生成
+        ├── definition        → Go to Definition（シンボルテーブル使用）
+        ├── diagnostics       → パースエラー → Diagnostic
+        ├── folding           → フォールディング範囲
+        ├── formatting        → SQLフォーマッティング（キーワード大文字化、改行）
+        ├── hover             → 型情報・スキーマ情報表示
+        ├── references        → Find References（トークンマッチング）
+        ├── rename            → シンボル一括リネーム
+        ├── semantic_tokens   → セマンティックハイライト
+        ├── signature_help    → 関数シグネチャ・パラメータ表示
+        ├── symbol_table      → ASTからのシンボル抽出基盤
+        ├── symbols           → ドキュメントシンボル
+        └── workspace_symbols → ワークスペース横断シンボル検索
               │
               └── tsql-parser → tsql-lexer → tsql-token
 ```
@@ -239,23 +245,27 @@ cargo clippy --all-targets -- -D warnings
 
 ### Phase 2 機能（実装済み）
 
-- [x] Hover（型情報・ドキュメント表示）
+- [x] Hover（型情報・スキーマ情報表示）
 - [x] Document Formatting（SQLフォーマッティング）
 - [x] Signature Help（関数シグネチャ表示）
 
-### 次世代機能（実装予定）
+### Phase 3 機能（実装済み）
 
-- [ ] Go to Definition（テーブル・プロシージャ定義へジャンプ）
-- [ ] Find References（テーブル・カラム参照箇所の検索）
-- [ ] Rename（一括リネーム）
-- [ ] Code Actions（クイックフィックス）
+- [x] Go to Definition（テーブル・プロシージャ・変数定義へジャンプ）
+- [x] Find References（テーブル・変数参照箇所の検索）
+- [x] Symbol Table Builder（ASTからのシンボル抽出基盤）
+
+### Phase 4 機能（実装済み）
+
+- [x] Workspace Symbols（ワークスペース横断シンボル検索）
+- [x] Code Actions（SELECT *展開、INSERT骨組み、TRY...CATCHラッパー）
+- [x] Rename（変数・テーブル・プロシージャの一括リネーム）
+
+### 将来機能（Phase 5+）
+
 - [ ] Document Links（URLリンク認識）
 - [ ] Code Lens（参照カウント表示等）
 - [ ] Inlay Hints（型注釈のインライン表示）
-
-### 高度な機能
-
-- [ ] Workspace Symbols（ワークスペース全体のシンボル検索）
 - [ ] Incremental Sync（差分ベースのドキュメント同期）
 - [ ] Configuration（ユーザー設定の変更）
 - [ ] Multi-root Workspace（複数ルート対応）
@@ -335,3 +345,91 @@ pub fn signature_help(source: &str, position: Position) -> Option<SignatureHelp>
 2. **ブロックコメント**: `Lexer::new(source).with_comments(true)` が必要
 3. **lsp-types 0.94**: `SignatureInformation.active_parameter` フィールドが必須
 4. **ServerCapabilities**: 各プロバイダーの型は lsp-types 0.94 の定義に合わせる
+
+---
+
+## Phase 4 実装パターン
+
+### Workspace Symbols 実装パターン
+
+```rust
+// workspace_symbols.rs - シンボルテーブルからクエリでフィルタリング
+
+pub fn workspace_symbols(source: &str, query: &str, uri: &Url) -> Vec<SymbolInformation> {
+    let table = SymbolTableBuilder::build_tolerant(source);
+    // 大文字小文字区別なしの部分一致
+    let query_upper = query.to_uppercase();
+
+    // 各シンボル種別（tables, procedures, views, indexes, variables）をスキャン
+    // #[allow(deprecated)] が必要（SymbolInformation.deprecated フィールド）
+}
+
+// tower-lsp 0.20 での戻り値型:
+// Result<Option<Vec<SymbolInformation>>>
+// （NOT WorkspaceSymbolResponse）
+```
+
+### Code Actions 実装パターン
+
+```rust
+// code_actions.rs - コンテキスト感知のクイックフィックス
+
+pub fn code_actions(source: &str, range: Range, uri: &Url) -> Vec<CodeActionOrCommand> {
+    // 1. カーソル行のテキストを取得
+    // 2. レジリエントシンボルテーブルを構築（不完全SQL対応）
+    // 3. パターンマッチでアクションを生成:
+    //    - "SELECT * FROM table" → カラム展開 (QUICKFIX)
+    //    - "INSERT INTO table" → VALUES骨組み (QUICKFIX)
+    //    - "BEGIN" → TRY...CATCH ラッパー (REFACTOR)
+}
+
+// レジリエントパース: 完全パース失敗時は前方から徐々に短くして再試行
+fn build_resilient_symbol_table(source: &str) -> SymbolTable {
+    let table = SymbolTableBuilder::build_tolerant(source);
+    if !table.tables.is_empty() { return table; }
+    // フォールバック: 行数を減らして再パース
+}
+```
+
+### Rename 実装パターン
+
+```rust
+// rename.rs - トークンレベルの全参照箇所をリネーム
+
+pub fn rename(source: &str, position: Position, new_name: &str, uri: &Url) -> Option<WorkspaceEdit> {
+    // 1. カーソル位置のトークンを特定
+    // 2. 大文字小文字区別なしで全トークンをスキャン
+    // 3. マッチした全箇所に TextEdit を生成
+    // 4. 重複除去（同じ位置の複数editを防止）
+}
+
+// バリデーション:
+// - 変数(@var)のリネーム: new_name は @ プレフィクス必須
+// - 空文字の new_name は拒否
+// - 空白位置でのリネームは None
+
+// lsp-types 0.94 の注意:
+// RenameParams.text_document_position （NOT text_document_position_params）
+```
+
+---
+
+## 新機能追加時のプロセス
+
+### 実装前チェック（必須）
+
+1. `.claude/rules/pre-implementation-checklist.md` に従う
+2. `.claude/rules/lsp-use-case-template.md` でシナリオを定義
+3. Parser対応状況を `.claude/rules/project-ast-types.md` の「未対応構文」で確認
+4. lsp-types 0.94 のAPI差異を `.claude/rules/dependency-version-compatibility.md` で確認
+
+### コミット粒度
+
+- 1機能 = 1コミット（モノリシックコミット禁止）
+- `.claude/rules/git-branch-strategy.md` に従う
+
+### テスト要件
+
+- 正常系2件以上 + エッジケース1件以上
+- テストモジュールに標準 #[allow] 3つを追加
+- server.rs のハンドラーにも統合テストを追加（将来）

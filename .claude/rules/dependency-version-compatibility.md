@@ -59,7 +59,7 @@ cargo check -p <new-crate>
 
 ### このプロジェクトのクレート依存関係
 
-```
+```text
 ase-ls (tower-lsp 0.20, lsp-types 0.94)
   └── ase-ls-core (lsp-types 0.94)
         └── tsql-parser
@@ -110,6 +110,55 @@ SemanticTokens { result_id: None, data: tokens }.into()
 DocumentSymbol {
     // ...
     deprecated: None,   // ← #[allow(deprecated)] が必要
+};
+```
+
+### RenameParams フィールド名
+
+```rust
+// 0.94: text_document_position （NOT text_document_position_params）
+pub struct RenameParams {
+    pub text_document_position: TextDocumentPositionParams,  // ← 0.94
+    // 他バージョンでは text_document_position_params の場合がある
+    pub new_name: String,
+}
+
+// ✅ 0.94 でのアクセス
+let uri = params.text_document_position.text_document.uri;
+let pos = params.text_document_position.position;
+
+// ❌ よくある間違い（コンパイルエラー）
+let uri = params.text_document_position_params.text_document.uri;
+```
+
+### tower-lsp 0.20 の symbol() 戻り値
+
+```rust
+// tower-lsp 0.20: Result<Option<Vec<SymbolInformation>>>
+// （NOT Result<Option<WorkspaceSymbolResponse>>）
+async fn symbol(&self, params: WorkspaceSymbolParams)
+    -> Result<Option<Vec<SymbolInformation>>>
+{
+    // ✅ Vec<SymbolInformation> を直接返す
+    Ok(Some(symbols))
+
+    // ❌ WorkspaceSymbolResponse で包まない
+    // Ok(Some(WorkspaceSymbolResponse::Flat(symbols)))
+}
+```
+
+### SymbolInformation.deprecated フィールド
+
+```rust
+// 0.94: deprecated フィールドに #[allow(deprecated)] が必要
+#[allow(deprecated)]
+let info = SymbolInformation {
+    name: sym.name.clone(),
+    kind: SymbolKind::CLASS,
+    tags: None,
+    deprecated: None,   // ← #[allow(deprecated)] が関数に必要
+    location: Location { uri: uri.clone(), range: sym.range },
+    container_name: None,
 };
 ```
 
