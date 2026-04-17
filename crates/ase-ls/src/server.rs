@@ -3,8 +3,8 @@
 //! tower-lsp を使用した Language Server のハンドラー実装。
 
 use ase_ls_core::{
-    completion, definition, diagnostics, folding, formatting, hover, references, semantic_tokens,
-    signature_help, symbols,
+    code_actions, completion, definition, diagnostics, folding, formatting, hover, references,
+    rename, semantic_tokens, signature_help, symbols, workspace_symbols,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -115,6 +115,9 @@ impl LanguageServer for AseLanguageServer {
                 ),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
+                workspace_symbol_provider: Some(OneOf::Left(true)),
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+                rename_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -338,6 +341,57 @@ impl LanguageServer for AseLanguageServer {
             }
         } else {
             Ok(None)
+        }
+    }
+
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        let uri = params.text_document.uri;
+        let docs = self.documents.read().await;
+        if let Some(source) = docs.get(uri.as_str()) {
+            let actions = code_actions::code_actions(source, params.range, &uri);
+            if actions.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(actions))
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let uri = params.text_document_position.text_document.uri;
+        let docs = self.documents.read().await;
+        if let Some(source) = docs.get(uri.as_str()) {
+            Ok(rename::rename(
+                source,
+                params.text_document_position.position,
+                &params.new_name,
+                &uri,
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> Result<Option<Vec<SymbolInformation>>> {
+        let docs = self.documents.read().await;
+        let mut all_symbols = Vec::new();
+
+        for (uri_str, source) in &docs.docs {
+            if let Ok(uri) = Url::parse(uri_str) {
+                let symbols = workspace_symbols::workspace_symbols(source, &params.query, &uri);
+                all_symbols.extend(symbols);
+            }
+        }
+
+        if all_symbols.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(all_symbols))
         }
     }
 }

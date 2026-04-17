@@ -6,7 +6,7 @@
 //! - プロシージャ: CREATE PROCEDURE + EXEC呼び出し
 //! - ビュー: CREATE VIEW + SELECT内の参照
 
-use crate::{find_token_at, offset_to_position, position_to_offset};
+use crate::{find_token_at, offset_to_position, position_to_offset, token_matches_symbol};
 use lsp_types::{Position, Range};
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
@@ -33,29 +33,7 @@ pub fn reference_ranges(source: &str, position: Position, include_declaration: b
             Err(_) => continue,
         };
 
-        let matches = if is_var {
-            token.kind == TokenKind::LocalVar && token.text.to_uppercase() == search_name
-        } else {
-            (token.kind == TokenKind::Ident
-                || matches!(
-                    token.kind,
-                    TokenKind::Select
-                        | TokenKind::From
-                        | TokenKind::Insert
-                        | TokenKind::Update
-                        | TokenKind::Delete
-                        | TokenKind::Create
-                        | TokenKind::Exec
-                        | TokenKind::Procedure
-                        | TokenKind::Table
-                        | TokenKind::View
-                        | TokenKind::Index
-                )
-                || token.kind.is_keyword())
-                && token.text.to_uppercase() == search_name
-        };
-
-        if matches {
+        if token_matches_symbol(token.kind, token.text, &search_name, is_var) {
             let range = token_span_to_range(source, &token);
 
             // 定義箇所の判定
