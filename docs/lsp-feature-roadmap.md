@@ -25,7 +25,7 @@ DB系Language Serverのデファクトスタンダードに基づく機能ロー
 | 機能 | LSP メソッド | 状態 | DDLでの価値 |
 |------|-------------|------|------------|
 | Go to Definition | `textDocument/definition` | ✅ 完了 | テーブル参照→CREATE TABLE定義へジャンプ。プロシージャ呼び出し→定義へジャンプ。変数使用→DECLAREへジャンプ |
-| Find References | `textDocument/references` | 高 | テーブル名/列名/プロシージャ名の全出現箇所を検索。DDL変更前の影響分析に必須 |
+| Find References | `textDocument/references` | ✅ 完了 | テーブル名/列名/プロシージャ名の全出現箇所を検索。DDL変更前の影響分析に必須 |
 | Symbol Table Builder | 内部基盤 | ✅ 完了 | ASTからテーブル/プロシージャ/ビュー/インデックス/変数のシンボル情報を抽出 |
 | Schema-aware Hover | `textDocument/hover` | ✅ 完了 | テーブル名ホバーでカラム情報、変数ホバーで型情報を表示 |
 

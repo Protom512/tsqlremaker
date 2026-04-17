@@ -175,6 +175,7 @@ pub fn signature_help(source: &str, position: Position) -> Option<SignatureHelp>
                 if paren_depth == 0 {
                     found_open_paren = false;
                     func_name = None;
+                    active_param = 0;
                 }
             }
             TokenKind::Comma => {
@@ -341,5 +342,24 @@ mod tests {
         let help = result.unwrap();
         assert!(help.signatures[0].label.contains("ISNULL"));
         assert_eq!(help.active_parameter, Some(1));
+    }
+
+    #[test]
+    fn test_signature_help_sibling_calls_resets_param() {
+        // After ISNULL(a, b), the next call SUBSTRING(x should be at param 0
+        // Without the fix, active_param would accumulate from the previous call
+        let source = "SELECT ISNULL(a, b), SUBSTRING(x";
+        let result = signature_help(
+            source,
+            Position {
+                line: 0,
+                character: source.len() as u32,
+            },
+        );
+        assert!(result.is_some());
+        let help = result.unwrap();
+        assert!(help.signatures[0].label.contains("SUBSTRING"));
+        // Should be param 0 (first arg), NOT accumulated from ISNULL
+        assert_eq!(help.active_parameter, Some(0));
     }
 }

@@ -738,7 +738,7 @@ GO
 - [ ] `SymbolTable` 構造体の実装
 - [ ] `SymbolTableBuilder` の実装
 - [ ] AST Visitor パターンの実装
-- [ ] 基本単体テーブル
+- [ ] 基本単体テスト
 
 ### 3.2 Go to Definition (3日)
 

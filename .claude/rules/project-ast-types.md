@@ -21,7 +21,7 @@ impl<'a> Parser<'a> {
 }
 ```
 
-### Statement 列挙型（17 variants）
+### Statement 列挙型（19 variants）
 
 ```rust
 // crates/tsql-parser/src/ast/mod.rs
@@ -273,6 +273,46 @@ use tsql_parser::ast::expression::Identifier;    // private!
 
 ---
 
+## Parser 未対応構文（2026-04-17 現在）
+
+以下のSQL構文はParserが対応しておらず、パースエラーになる。LSP機能の設計時に考慮すること。
+
+### DDL 未対応
+
+| 構文 | 影響 | ワークアラウンド |
+|------|------|-----------------|
+| `CREATE UNIQUE INDEX` | インデックス定義がパースエラー | `CREATE INDEX` として処理（UNIQUE は無視） |
+| `ALTER TABLE` | テーブル変更がパースエラー | 対象外として graceful に処理 |
+| `CREATE TRIGGER` | トリガー定義がパースエラー | CreateStatement に Trigger variant なし |
+| `CREATE DEFAULT` | ASE固有オブジェクトがパースエラー | 対象外 |
+| `CREATE RULE` | ASE固有オブジェクトがパースエラー | 対象外 |
+| `GRANT` / `REVOKE` | 権限制御がパースエラー | 対象外 |
+
+### DML/DCL 未対応
+
+| 構文 | 影響 | ワークアラウンド |
+|------|------|-----------------|
+| `EXEC` / `EXECUTE` | プロシージャ呼び出しがパースエラー | トークンレベルで処理（シンボルテーブル不使用） |
+| `DISK INIT` | ASEディスク管理がパースエラー | 対象外 |
+| `LOAD DATABASE` / `DUMP DATABASE` | バックアップ系がパースエラー | 対象外 |
+
+### LSP機能への影響
+
+- **Diagnostics**: 未対応構文はパースエラーとして報告される（現状許容）
+- **Symbol Table**: `build_tolerant()` で未対応構文を含むバッチはスキップ
+- **Definition/References**: 未対応構文内の識別子は追跡不可
+- **Code Actions**: 未対応構文に対するQuick Fixは生成不可
+- **Hover**: トークンレベルのHoverは機能する（パース不要のため）
+
+### 今後の拡張優先度
+
+1. `CREATE UNIQUE INDEX` — 使用頻度高、対応コスト低
+2. `ALTER TABLE` — DDL開発で頻出
+3. `EXEC` / `EXECUTE` — プロシージャ呼び出しの追跡に必須
+4. `CREATE TRIGGER` — ASE開発で一般的
+
+---
+
 ## チェックリスト
 
 外部 crate の型を使用する際:
@@ -283,3 +323,4 @@ use tsql_parser::ast::expression::Identifier;    // private!
 - [ ] `Box<T>` と `T` の違いを確認した
 - [ ] `Display` トレイトが実装されているか確認した
 - [ ] モジュールの可視性を確認した（private サブモジュールにアクセスしていないか）
+- [ ] 対象SQL構文がParser対応済みか確認した（未対応構文リストを参照）

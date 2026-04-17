@@ -36,7 +36,7 @@ pub fn code_actions(source: &str, range: Range, uri: &lsp_types::Url) -> Vec<Cod
     }
 
     // BEGIN → TRY...CATCH ラッパー
-    if let Some(action) = try_wrap_try_catch(&line_text, range.start, uri) {
+    if let Some(action) = try_wrap_try_catch(source, &line_text, range.start, uri) {
         actions.push(CodeActionOrCommand::CodeAction(action));
     }
 
@@ -211,7 +211,11 @@ fn try_generate_insert_skeleton(
 }
 
 /// BEGIN → TRY...CATCH ラッパー
+///
+/// カーソル位置のBEGINに対応するENDを見つけ、全体をTRY...CATCHでラップする。
+/// 対応するENDが見つからない場合はNoneを返す。
 fn try_wrap_try_catch(
+    source: &str,
     line_text: &str,
     position: Position,
     uri: &lsp_types::Url,
@@ -221,13 +225,17 @@ fn try_wrap_try_catch(
         return None;
     }
 
+    // 対応するENDを見つける（ネストしたBEGIN...ENDを正しく追跡）
+    let end_line = find_matching_end(source, position.line)?;
+
     let indent = line_text.len() - line_text.trim_start().len();
     let indent_str = &line_text[..indent];
 
-    // BEGIN を TRY...CATCH ラッパーに置換
-    let new_text = format!(
-        "BEGIN TRY\n{indent_str}    BEGIN\n{indent_str}    END\n{indent_str}END TRY\n{indent_str}BEGIN CATCH\n{indent_str}    -- Handle error\n{indent_str}END CATCH"
-    );
+    // BEGIN...END全体をTRY...CATCHでラップするテキストを生成
+    let begin_text = format!("{indent_str}BEGIN TRY\n{indent_str}    BEGIN");
+    let end_text = format!("{indent_str}    END\n{indent_str}END TRY\n{indent_str}BEGIN CATCH\n{indent_str}    -- Handle error\n{indent_str}END CATCH");
+
+    let new_text = format!("{begin_text}\n{end_text}");
 
     let edit = make_text_edit(
         uri,
@@ -237,8 +245,8 @@ fn try_wrap_try_catch(
                 character: 0,
             },
             end: Position {
-                line: position.line,
-                character: line_text.len() as u32,
+                line: end_line,
+                character: source.lines().nth(end_line as usize)?.len() as u32,
             },
         },
         new_text,
@@ -254,6 +262,30 @@ fn try_wrap_try_catch(
         disabled: None,
         data: None,
     })
+}
+
+/// 指定行のBEGINに対応するEND行を見つける
+fn find_matching_end(source: &str, begin_line: u32) -> Option<u32> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut depth = 1u32;
+    let start = (begin_line + 1) as usize;
+
+    for (line_idx, line) in lines.iter().enumerate().skip(start) {
+        let trimmed = line.trim().to_uppercase();
+        let words: Vec<&str> = trimmed.split_whitespace().collect();
+        for word in &words {
+            if *word == "BEGIN" {
+                depth += 1;
+            } else if *word == "END" {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(line_idx as u32);
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// 指定行のテキストを取得する
@@ -386,7 +418,58 @@ mod tests {
             let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
             assert!(text_edit.new_text.contains("BEGIN TRY"));
             assert!(text_edit.new_text.contains("BEGIN CATCH"));
+            // Range covers BEGIN (line 1) through END (line 3)
+            assert_eq!(text_edit.range.start.line, 1);
+            assert_eq!(text_edit.range.end.line, 3);
         }
+    }
+
+    #[test]
+    fn test_wrap_try_catch_nested_begin_end() {
+        let source = "BEGIN\n    BEGIN\n        SELECT 1\n    END\nEND";
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 5,
+            },
+        };
+        let actions = code_actions(source, range, &test_uri());
+        let try_catch = actions
+            .iter()
+            .find(|a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("TRY")));
+        assert!(try_catch.is_some());
+        if let CodeActionOrCommand::CodeAction(ca) = try_catch.unwrap() {
+            let edit = ca.edit.as_ref().unwrap();
+            let changes = edit.changes.as_ref().unwrap();
+            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
+            // Should match outer BEGIN (line 0) with outer END (line 4)
+            assert_eq!(text_edit.range.start.line, 0);
+            assert_eq!(text_edit.range.end.line, 4);
+        }
+    }
+
+    #[test]
+    fn test_wrap_try_catch_no_matching_end() {
+        let source = "BEGIN\n    SELECT 1";
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 5,
+            },
+        };
+        let actions = code_actions(source, range, &test_uri());
+        let try_catch = actions
+            .iter()
+            .find(|a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("TRY")));
+        assert!(try_catch.is_none());
     }
 
     #[test]
