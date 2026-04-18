@@ -21,7 +21,7 @@ pub struct AseLanguageServer {
 /// メモリ上のドキュメント管理
 struct DocumentStore {
     /// URI → ドキュメントテキスト
-    docs: std::collections::HashMap<String, String>,
+    docs: std::collections::HashMap<String, Arc<str>>,
 }
 
 impl DocumentStore {
@@ -32,19 +32,15 @@ impl DocumentStore {
     }
 
     fn open(&mut self, uri: &str, text: &str) {
-        self.docs.insert(uri.to_string(), text.to_string());
+        self.docs.insert(uri.to_string(), Arc::from(text));
     }
 
     fn update(&mut self, uri: &str, text: &str) {
-        self.docs.insert(uri.to_string(), text.to_string());
+        self.docs.insert(uri.to_string(), Arc::from(text));
     }
 
     fn close(&mut self, uri: &str) {
         self.docs.remove(uri);
-    }
-
-    fn get(&self, uri: &str) -> Option<&str> {
-        self.docs.get(uri).map(String::as_str)
     }
 }
 
@@ -69,10 +65,11 @@ impl AseLanguageServer {
     /// URIに対応するドキュメントのソーステキストを取得する
     ///
     /// 全ハンドラーで共通する「ドキュメント取得」パターンを集約するヘルパー。
+    /// Arc<str>によりコピーコストを最小化しつつ、RwLockの保持期間を最短にする。
     /// 存在しない場合は None を返す。
-    async fn get_source(&self, uri: &Url) -> Option<String> {
+    async fn get_source(&self, uri: &Url) -> Option<Arc<str>> {
         let docs = self.documents.read().await;
-        docs.get(uri.as_str()).map(String::from)
+        docs.docs.get(uri.as_str()).cloned()
     }
 }
 
