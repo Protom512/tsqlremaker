@@ -25,19 +25,19 @@ pub(crate) fn build_function_snippet(name: &str, params: &[&str]) -> String {
     format!("{name}({})", placeholders.join(", "))
 }
 
-/// syntax文字列がカンマ区切り以外の構文（CAST等）かどうかを判定する
+/// syntax文字列がカンマ区切りの括弧構文かどうかを判定する
 ///
-/// カンマ区切りではない関数（`CAST(expr AS type)`等）は
-/// snippetプレースホルダー生成に適さないためPLAIN_TEXTで返す。
+/// カンマ区切りではない関数（`CAST(expr AS type)`等）や
+/// 括弧なしの関数（`IDENTITY`等）はsnippetプレースホルダー生成に
+/// 適さないためfalseを返す。
 fn is_comma_separated_syntax(syntax: &str) -> bool {
-    // AS キーワードが括弧内にある場合、カンマ区切りではない
-    if let Some(open) = syntax.find('(') {
-        if let Some(close) = syntax.rfind(')') {
+    if let (Some(open), Some(close)) = (syntax.find('('), syntax.rfind(')')) {
+        if open < close {
             let inner = &syntax[open + 1..close];
             return !inner.contains(" AS ");
         }
     }
-    true
+    false
 }
 
 /// 全ての補完候補を返す（MVP: コンテキスト非依存）
@@ -278,5 +278,32 @@ mod tests {
         assert!(is_comma_separated_syntax("SUBSTRING(expression, start, length)"));
         assert!(is_comma_separated_syntax("GETDATE()"));
         assert!(!is_comma_separated_syntax("CAST(expression AS type)"));
+        assert!(!is_comma_separated_syntax("IDENTITY")); // no parens
+    }
+
+    #[test]
+    fn test_identity_no_empty_parens() {
+        let response = complete_all();
+        match response {
+            CompletionResponse::List(list) => {
+                let identity = list
+                    .items
+                    .iter()
+                    .find(|i| i.label == "IDENTITY" && i.kind == Some(CompletionItemKind::FUNCTION));
+                assert!(identity.is_some(), "IDENTITY function should exist");
+                let item = identity.unwrap();
+                assert_eq!(
+                    item.insert_text_format,
+                    Some(InsertTextFormat::PLAIN_TEXT),
+                    "IDENTITY should use PLAIN_TEXT"
+                );
+                let text = item.insert_text.as_ref().unwrap();
+                assert!(
+                    !text.ends_with("()"),
+                    "IDENTITY should not have empty parens, got: {text}"
+                );
+            }
+            _ => panic!("Expected List response"),
+        }
     }
 }
