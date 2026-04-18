@@ -22,7 +22,7 @@ pub fn code_actions(source: &str, range: Range, uri: &lsp_types::Url) -> Vec<Cod
     }
 
     // シンボルテーブルを構築（現在行より前の部分も試行）
-    let symbol_table = build_resilient_symbol_table(source);
+    let symbol_table = build_fallback_symbol_table(source);
 
     // SELECT * FROM table → カラム展開
     if let Some(action) = try_expand_select_star(&symbol_table, &line_text, range.start, uri) {
@@ -43,11 +43,11 @@ pub fn code_actions(source: &str, range: Range, uri: &lsp_types::Url) -> Vec<Cod
     actions
 }
 
-/// レジリエントなシンボルテーブル構築
+/// フォールバック付きシンボルテーブル構築
 ///
 /// 完全なパースに失敗した場合、ソースを行ごとに分割して
 /// 前方部分だけをパースし、DDL定義を抽出する。
-fn build_resilient_symbol_table(source: &str) -> crate::symbol_table::SymbolTable {
+fn build_fallback_symbol_table(source: &str) -> crate::symbol_table::SymbolTable {
     let table = SymbolTableBuilder::build_tolerant(source);
     if !table.tables.is_empty() {
         return table;
