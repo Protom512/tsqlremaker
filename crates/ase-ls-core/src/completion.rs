@@ -4,6 +4,46 @@
 
 use lsp_types::{CompletionItem, CompletionItemKind, CompletionList, CompletionResponse};
 
+/// Convert function syntax to LSP snippet format with parameter placeholders
+///
+/// # Examples
+/// - `SUBSTRING(expression, start, length)` → `SUBSTRING(${1:expression}, ${2:start}, ${3:length})`
+/// - `GETDATE()` → `GETDATE()`
+/// - `CONVERT(type, expression)` → `CONVERT(${1:type}, ${2:expression})`
+pub(crate) fn build_function_snippet(syntax: &str) -> String {
+    // Find the opening paren
+    let paren_pos = match syntax.find('(') {
+        Some(p) => p,
+        None => return syntax.to_string(),
+    };
+
+    let func_name = &syntax[..=paren_pos]; // includes "("
+    let rest = &syntax[paren_pos + 1..];
+
+    // Find closing paren
+    let close_pos = match rest.rfind(')') {
+        Some(p) => p,
+        None => return syntax.to_string(),
+    };
+
+    let params_str = &rest[..close_pos];
+
+    // If no params, return as-is
+    if params_str.trim().is_empty() {
+        return syntax.to_string();
+    }
+
+    // Split by comma and create numbered placeholders
+    let params: Vec<&str> = params_str.split(',').collect();
+    let snippet_params: Vec<String> = params
+        .iter()
+        .enumerate()
+        .map(|(i, p)| format!("${{{}:{}}}", i + 1, p.trim()))
+        .collect();
+
+    format!("{}{})", func_name, snippet_params.join(", "))
+}
+
 /// 全ての補完候補を返す（MVP: コンテキスト非依存）
 pub fn complete_all() -> CompletionResponse {
     let mut items = Vec::new();
@@ -28,14 +68,15 @@ pub fn complete_all() -> CompletionResponse {
         });
     }
 
-    // Functions from db_docs
+    // Functions from db_docs — snippet format with parameter placeholders
     for entry in crate::db_docs::functions() {
+        let snippet = build_function_snippet(entry.syntax);
         items.push(CompletionItem {
             label: entry.name.to_string(),
             kind: Some(CompletionItemKind::FUNCTION),
             detail: Some(format!("{} — {}", entry.syntax, entry.description)),
-            insert_text: Some(entry.syntax.to_string()),
-            insert_text_format: Some(lsp_types::InsertTextFormat::PLAIN_TEXT),
+            insert_text: Some(snippet),
+            insert_text_format: Some(lsp_types::InsertTextFormat::SNIPPET),
             ..CompletionItem::default()
         });
     }
@@ -69,6 +110,7 @@ pub fn complete_keywords() -> CompletionResponse {
 #[allow(clippy::panic)]
 mod tests {
     use super::*;
+    use lsp_types::InsertTextFormat;
 
     #[test]
     fn test_complete_all_has_items() {
@@ -135,6 +177,48 @@ mod tests {
             }
             _ => panic!("Expected List response"),
         }
+    }
+
+    #[test]
+    fn test_function_snippet_format() {
+        let response = complete_all();
+        match response {
+            CompletionResponse::List(list) => {
+                let substring = list.items.iter().find(|i| i.label == "SUBSTRING");
+                assert!(substring.is_some());
+                let item = substring.unwrap();
+                assert_eq!(item.insert_text_format, Some(InsertTextFormat::SNIPPET));
+                // Should have placeholder syntax
+                let insert = item.insert_text.as_ref().unwrap();
+                assert!(
+                    insert.contains("${1:"),
+                    "Expected snippet placeholder, got: {}",
+                    insert
+                );
+            }
+            _ => panic!("Expected List response"),
+        }
+    }
+
+    #[test]
+    fn test_build_snippet_with_params() {
+        let result = build_function_snippet("SUBSTRING(expression, start, length)");
+        assert_eq!(
+            result,
+            "SUBSTRING(${1:expression}, ${2:start}, ${3:length})"
+        );
+    }
+
+    #[test]
+    fn test_build_snippet_no_params() {
+        let result = build_function_snippet("GETDATE()");
+        assert_eq!(result, "GETDATE()");
+    }
+
+    #[test]
+    fn test_build_snippet_single_param() {
+        let result = build_function_snippet("COUNT(expression)");
+        assert_eq!(result, "COUNT(${1:expression})");
     }
 
     #[test]
