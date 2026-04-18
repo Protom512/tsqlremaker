@@ -31,7 +31,7 @@ pub fn rename(
     if is_var && !new_name.starts_with('@') {
         return None;
     }
-    if new_name.is_empty() {
+    if new_name.is_empty() || new_name.trim().is_empty() {
         return None;
     }
 
@@ -184,6 +184,21 @@ mod tests {
                 character: 14,
             },
             "",
+            &test_uri(),
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_rename_whitespace_only_fails() {
+        let source = "CREATE TABLE users (id INT)";
+        let result = rename(
+            source,
+            Position {
+                line: 0,
+                character: 14,
+            },
+            "   ",
             &test_uri(),
         );
         assert!(result.is_none());

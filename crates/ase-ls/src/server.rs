@@ -163,8 +163,14 @@ impl LanguageServer for AseLanguageServer {
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
-        let mut docs = self.documents.write().await;
-        docs.close(uri.as_str());
+        {
+            let mut docs = self.documents.write().await;
+            docs.close(uri.as_str());
+        }
+        // ドキュメントクローズ時に診断をクリア
+        self.client
+            .publish_diagnostics(uri.clone(), Vec::new(), None)
+            .await;
     }
 
     async fn completion(&self, _: CompletionParams) -> Result<Option<CompletionResponse>> {
