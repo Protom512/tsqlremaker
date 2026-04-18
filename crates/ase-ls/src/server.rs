@@ -58,13 +58,21 @@ impl AseLanguageServer {
 
     /// ドキュメントの診断情報をパブリッシュする
     async fn publish_diagnostics_for(&self, uri: &Url) {
-        let docs = self.documents.read().await;
-        if let Some(source) = docs.get(uri.as_str()) {
-            let diags = diagnostics::diagnose_source(source);
+        if let Some(source) = self.get_source(uri).await {
+            let diags = diagnostics::diagnose_source(&source);
             self.client
                 .publish_diagnostics(uri.clone(), diags, None)
                 .await;
         }
+    }
+
+    /// URIに対応するドキュメントのソーステキストを取得する
+    ///
+    /// 全ハンドラーで共通する「ドキュメント取得」パターンを集約するヘルパー。
+    /// 存在しない場合は None を返す。
+    async fn get_source(&self, uri: &Url) -> Option<String> {
+        let docs = self.documents.read().await;
+        docs.get(uri.as_str()).map(String::from)
     }
 }
 
@@ -183,18 +191,18 @@ impl LanguageServer for AseLanguageServer {
         &self,
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
-        let docs = self.documents.read().await;
-        if let Some(source) = docs.get(params.text_document.uri.as_str()) {
-            Ok(symbols::document_symbols(source))
+        let uri = &params.text_document.uri;
+        if let Some(source) = self.get_source(uri).await {
+            Ok(symbols::document_symbols(&source))
         } else {
             Ok(None)
         }
     }
 
     async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
-        let docs = self.documents.read().await;
-        if let Some(source) = docs.get(params.text_document.uri.as_str()) {
-            Ok(Some(folding::folding_ranges(source)))
+        let uri = &params.text_document.uri;
+        if let Some(source) = self.get_source(uri).await {
+            Ok(Some(folding::folding_ranges(&source)))
         } else {
             Ok(Some(Vec::new()))
         }
@@ -204,9 +212,9 @@ impl LanguageServer for AseLanguageServer {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        let docs = self.documents.read().await;
-        if let Some(source) = docs.get(params.text_document.uri.as_str()) {
-            Ok(Some(semantic_tokens::semantic_tokens_full(source)))
+        let uri = &params.text_document.uri;
+        if let Some(source) = self.get_source(uri).await {
+            Ok(Some(semantic_tokens::semantic_tokens_full(&source)))
         } else {
             Ok(None)
         }
@@ -216,9 +224,9 @@ impl LanguageServer for AseLanguageServer {
         &self,
         params: SemanticTokensRangeParams,
     ) -> Result<Option<SemanticTokensRangeResult>> {
-        let docs = self.documents.read().await;
-        if let Some(source) = docs.get(params.text_document.uri.as_str()) {
-            let result = semantic_tokens::semantic_tokens_full(source);
+        let uri = &params.text_document.uri;
+        if let Some(source) = self.get_source(uri).await {
+            let result = semantic_tokens::semantic_tokens_full(&source);
             match result {
                 SemanticTokensResult::Tokens(tokens) => {
                     Ok(Some(SemanticTokensRangeResult::Tokens(tokens)))
@@ -231,16 +239,10 @@ impl LanguageServer for AseLanguageServer {
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        let docs = self.documents.read().await;
-        if let Some(source) = docs.get(
-            params
-                .text_document_position_params
-                .text_document
-                .uri
-                .as_str(),
-        ) {
+        let uri = &params.text_document_position_params.text_document.uri;
+        if let Some(source) = self.get_source(uri).await {
             Ok(hover::hover(
-                source,
+                &source,
                 params.text_document_position_params.position,
             ))
         } else {
@@ -249,9 +251,9 @@ impl LanguageServer for AseLanguageServer {
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
-        let docs = self.documents.read().await;
-        if let Some(source) = docs.get(params.text_document.uri.as_str()) {
-            let edits = formatting::format(source);
+        let uri = &params.text_document.uri;
+        if let Some(source) = self.get_source(uri).await {
+            let edits = formatting::format(&source);
             if edits.is_empty() {
                 Ok(None)
             } else {
@@ -266,9 +268,9 @@ impl LanguageServer for AseLanguageServer {
         &self,
         params: DocumentRangeFormattingParams,
     ) -> Result<Option<Vec<TextEdit>>> {
-        let docs = self.documents.read().await;
-        if let Some(source) = docs.get(params.text_document.uri.as_str()) {
-            let edits = formatting::format(source);
+        let uri = &params.text_document.uri;
+        if let Some(source) = self.get_source(uri).await {
+            let edits = formatting::format(&source);
             if edits.is_empty() {
                 Ok(None)
             } else {
@@ -280,16 +282,10 @@ impl LanguageServer for AseLanguageServer {
     }
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
-        let docs = self.documents.read().await;
-        if let Some(source) = docs.get(
-            params
-                .text_document_position_params
-                .text_document
-                .uri
-                .as_str(),
-        ) {
+        let uri = &params.text_document_position_params.text_document.uri;
+        if let Some(source) = self.get_source(uri).await {
             Ok(signature_help::signature_help(
-                source,
+                &source,
                 params.text_document_position_params.position,
             ))
         } else {
@@ -301,11 +297,10 @@ impl LanguageServer for AseLanguageServer {
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
-        let uri = params.text_document_position_params.text_document.uri;
-        let docs = self.documents.read().await;
-        if let Some(source) = docs.get(uri.as_str()) {
+        let uri = &params.text_document_position_params.text_document.uri;
+        if let Some(source) = self.get_source(uri).await {
             let ranges = definition::definition_ranges(
-                source,
+                &source,
                 params.text_document_position_params.position,
             );
             if ranges.is_empty() {
@@ -326,11 +321,10 @@ impl LanguageServer for AseLanguageServer {
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
-        let uri = params.text_document_position.text_document.uri;
-        let docs = self.documents.read().await;
-        if let Some(source) = docs.get(uri.as_str()) {
+        let uri = &params.text_document_position.text_document.uri;
+        if let Some(source) = self.get_source(uri).await {
             let ranges = references::reference_ranges(
-                source,
+                &source,
                 params.text_document_position.position,
                 params.context.include_declaration,
             );
@@ -352,10 +346,9 @@ impl LanguageServer for AseLanguageServer {
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
-        let uri = params.text_document.uri;
-        let docs = self.documents.read().await;
-        if let Some(source) = docs.get(uri.as_str()) {
-            let actions = code_actions::code_actions(source, params.range, &uri);
+        let uri = &params.text_document.uri;
+        if let Some(source) = self.get_source(uri).await {
+            let actions = code_actions::code_actions(&source, params.range, uri);
             if actions.is_empty() {
                 Ok(None)
             } else {
@@ -367,14 +360,13 @@ impl LanguageServer for AseLanguageServer {
     }
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
-        let uri = params.text_document_position.text_document.uri;
-        let docs = self.documents.read().await;
-        if let Some(source) = docs.get(uri.as_str()) {
+        let uri = &params.text_document_position.text_document.uri;
+        if let Some(source) = self.get_source(uri).await {
             Ok(rename::rename(
-                source,
+                &source,
                 params.text_document_position.position,
                 &params.new_name,
-                &uri,
+                uri,
             ))
         } else {
             Ok(None)
