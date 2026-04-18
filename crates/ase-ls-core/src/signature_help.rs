@@ -6,135 +6,8 @@ use crate::position_to_offset;
 use lsp_types::{
     ParameterInformation, ParameterLabel, Position, SignatureHelp, SignatureInformation,
 };
-use once_cell::sync::Lazy;
-use std::collections::HashMap;
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
-
-/// 関数シグネチャ定義
-struct FunctionSignature {
-    label: &'static str,
-    documentation: &'static str,
-    params: Vec<&'static str>,
-}
-
-/// 関数シグネチャデータベース
-static SIGNATURES: Lazy<HashMap<&str, FunctionSignature>> = Lazy::new(|| {
-    let sigs: Vec<FunctionSignature> = vec![
-        FunctionSignature {
-            label: "SUBSTRING(expression, start, length)",
-            documentation: "Extracts a substring from a string expression",
-            params: vec!["expression", "start", "length"],
-        },
-        FunctionSignature {
-            label: "CHAR_LENGTH(expression)",
-            documentation: "Returns the length of a string in characters",
-            params: vec!["expression"],
-        },
-        FunctionSignature {
-            label: "UPPER(expression)",
-            documentation: "Converts a string to uppercase",
-            params: vec!["expression"],
-        },
-        FunctionSignature {
-            label: "LOWER(expression)",
-            documentation: "Converts a string to lowercase",
-            params: vec!["expression"],
-        },
-        FunctionSignature {
-            label: "LTRIM(expression)",
-            documentation: "Removes leading spaces",
-            params: vec!["expression"],
-        },
-        FunctionSignature {
-            label: "RTRIM(expression)",
-            documentation: "Removes trailing spaces",
-            params: vec!["expression"],
-        },
-        FunctionSignature {
-            label: "CONVERT(type, expression[, style])",
-            documentation: "Converts an expression to the specified data type",
-            params: vec!["type", "expression", "style"],
-        },
-        FunctionSignature {
-            label: "CAST(expression AS type)",
-            documentation: "Converts an expression to the specified data type",
-            params: vec!["expression", "type"],
-        },
-        FunctionSignature {
-            label: "DATEADD(unit, number, date)",
-            documentation: "Adds an interval to a date",
-            params: vec!["unit", "number", "date"],
-        },
-        FunctionSignature {
-            label: "DATEDIFF(unit, date1, date2)",
-            documentation: "Returns the difference between two dates",
-            params: vec!["unit", "date1", "date2"],
-        },
-        FunctionSignature {
-            label: "DATEPART(unit, date)",
-            documentation: "Extracts a part of a date as an integer",
-            params: vec!["unit", "date"],
-        },
-        FunctionSignature {
-            label: "ISNULL(expression, replacement)",
-            documentation: "Replaces NULL with the specified replacement value",
-            params: vec!["expression", "replacement"],
-        },
-        FunctionSignature {
-            label: "COALESCE(expr1, expr2, ...)",
-            documentation: "Returns the first non-NULL expression",
-            params: vec!["expr1", "expr2", "..."],
-        },
-        FunctionSignature {
-            label: "COUNT([DISTINCT] expression | *)",
-            documentation: "Returns the number of rows",
-            params: vec!["expression"],
-        },
-        FunctionSignature {
-            label: "SUM([DISTINCT] expression)",
-            documentation: "Returns the sum of values",
-            params: vec!["expression"],
-        },
-        FunctionSignature {
-            label: "AVG([DISTINCT] expression)",
-            documentation: "Returns the average of values",
-            params: vec!["expression"],
-        },
-        FunctionSignature {
-            label: "MIN(expression)",
-            documentation: "Returns the minimum value",
-            params: vec!["expression"],
-        },
-        FunctionSignature {
-            label: "MAX(expression)",
-            documentation: "Returns the maximum value",
-            params: vec!["expression"],
-        },
-        FunctionSignature {
-            label: "STR_REPLACE(source, pattern, replacement)",
-            documentation: "Replaces all occurrences of a pattern in a string",
-            params: vec!["source", "pattern", "replacement"],
-        },
-        FunctionSignature {
-            label: "STUFF(source, start, length, insert)",
-            documentation: "Deletes and inserts characters at a specified position",
-            params: vec!["source", "start", "length", "insert"],
-        },
-        FunctionSignature {
-            label: "ROUND(expression, n)",
-            documentation: "Rounds a numeric value to n decimal places",
-            params: vec!["expression", "n"],
-        },
-    ];
-
-    sigs.into_iter()
-        .map(|s| {
-            let name = s.label.split('(').next().unwrap_or("");
-            (name, s)
-        })
-        .collect()
-});
 
 /// SignatureHelp情報を生成する
 ///
@@ -196,9 +69,14 @@ pub fn signature_help(source: &str, position: Position) -> Option<SignatureHelp>
         return None;
     }
     let name = func_name?;
-    let sig = SIGNATURES.get(name.as_str())?;
+    let entry = crate::db_docs::lookup(name.as_str())?;
 
-    let parameters: Vec<ParameterInformation> = sig
+    // シグネチャヘルプは関数カテゴリのみを対象とする
+    if entry.category != crate::db_docs::DocCategory::Function {
+        return None;
+    }
+
+    let parameters: Vec<ParameterInformation> = entry
         .params
         .iter()
         .map(|p| ParameterInformation {
@@ -215,9 +93,9 @@ pub fn signature_help(source: &str, position: Position) -> Option<SignatureHelp>
 
     Some(SignatureHelp {
         signatures: vec![SignatureInformation {
-            label: sig.label.to_string(),
+            label: entry.syntax.to_string(),
             documentation: Some(lsp_types::Documentation::String(
-                sig.documentation.to_string(),
+                entry.description.to_string(),
             )),
             parameters: Some(parameters),
             active_parameter,
