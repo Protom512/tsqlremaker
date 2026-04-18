@@ -38,13 +38,18 @@ fn format_sql(source: &str) -> String {
     let tokens: Vec<_> = lexer.filter_map(Result::ok).collect();
 
     let mut result = String::new();
-    let indent_level = 0u32;
+    let mut indent_level = 0u32;
     let mut prev_kind: Option<TokenKind> = None;
     let mut at_line_start = true;
 
     for token in &tokens {
         if token.kind == TokenKind::Eof {
             break;
+        }
+
+        // END/ELSE の前にインデントを減らす
+        if should_decrease_indent(&token.kind) && indent_level > 0 {
+            indent_level -= 1;
         }
 
         // 改行前のトークン調整
@@ -73,6 +78,11 @@ fn format_sql(source: &str) -> String {
         // トークンテキストの書き換え
         let text = format_token(&token.kind, token.text);
         result.push_str(&text);
+
+        // BEGIN の後にインデントを増やす
+        if matches!(token.kind, TokenKind::Begin) {
+            indent_level += 1;
+        }
 
         prev_kind = Some(token.kind);
     }
@@ -183,6 +193,11 @@ fn needs_space_before(kind: &TokenKind, prev: Option<&TokenKind>) -> bool {
     true
 }
 
+/// トークン出力前にインデントを減らすべきか
+fn should_decrease_indent(kind: &TokenKind) -> bool {
+    matches!(kind, TokenKind::End | TokenKind::Else)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::panic)]
@@ -245,5 +260,52 @@ mod tests {
         let result = format_sql("SELECT 1 GO SELECT 2");
         // GO should cause line break
         assert!(result.contains("GO\n") || result.contains("GO \n"));
+    }
+
+    #[test]
+    fn test_format_indent_begin_end() {
+        let result = format_sql("BEGIN SELECT 1 END");
+        let lines: Vec<&str> = result.lines().collect();
+        let select_line = lines.iter().find(|l| l.contains("SELECT"));
+        assert!(select_line.is_some());
+        let select_line = select_line.unwrap();
+        assert!(
+            select_line.starts_with("    "),
+            "SELECT should be indented, got: '{}'",
+            select_line
+        );
+        let end_line = lines.iter().find(|l| l.trim().starts_with("END"));
+        assert!(end_line.is_some());
+        let end_line = end_line.unwrap();
+        assert!(
+            !end_line.starts_with("    "),
+            "END should not be indented, got: '{}'",
+            end_line
+        );
+    }
+
+    #[test]
+    fn test_format_indent_nested_begin() {
+        let result = format_sql("BEGIN BEGIN SELECT 1 END END");
+        let lines: Vec<&str> = result.lines().collect();
+        let select_line = lines.iter().find(|l| l.contains("SELECT"));
+        assert!(select_line.is_some());
+        let select_line = select_line.unwrap();
+        assert!(
+            select_line.starts_with("        "),
+            "Inner SELECT should be double-indented, got: '{}'",
+            select_line
+        );
+    }
+
+    #[test]
+    fn test_format_idempotent_with_indent() {
+        let input = "BEGIN\n    SELECT 1\nEND";
+        let first = format_sql(input);
+        let second = format_sql(&first);
+        assert_eq!(
+            first, second,
+            "Formatting with indent should be idempotent"
+        );
     }
 }
