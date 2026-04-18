@@ -1,0 +1,22 @@
+[package]
+name = "ase-ls-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["TSQL Remaker Contributors"]
+description = "SAP ASE Language Server core logic"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Protom512/tsqlremaker"
+
+[dependencies]
+tsql-parser = { path = "../tsql-parser" }
+tsql-lexer = { path = "../tsql-lexer" }
+tsql-token = { path = "../tsql-token" }
+lsp-types = "0.94"
+thiserror = { workspace = true }
+once_cell = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+
+[lints]
+workspace = true

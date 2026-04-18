@@ -7,6 +7,8 @@ members = [
     "crates/postgresql-emitter",
     "crates/sqlite-emitter",
     "crates/wasm",
+    "crates/ase-ls-core",
+    "crates/ase-ls",
 ]
 resolver = "2"
 
