@@ -4,44 +4,25 @@
 
 use lsp_types::{CompletionItem, CompletionItemKind, CompletionList, CompletionResponse};
 
-/// Convert function syntax to LSP snippet format with parameter placeholders
+/// 関数名とパラメータリストからLSP snippet形式のinsert_textを生成する
+///
+/// `DocEntry.params`（クリーンなパラメータ名配列）を直接使用し、
+/// syntax文字列のブラケット表記（`[, style]`等）による問題を回避する。
 ///
 /// # Examples
-/// - `SUBSTRING(expression, start, length)` → `SUBSTRING(${1:expression}, ${2:start}, ${3:length})`
-/// - `GETDATE()` → `GETDATE()`
-/// - `CONVERT(type, expression)` → `CONVERT(${1:type}, ${2:expression})`
-pub(crate) fn build_function_snippet(syntax: &str) -> String {
-    // Find the opening paren
-    let paren_pos = match syntax.find('(') {
-        Some(p) => p,
-        None => return syntax.to_string(),
-    };
-
-    let func_name = &syntax[..=paren_pos]; // includes "("
-    let rest = &syntax[paren_pos + 1..];
-
-    // Find closing paren
-    let close_pos = match rest.rfind(')') {
-        Some(p) => p,
-        None => return syntax.to_string(),
-    };
-
-    let params_str = &rest[..close_pos];
-
-    // If no params, return as-is
-    if params_str.trim().is_empty() {
-        return syntax.to_string();
+/// - `build_function_snippet("SUBSTRING", &["expression", "start", "length"])`
+///   → `SUBSTRING(${1:expression}, ${2:start}, ${3:length})`
+/// - `build_function_snippet("GETDATE", &[])` → `GETDATE()`
+pub(crate) fn build_function_snippet(name: &str, params: &[&str]) -> String {
+    if params.is_empty() {
+        return format!("{name}()");
     }
-
-    // Split by comma and create numbered placeholders
-    let params: Vec<&str> = params_str.split(',').collect();
-    let snippet_params: Vec<String> = params
+    let placeholders: Vec<String> = params
         .iter()
         .enumerate()
-        .map(|(i, p)| format!("${{{}:{}}}", i + 1, p.trim()))
+        .map(|(i, p)| format!("${{{}:{p}}}", i + 1))
         .collect();
-
-    format!("{}{})", func_name, snippet_params.join(", "))
+    format!("{name}({})", placeholders.join(", "))
 }
 
 /// 全ての補完候補を返す（MVP: コンテキスト非依存）
@@ -70,7 +51,7 @@ pub fn complete_all() -> CompletionResponse {
 
     // Functions from db_docs — snippet format with parameter placeholders
     for entry in crate::db_docs::functions() {
-        let snippet = build_function_snippet(entry.syntax);
+        let snippet = build_function_snippet(entry.name, entry.params);
         items.push(CompletionItem {
             label: entry.name.to_string(),
             kind: Some(CompletionItemKind::FUNCTION),
@@ -202,7 +183,7 @@ mod tests {
 
     #[test]
     fn test_build_snippet_with_params() {
-        let result = build_function_snippet("SUBSTRING(expression, start, length)");
+        let result = build_function_snippet("SUBSTRING", &["expression", "start", "length"]);
         assert_eq!(
             result,
             "SUBSTRING(${1:expression}, ${2:start}, ${3:length})"
@@ -211,14 +192,22 @@ mod tests {
 
     #[test]
     fn test_build_snippet_no_params() {
-        let result = build_function_snippet("GETDATE()");
+        let result = build_function_snippet("GETDATE", &[]);
         assert_eq!(result, "GETDATE()");
     }
 
     #[test]
     fn test_build_snippet_single_param() {
-        let result = build_function_snippet("COUNT(expression)");
+        let result = build_function_snippet("COUNT", &["expression"]);
         assert_eq!(result, "COUNT(${1:expression})");
+    }
+
+    #[test]
+    fn test_build_snippet_optional_params_clean() {
+        // CONVERT has optional "style" param in syntax but params field is clean
+        let result = build_function_snippet("CONVERT", &["type", "expression", "style"]);
+        assert_eq!(result, "CONVERT(${1:type}, ${2:expression}, ${3:style})");
+        assert!(!result.contains('['), "No brackets should appear in snippet");
     }
 
     #[test]
