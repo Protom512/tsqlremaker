@@ -40,6 +40,16 @@ pub fn complete_all() -> CompletionResponse {
         });
     }
 
+    // System variables from db_docs
+    for entry in crate::db_docs::system_variables() {
+        items.push(CompletionItem {
+            label: entry.name.to_string(),
+            kind: Some(CompletionItemKind::VARIABLE),
+            detail: Some(entry.description.to_string()),
+            ..CompletionItem::default()
+        });
+    }
+
     CompletionResponse::List(CompletionList {
         is_incomplete: false,
         items,

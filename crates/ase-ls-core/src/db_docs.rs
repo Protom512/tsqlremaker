@@ -839,6 +839,20 @@ static FUNCTION_ENTRIES: &[DocEntry] = &[
         category: DocCategory::Function,
     },
     DocEntry {
+        name: "LEFT",
+        description: "Returns the left part of a string with the specified number of characters",
+        syntax: "LEFT(expression, n)",
+        params: &["expression", "n"],
+        category: DocCategory::Function,
+    },
+    DocEntry {
+        name: "RIGHT",
+        description: "Returns the right part of a string with the specified number of characters",
+        syntax: "RIGHT(expression, n)",
+        params: &["expression", "n"],
+        category: DocCategory::Function,
+    },
+    DocEntry {
         name: "CHARINDEX",
         description: "Find pattern position (1-based)",
         syntax: "CHARINDEX(pattern, expression)",
@@ -1063,6 +1077,69 @@ static FUNCTION_ENTRIES: &[DocEntry] = &[
 ];
 
 // ---------------------------------------------------------------------------
+// System variable entries
+// ---------------------------------------------------------------------------
+
+static SYSTEM_VARIABLE_ENTRIES: &[DocEntry] = &[
+    DocEntry {
+        name: "@@IDENTITY",
+        description: "Last identity value inserted",
+        syntax: "@@IDENTITY",
+        params: &[],
+        category: DocCategory::SystemVariable,
+    },
+    DocEntry {
+        name: "@@ROWCOUNT",
+        description: "Number of rows affected by the last statement",
+        syntax: "@@ROWCOUNT",
+        params: &[],
+        category: DocCategory::SystemVariable,
+    },
+    DocEntry {
+        name: "@@ERROR",
+        description: "Error number for the last T-SQL statement executed",
+        syntax: "@@ERROR",
+        params: &[],
+        category: DocCategory::SystemVariable,
+    },
+    DocEntry {
+        name: "@@VERSION",
+        description: "Version information of the ASE server",
+        syntax: "@@VERSION",
+        params: &[],
+        category: DocCategory::SystemVariable,
+    },
+    DocEntry {
+        name: "@@SERVERNAME",
+        description: "Name of the local server",
+        syntax: "@@SERVERNAME",
+        params: &[],
+        category: DocCategory::SystemVariable,
+    },
+    DocEntry {
+        name: "@@SPID",
+        description: "Server process ID for the current session",
+        syntax: "@@SPID",
+        params: &[],
+        category: DocCategory::SystemVariable,
+    },
+    DocEntry {
+        name: "@@TRANCOUNT",
+        description: "Number of active transactions for the current session",
+        syntax: "@@TRANCOUNT",
+        params: &[],
+        category: DocCategory::SystemVariable,
+    },
+    DocEntry {
+        name: "@@DATEFIRST",
+        description: "First day of the week (1=Monday, 7=Sunday)",
+        syntax: "@@DATEFIRST",
+        params: &[],
+        category: DocCategory::SystemVariable,
+    },
+];
+
+// ---------------------------------------------------------------------------
 // Lookup helpers — O(1) by name
 // ---------------------------------------------------------------------------
 
@@ -1070,23 +1147,28 @@ static FUNCTION_ENTRIES: &[DocEntry] = &[
 static FUNCTION_LOOKUP: Lazy<HashMap<&'static str, &'static DocEntry>> =
     Lazy::new(|| FUNCTION_ENTRIES.iter().map(|e| (e.name, e)).collect());
 
-/// キーワード・データ型エントリの名前で検索できるHashMap
+/// キーワード・データ型・システム変数エントリの名前で検索できるHashMap
 static OTHER_LOOKUP: Lazy<HashMap<&'static str, &'static DocEntry>> = Lazy::new(|| {
     KEYWORD_ENTRIES
         .iter()
         .chain(DATATYPE_ENTRIES.iter())
+        .chain(SYSTEM_VARIABLE_ENTRIES.iter())
         .map(|e| (e.name, e))
         .collect()
 });
 
-/// 名前（大文字）でDocEntryを検索する
-/// 関数名がキーワードと重複する場合（例: RIGHT）、関数を優先する
+/// 名前（大文字）で関数 DocEntry を検索する
+pub fn lookup_function(name: &str) -> Option<&'static DocEntry> {
+    FUNCTION_LOOKUP.get(name).copied()
+}
+
+/// 名前（大文字）で DocEntry を検索する
+/// キーワードと関数で名前が重複する場合（例: LEFT）、キーワードを優先する
 pub fn lookup(name: &str) -> Option<&'static DocEntry> {
-    // 関数を優先
-    FUNCTION_LOOKUP
+    OTHER_LOOKUP
         .get(name)
         .copied()
-        .or_else(|| OTHER_LOOKUP.get(name).copied())
+        .or_else(|| FUNCTION_LOOKUP.get(name).copied())
 }
 
 /// キーワードエントリのスライスを返す
@@ -1102,6 +1184,11 @@ pub fn datatypes() -> &'static [DocEntry] {
 /// 関数エントリのスライスを返す
 pub fn functions() -> &'static [DocEntry] {
     FUNCTION_ENTRIES
+}
+
+/// システム変数エントリのスライスを返す
+pub fn system_variables() -> &'static [DocEntry] {
+    SYSTEM_VARIABLE_ENTRIES
 }
 
 #[cfg(test)]

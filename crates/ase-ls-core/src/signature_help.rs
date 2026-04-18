@@ -69,7 +69,7 @@ pub fn signature_help(source: &str, position: Position) -> Option<SignatureHelp>
         return None;
     }
     let name = func_name?;
-    let entry = crate::db_docs::lookup(name.as_str())?;
+    let entry = crate::db_docs::lookup_function(name.as_str())?;
 
     // シグネチャヘルプは関数カテゴリのみを対象とする
     if entry.category != crate::db_docs::DocCategory::Function {
