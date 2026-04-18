@@ -34,7 +34,9 @@ fn is_comma_separated_syntax(syntax: &str) -> bool {
     if let (Some(open), Some(close)) = (syntax.find('('), syntax.rfind(')')) {
         if open < close {
             let inner = &syntax[open + 1..close];
-            return !inner.contains(" AS ");
+            return !inner.contains(" AS ")
+                && !inner.contains('\'')
+                && !inner.contains('|');
         }
     }
     false
@@ -279,6 +281,8 @@ mod tests {
         assert!(is_comma_separated_syntax("GETDATE()"));
         assert!(!is_comma_separated_syntax("CAST(expression AS type)"));
         assert!(!is_comma_separated_syntax("IDENTITY")); // no parens
+        assert!(!is_comma_separated_syntax("OBJECT_ID('object_name')")); // quotes
+        assert!(!is_comma_separated_syntax("COUNT([DISTINCT] expression | *)")); // pipe
     }
 
     #[test]
