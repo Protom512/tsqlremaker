@@ -172,10 +172,15 @@ fn try_generate_insert_skeleton(
         return None;
     }
 
-    // INSERT骨組みを生成
-    let columns: Vec<&str> = tbl.columns.iter().map(|c| c.name.as_str()).collect();
+    // INSERT骨組みを生成（IDENTITYカラムは除外）
+    let columns: Vec<&str> = tbl
+        .columns
+        .iter()
+        .filter(|c| !c.is_identity)
+        .map(|c| c.name.as_str())
+        .collect();
     let col_list = columns.join(", ");
-    let placeholders: Vec<&str> = tbl.columns.iter().map(|_| "?").collect();
+    let placeholders = vec!["?"; columns.len()];
     let values_list = placeholders.join(", ");
 
     let new_text = format!(

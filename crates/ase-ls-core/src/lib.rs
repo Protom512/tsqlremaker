@@ -98,6 +98,21 @@ pub(crate) fn find_token_at(
 ///
 /// 変数（@var）の場合は `LocalVar` トークンのみマッチ。
 /// その他の場合は `Ident` またはSQLキーワードトークンとマッチ。
+///
+/// # なぜキーワードを明示的に列挙するか
+///
+/// T-SQLでは `CREATE TABLE users` の `users` は `Ident` トークンだが、
+/// `CREATE PROCEDURE my_proc` の `my_proc` も同様に `Ident` になる。
+/// しかし `CREATE TABLE table_name` で `table` と書いた場合、
+/// レキサーはこれを `Table` キーワードトークンとして扱う。
+///
+/// このため、オブジェクト名として頻出する以下のキーワードを
+/// シンボル名としても認識する必要がある:
+/// - DDL文脈: `SELECT`, `FROM`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`
+/// - プロシージャ: `EXEC`, `PROCEDURE`
+/// - オブジェクト種別: `TABLE`, `VIEW`, `INDEX`
+///
+/// `kind.is_keyword()` は残りのキーワードのフォールバックとして機能する。
 pub(crate) fn token_matches_symbol(
     kind: tsql_token::TokenKind,
     text: &str,

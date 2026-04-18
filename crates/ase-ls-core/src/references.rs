@@ -54,12 +54,21 @@ pub fn reference_ranges(source: &str, position: Position, include_declaration: b
 
 /// トークンが定義箇所かどうかを判定する
 fn is_definition_token(source: &str, token: &tsql_lexer::Token<'_>, is_var: bool) -> bool {
+    let before = &source[..token.span.start as usize];
+    let trimmed = before.trim_end();
+    let upper = trimmed.to_uppercase();
+
     if is_var {
-        let before = &source[..token.span.start as usize];
-        let trimmed = before.trim_end();
-        if trimmed.to_uppercase().ends_with("DECLARE")
-            || trimmed.to_uppercase().ends_with("DECLARE\n")
-            || trimmed.ends_with(',')
+        // 変数定義: DECLARE @var
+        if upper.ends_with("DECLARE") || trimmed.ends_with(',') {
+            return true;
+        }
+    } else {
+        // テーブル/プロシージャ/ビュー/インデックス定義: CREATE [OBJECT] name
+        if upper.ends_with("CREATE TABLE")
+            || upper.ends_with("CREATE PROCEDURE")
+            || upper.ends_with("CREATE VIEW")
+            || upper.ends_with("CREATE INDEX")
         {
             return true;
         }
@@ -215,5 +224,25 @@ mod tests {
             true,
         );
         assert!(ranges.len() >= 2);
+    }
+
+    #[test]
+    fn test_references_exclude_table_definition() {
+        let source = "CREATE TABLE users (id INT)\nSELECT * FROM users";
+        let ranges = reference_ranges(
+            source,
+            Position {
+                line: 0,
+                character: 14,
+            },
+            false, // exclude declaration
+        );
+        // Should NOT include the CREATE TABLE line (it's a definition)
+        // Should include the SELECT FROM line (it's a reference)
+        assert!(!ranges.is_empty());
+        // None of the ranges should be on line 0 (definition excluded)
+        for range in &ranges {
+            assert_ne!(range.start.line, 0, "Definition should be excluded");
+        }
     }
 }
