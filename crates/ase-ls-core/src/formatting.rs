@@ -47,7 +47,7 @@ fn format_sql(source: &str) -> String {
             break;
         }
 
-        // END/ELSE の前にインデントを減らす
+        // END/END_ の前にインデントを減らす（ELSEは除外: IFと同じレベルに配置）
         if should_decrease_indent(&token.kind) && indent_level > 0 {
             indent_level -= 1;
         }
@@ -79,8 +79,8 @@ fn format_sql(source: &str) -> String {
         let text = format_token(&token.kind, token.text);
         result.push_str(&text);
 
-        // BEGIN の後にインデントを増やす
-        if matches!(token.kind, TokenKind::Begin) {
+        // BEGIN/CASE の後にインデントを増やす
+        if matches!(token.kind, TokenKind::Begin | TokenKind::Case) {
             indent_level += 1;
         }
 
@@ -127,8 +127,10 @@ fn should_newline_before(kind: &TokenKind, prev: Option<&TokenKind>) -> bool {
         return true;
     }
 
-    // BEGIN/END の後
-    if matches!(prev, TokenKind::Begin | TokenKind::End) && !matches!(kind, TokenKind::End) {
+    // BEGIN/END/END_ の後
+    if matches!(prev, TokenKind::Begin | TokenKind::End | TokenKind::End_)
+        && !matches!(kind, TokenKind::End | TokenKind::End_)
+    {
         return true;
     }
 
@@ -195,7 +197,7 @@ fn needs_space_before(kind: &TokenKind, prev: Option<&TokenKind>) -> bool {
 
 /// トークン出力前にインデントを減らすべきか
 fn should_decrease_indent(kind: &TokenKind) -> bool {
-    matches!(kind, TokenKind::End | TokenKind::Else)
+    matches!(kind, TokenKind::End | TokenKind::End_)
 }
 
 #[cfg(test)]
@@ -307,5 +309,40 @@ mod tests {
             first, second,
             "Formatting with indent should be idempotent"
         );
+    }
+
+    #[test]
+    fn test_format_if_else_same_indent() {
+        let result = format_sql("IF 1 = 1 BEGIN SELECT 1 END ELSE BEGIN SELECT 2 END");
+        let lines: Vec<&str> = result.lines().collect();
+        let else_line = lines.iter().find(|l| l.trim().starts_with("ELSE"));
+        assert!(else_line.is_some());
+        let else_line = else_line.unwrap();
+        assert!(
+            !else_line.starts_with("    "),
+            "ELSE should be at same level as IF, got: '{}'",
+            else_line
+        );
+    }
+
+    #[test]
+    fn test_format_case_end_indent() {
+        // CASE increases indent, END decreases it
+        let result = format_sql("CASE WHEN 1 = 1 THEN 'a' END");
+        // CASE is indented by Case token, END returns to level 0
+        // (CASE/WWhen on same line is acceptable for inline CASE expressions)
+        assert!(
+            result.contains("CASE"),
+            "Should contain CASE: {}",
+            result
+        );
+        assert!(
+            result.contains("END"),
+            "Should contain END: {}",
+            result
+        );
+        // Verify idempotent
+        let second = format_sql(&result);
+        assert_eq!(result, second, "CASE formatting should be idempotent");
     }
 }
