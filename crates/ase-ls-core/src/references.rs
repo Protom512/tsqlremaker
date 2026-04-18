@@ -60,19 +60,15 @@ fn is_definition_token(source: &str, token: &tsql_lexer::Token<'_>, is_var: bool
 
     if is_var {
         // 変数定義: DECLARE @var
-        if upper.ends_with("DECLARE") || upper.ends_with("DECLARE\n") || trimmed.ends_with(',') {
+        if upper.ends_with("DECLARE") || trimmed.ends_with(',') {
             return true;
         }
     } else {
         // テーブル/プロシージャ/ビュー/インデックス定義: CREATE [OBJECT] name
         if upper.ends_with("CREATE TABLE")
-            || upper.ends_with("CREATE TABLE\n")
             || upper.ends_with("CREATE PROCEDURE")
-            || upper.ends_with("CREATE PROCEDURE\n")
             || upper.ends_with("CREATE VIEW")
-            || upper.ends_with("CREATE VIEW\n")
             || upper.ends_with("CREATE INDEX")
-            || upper.ends_with("CREATE INDEX\n")
         {
             return true;
         }

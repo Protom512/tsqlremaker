@@ -180,12 +180,7 @@ fn try_generate_insert_skeleton(
         .map(|c| c.name.as_str())
         .collect();
     let col_list = columns.join(", ");
-    let placeholders: Vec<&str> = tbl
-        .columns
-        .iter()
-        .filter(|c| !c.is_identity)
-        .map(|_| "?")
-        .collect();
+    let placeholders = vec!["?"; columns.len()];
     let values_list = placeholders.join(", ");
 
     let new_text = format!(

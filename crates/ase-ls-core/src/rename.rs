@@ -31,7 +31,7 @@ pub fn rename(
     if is_var && !new_name.starts_with('@') {
         return None;
     }
-    if new_name.is_empty() || new_name.trim().is_empty() {
+    if new_name.trim().is_empty() {
         return None;
     }
 
