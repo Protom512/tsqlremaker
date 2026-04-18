@@ -34,9 +34,7 @@ fn is_comma_separated_syntax(syntax: &str) -> bool {
     if let (Some(open), Some(close)) = (syntax.find('('), syntax.rfind(')')) {
         if open < close {
             let inner = &syntax[open + 1..close];
-            return !inner.contains(" AS ")
-                && !inner.contains('\'')
-                && !inner.contains('|');
+            return !inner.contains(" AS ") && !inner.contains('\'') && !inner.contains('|');
         }
     }
     false
@@ -75,7 +73,10 @@ pub fn complete_all() -> CompletionResponse {
             )
         } else {
             // Non-comma syntax (e.g., CAST(expr AS type)) — plain text
-            (entry.syntax.to_string(), lsp_types::InsertTextFormat::PLAIN_TEXT)
+            (
+                entry.syntax.to_string(),
+                lsp_types::InsertTextFormat::PLAIN_TEXT,
+            )
         };
         items.push(CompletionItem {
             label: entry.name.to_string(),
@@ -232,7 +233,10 @@ mod tests {
         // CONVERT has optional "style" param in syntax but params field is clean
         let result = build_function_snippet("CONVERT", &["type", "expression", "style"]);
         assert_eq!(result, "CONVERT(${1:type}, ${2:expression}, ${3:style})");
-        assert!(!result.contains('['), "No brackets should appear in snippet");
+        assert!(
+            !result.contains('['),
+            "No brackets should appear in snippet"
+        );
     }
 
     #[test]
@@ -277,12 +281,16 @@ mod tests {
 
     #[test]
     fn test_is_comma_separated_syntax() {
-        assert!(is_comma_separated_syntax("SUBSTRING(expression, start, length)"));
+        assert!(is_comma_separated_syntax(
+            "SUBSTRING(expression, start, length)"
+        ));
         assert!(is_comma_separated_syntax("GETDATE()"));
         assert!(!is_comma_separated_syntax("CAST(expression AS type)"));
         assert!(!is_comma_separated_syntax("IDENTITY")); // no parens
         assert!(!is_comma_separated_syntax("OBJECT_ID('object_name')")); // quotes
-        assert!(!is_comma_separated_syntax("COUNT([DISTINCT] expression | *)")); // pipe
+        assert!(!is_comma_separated_syntax(
+            "COUNT([DISTINCT] expression | *)"
+        )); // pipe
     }
 
     #[test]
@@ -290,10 +298,9 @@ mod tests {
         let response = complete_all();
         match response {
             CompletionResponse::List(list) => {
-                let identity = list
-                    .items
-                    .iter()
-                    .find(|i| i.label == "IDENTITY" && i.kind == Some(CompletionItemKind::FUNCTION));
+                let identity = list.items.iter().find(|i| {
+                    i.label == "IDENTITY" && i.kind == Some(CompletionItemKind::FUNCTION)
+                });
                 assert!(identity.is_some(), "IDENTITY function should exist");
                 let item = identity.unwrap();
                 assert_eq!(

@@ -305,10 +305,7 @@ mod tests {
         let input = "BEGIN\n    SELECT 1\nEND";
         let first = format_sql(input);
         let second = format_sql(&first);
-        assert_eq!(
-            first, second,
-            "Formatting with indent should be idempotent"
-        );
+        assert_eq!(first, second, "Formatting with indent should be idempotent");
     }
 
     #[test]
@@ -331,16 +328,8 @@ mod tests {
         let result = format_sql("CASE WHEN 1 = 1 THEN 'a' END");
         // CASE is indented by Case token, END returns to level 0
         // (CASE/WWhen on same line is acceptable for inline CASE expressions)
-        assert!(
-            result.contains("CASE"),
-            "Should contain CASE: {}",
-            result
-        );
-        assert!(
-            result.contains("END"),
-            "Should contain END: {}",
-            result
-        );
+        assert!(result.contains("CASE"), "Should contain CASE: {}", result);
+        assert!(result.contains("END"), "Should contain END: {}", result);
         // Verify idempotent
         let second = format_sql(&result);
         assert_eq!(result, second, "CASE formatting should be idempotent");
