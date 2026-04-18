@@ -25,6 +25,21 @@ pub(crate) fn build_function_snippet(name: &str, params: &[&str]) -> String {
     format!("{name}({})", placeholders.join(", "))
 }
 
+/// syntax文字列がカンマ区切り以外の構文（CAST等）かどうかを判定する
+///
+/// カンマ区切りではない関数（`CAST(expr AS type)`等）は
+/// snippetプレースホルダー生成に適さないためPLAIN_TEXTで返す。
+fn is_comma_separated_syntax(syntax: &str) -> bool {
+    // AS キーワードが括弧内にある場合、カンマ区切りではない
+    if let Some(open) = syntax.find('(') {
+        if let Some(close) = syntax.rfind(')') {
+            let inner = &syntax[open + 1..close];
+            return !inner.contains(" AS ");
+        }
+    }
+    true
+}
+
 /// 全ての補完候補を返す（MVP: コンテキスト非依存）
 pub fn complete_all() -> CompletionResponse {
     let mut items = Vec::new();
@@ -49,15 +64,23 @@ pub fn complete_all() -> CompletionResponse {
         });
     }
 
-    // Functions from db_docs — snippet format with parameter placeholders
+    // Functions from db_docs — snippet or plain text depending on syntax
     for entry in crate::db_docs::functions() {
-        let snippet = build_function_snippet(entry.name, entry.params);
+        let (insert_text, format) = if is_comma_separated_syntax(entry.syntax) {
+            (
+                build_function_snippet(entry.name, entry.params),
+                lsp_types::InsertTextFormat::SNIPPET,
+            )
+        } else {
+            // Non-comma syntax (e.g., CAST(expr AS type)) — plain text
+            (entry.syntax.to_string(), lsp_types::InsertTextFormat::PLAIN_TEXT)
+        };
         items.push(CompletionItem {
             label: entry.name.to_string(),
             kind: Some(CompletionItemKind::FUNCTION),
             detail: Some(format!("{} — {}", entry.syntax, entry.description)),
-            insert_text: Some(snippet),
-            insert_text_format: Some(lsp_types::InsertTextFormat::SNIPPET),
+            insert_text: Some(insert_text),
+            insert_text_format: Some(format),
             ..CompletionItem::default()
         });
     }
@@ -225,5 +248,35 @@ mod tests {
             }
             _ => panic!("Expected List response"),
         }
+    }
+
+    #[test]
+    fn test_cast_uses_plain_text() {
+        let response = complete_all();
+        match response {
+            CompletionResponse::List(list) => {
+                let cast = list.items.iter().find(|i| i.label == "CAST");
+                assert!(cast.is_some());
+                let item = cast.unwrap();
+                assert_eq!(
+                    item.insert_text_format,
+                    Some(InsertTextFormat::PLAIN_TEXT),
+                    "CAST should use PLAIN_TEXT, not SNIPPET"
+                );
+                let text = item.insert_text.as_ref().unwrap();
+                assert!(
+                    text.contains(" AS "),
+                    "CAST insert_text should preserve AS syntax, got: {text}"
+                );
+            }
+            _ => panic!("Expected List response"),
+        }
+    }
+
+    #[test]
+    fn test_is_comma_separated_syntax() {
+        assert!(is_comma_separated_syntax("SUBSTRING(expression, start, length)"));
+        assert!(is_comma_separated_syntax("GETDATE()"));
+        assert!(!is_comma_separated_syntax("CAST(expression AS type)"));
     }
 }
