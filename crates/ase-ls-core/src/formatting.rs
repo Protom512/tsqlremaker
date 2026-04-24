@@ -159,7 +159,9 @@ fn should_newline_before(kind: &TokenKind, prev: Option<&TokenKind>) -> bool {
         | TokenKind::End
         | TokenKind::Try
         | TokenKind::Catch => {
-            // SELECTの直後でFROMが来る場合は改行しない（単純SELECT用）
+            // Rationale: SELECTとFROMは同一行に保つ。これにより "SELECT col FROM t" が
+            // 1行にフォーマットされ、短いクエリの可読性が向上する。FROMのみを改行
+            // 対象キーワードに含めつつ、SELECT直後のFROMだけを例外的に同一行扱いにする。
             if matches!(prev, TokenKind::Select) && matches!(kind, TokenKind::From) {
                 return false;
             }
