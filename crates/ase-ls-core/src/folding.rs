@@ -2,26 +2,27 @@
 //!
 //! SQL コードの折りたたみ範囲を検出する。
 
-use crate::offset_to_position;
+use crate::line_index::LineIndex;
 use lsp_types::{FoldingRange, FoldingRangeKind};
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
 
 /// ソースコードから Folding Ranges を生成する
 pub fn folding_ranges(source: &str) -> Vec<FoldingRange> {
+    let line_index = LineIndex::new(source);
     let mut ranges = Vec::new();
 
     // 1. ブロックコメントの折りたたみ
-    ranges.extend(fold_comments(source));
+    ranges.extend(fold_comments(&line_index, source));
 
     // 2. BEGIN...END ブロックの折りたたみ
-    ranges.extend(fold_begin_end(source));
+    ranges.extend(fold_begin_end(&line_index, source));
 
     ranges
 }
 
 /// ブロックコメントの折りたたみ範囲を検出
-fn fold_comments(source: &str) -> Vec<FoldingRange> {
+fn fold_comments(line_index: &LineIndex, source: &str) -> Vec<FoldingRange> {
     let mut ranges = Vec::new();
     let lexer = Lexer::new(source).with_comments(true);
 
@@ -32,8 +33,8 @@ fn fold_comments(source: &str) -> Vec<FoldingRange> {
         };
 
         if token.kind == TokenKind::BlockComment {
-            let (start_line, _) = offset_to_position(source, token.span.start);
-            let (end_line, _) = offset_to_position(source, token.span.end.saturating_sub(1));
+            let (start_line, _) = line_index.offset_to_position(token.span.start);
+            let (end_line, _) = line_index.offset_to_position(token.span.end.saturating_sub(1));
             if start_line < end_line {
                 ranges.push(FoldingRange {
                     start_line,
@@ -51,7 +52,7 @@ fn fold_comments(source: &str) -> Vec<FoldingRange> {
 }
 
 /// BEGIN...END ブロックの折りたたみ範囲を検出
-fn fold_begin_end(source: &str) -> Vec<FoldingRange> {
+fn fold_begin_end(line_index: &LineIndex, source: &str) -> Vec<FoldingRange> {
     let mut ranges = Vec::new();
     let lexer = Lexer::new(source);
     let tokens: Vec<_> = lexer.filter_map(Result::ok).collect();
@@ -61,12 +62,12 @@ fn fold_begin_end(source: &str) -> Vec<FoldingRange> {
     for token in &tokens {
         match token.kind {
             TokenKind::Begin => {
-                let (line, _) = offset_to_position(source, token.span.start);
+                let (line, _) = line_index.offset_to_position(token.span.start);
                 begin_stack.push((line, token.span.start));
             }
             TokenKind::End => {
                 if let Some((start_line, _)) = begin_stack.pop() {
-                    let (end_line, _) = offset_to_position(source, token.span.end);
+                    let (end_line, _) = line_index.offset_to_position(token.span.end);
                     if start_line < end_line {
                         ranges.push(FoldingRange {
                             start_line,

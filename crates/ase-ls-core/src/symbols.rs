@@ -2,7 +2,7 @@
 //!
 //! AST の文から LSP DocumentSymbol / SymbolInformation を生成する。
 
-use crate::offset_to_position;
+use crate::line_index::LineIndex;
 use lsp_types::{DocumentSymbol, DocumentSymbolResponse, SymbolKind};
 use tsql_parser::ast::{Statement, TableReference};
 
@@ -113,8 +113,9 @@ fn make_symbol(name: String, kind: SymbolKind, range: lsp_types::Range) -> Docum
 
 /// バイトオフセット範囲から LSP Range を生成
 fn span_to_lsp_range(source: &str, start: u32, end: u32) -> lsp_types::Range {
-    let (start_line, start_char) = offset_to_position(source, start);
-    let (end_line, end_char) = offset_to_position(source, end);
+    let line_index = LineIndex::new(source);
+    let (start_line, start_char) = line_index.offset_to_position(start);
+    let (end_line, end_char) = line_index.offset_to_position(end);
     lsp_types::Range {
         start: lsp_types::Position {
             line: start_line,

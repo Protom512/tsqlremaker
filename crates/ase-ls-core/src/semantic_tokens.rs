@@ -2,7 +2,7 @@
 //!
 //! Lexer のトークンストリームから LSP Semantic Tokens を生成する。
 
-use crate::offset_to_position;
+use crate::line_index::LineIndex;
 use lsp_types::{
     SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult,
 };
@@ -110,6 +110,7 @@ fn token_kind_to_type_index(kind: TokenKind) -> Option<u32> {
 
 /// ソースコードから Semantic Tokens を生成する
 pub fn semantic_tokens_full(source: &str) -> SemanticTokensResult {
+    let line_index = LineIndex::new(source);
     let lexer = Lexer::new(source);
     let mut tokens = Vec::new();
     let mut prev_line = 0u32;
@@ -122,7 +123,7 @@ pub fn semantic_tokens_full(source: &str) -> SemanticTokensResult {
         };
 
         if let Some(type_idx) = token_kind_to_type_index(token.kind) {
-            let (line, character) = offset_to_position(source, token.span.start);
+            let (line, character) = line_index.offset_to_position(token.span.start);
 
             // LSP Semantic Tokens は差分エンコーディング
             let delta_line = line.saturating_sub(prev_line);

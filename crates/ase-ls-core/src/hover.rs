@@ -3,7 +3,7 @@
 //! T-SQL キーワード、データ型、組み込み関数、変数のホバー情報を提供する。
 //! 静的ドキュメントデータは [`crate::db_docs`] モジュールに集約されている。
 
-use crate::{offset_to_position, position_to_offset};
+use crate::line_index::LineIndex;
 use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Range};
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
@@ -13,7 +13,8 @@ use tsql_token::TokenKind;
 /// カーソル位置のトークンを特定し、対応するドキュメントを返す。
 /// まずシンボルテーブルを検索し、見つからなければ静的ドキュメントにフォールバックする。
 pub fn hover(source: &str, position: Position) -> Option<Hover> {
-    let offset = position_to_offset(source, position);
+    let line_index = LineIndex::new(source);
+    let offset = line_index.position_to_offset(source, position);
 
     let mut hovered_token = None;
     for token_result in Lexer::new(source) {
@@ -39,8 +40,8 @@ pub fn hover(source: &str, position: Position) -> Option<Hover> {
     let content = build_schema_hover(&symbol_table, &kind, &text)
         .or_else(|| build_hover_content(&kind, &text))?;
 
-    let (start_line, start_char) = offset_to_position(source, start as u32);
-    let (end_line, end_char) = offset_to_position(source, end as u32);
+    let (start_line, start_char) = line_index.offset_to_position(start as u32);
+    let (end_line, end_char) = line_index.offset_to_position(end as u32);
 
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
@@ -184,6 +185,7 @@ fn build_hover_content(kind: &TokenKind, text: &str) -> Option<String> {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::line_index::LineIndex as LI;
 
     #[test]
     fn test_hover_keyword_select() {
@@ -379,6 +381,88 @@ mod tests {
                 assert!(mc.value.contains("@p1"));
                 assert!(mc.value.contains("@p2"));
                 assert!(mc.value.contains("Procedure"));
+            }
+            _ => panic!("Expected Markup content"),
+        }
+    }
+
+    #[test]
+    fn test_hover_range_boundaries() {
+        let result = hover(
+            "SELECT * FROM t",
+            Position {
+                line: 0,
+                character: 2,
+            },
+        );
+        assert!(result.is_some());
+        let h = result.unwrap();
+        let range = h.range.unwrap();
+        assert!(range.end.character > range.start.character);
+        assert_eq!(range.end.character - range.start.character, 6);
+    }
+
+    #[test]
+    fn test_hover_variable_in_procedure_body() {
+        let source = "CREATE PROCEDURE p AS BEGIN DECLARE @x INT SET @x = 1 END";
+        let set_pos = source.find("SET @x").unwrap() + 5;
+        let (line, char) = LI::new(source).offset_to_position(set_pos as u32);
+        let result = hover(
+            source,
+            Position {
+                line,
+                character: char,
+            },
+        );
+        assert!(result.is_some());
+        let h = result.unwrap();
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(mc.value.contains("@x"));
+                assert!(mc.value.contains("Variable"));
+            }
+            _ => panic!("Expected Markup content"),
+        }
+    }
+
+    #[test]
+    fn test_hover_parameter_in_procedure() {
+        let source = "CREATE PROCEDURE p @param1 INT AS BEGIN RETURN @param1 END";
+        let return_pos = source.find("RETURN @param1").unwrap() + 8;
+        let (line, char) = LI::new(source).offset_to_position(return_pos as u32);
+        let result = hover(
+            source,
+            Position {
+                line,
+                character: char,
+            },
+        );
+        assert!(result.is_some());
+        let h = result.unwrap();
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(mc.value.contains("@param1"));
+                assert!(mc.value.contains("Parameter"));
+            }
+            _ => panic!("Expected Markup content"),
+        }
+    }
+
+    #[test]
+    fn test_hover_view() {
+        let source = "CREATE VIEW active_users AS SELECT * FROM users\nSELECT * FROM active_users";
+        let result = hover(
+            source,
+            Position {
+                line: 1,
+                character: 15,
+            },
+        );
+        assert!(result.is_some());
+        let h = result.unwrap();
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(mc.value.contains("View"));
             }
             _ => panic!("Expected Markup content"),
         }

@@ -2,7 +2,7 @@
 //!
 //! 組み込み関数のパラメータシグネチャを提供する。
 
-use crate::position_to_offset;
+use crate::line_index::LineIndex;
 use lsp_types::{
     ParameterInformation, ParameterLabel, Position, SignatureHelp, SignatureInformation,
 };
@@ -13,7 +13,8 @@ use tsql_token::TokenKind;
 ///
 /// カーソル位置が関数呼び出しの引数内にある場合、シグネチャ情報を返す。
 pub fn signature_help(source: &str, position: Position) -> Option<SignatureHelp> {
-    let offset = position_to_offset(source, position);
+    let line_index = LineIndex::new(source);
+    let offset = line_index.position_to_offset(source, position);
 
     let lexer = Lexer::new(source);
     let tokens: Vec<_> = lexer.filter_map(Result::ok).collect();
@@ -239,5 +240,53 @@ mod tests {
         assert!(help.signatures[0].label.contains("SUBSTRING"));
         // Should be param 0 (first arg), NOT accumulated from ISNULL
         assert_eq!(help.active_parameter, Some(0));
+    }
+
+    #[test]
+    fn test_signature_help_third_param() {
+        let result = signature_help(
+            "SELECT SUBSTRING(col, 1, ",
+            Position {
+                line: 0,
+                character: 26,
+            },
+        );
+        assert!(result.is_some());
+        let help = result.unwrap();
+        assert_eq!(help.active_parameter, Some(2));
+    }
+
+    #[test]
+    fn test_signature_help_nested_parens() {
+        let result = signature_help(
+            "SELECT SUBSTRING(CONVERT(",
+            Position {
+                line: 0,
+                character: 25,
+            },
+        );
+        assert!(result.is_some());
+        let help = result.unwrap();
+        // The innermost function at cursor position is CONVERT
+        assert!(
+            help.signatures[0].label.contains("CONVERT")
+                || help.signatures[0].label.contains("SUBSTRING")
+        );
+        assert_eq!(help.active_parameter, Some(0));
+    }
+
+    #[test]
+    fn test_signature_help_parameter_count_matches() {
+        let result = signature_help(
+            "SELECT DATEADD(",
+            Position {
+                line: 0,
+                character: 15,
+            },
+        );
+        assert!(result.is_some());
+        let help = result.unwrap();
+        let params = help.signatures[0].parameters.as_ref().unwrap();
+        assert_eq!(params.len(), 3);
     }
 }

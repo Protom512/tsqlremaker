@@ -6,7 +6,8 @@
 //! - プロシージャ: CREATE PROCEDURE + EXEC呼び出し
 //! - ビュー: CREATE VIEW + SELECT内の参照
 
-use crate::{find_token_at, offset_to_position, position_to_offset, token_matches_symbol};
+use crate::line_index::LineIndex;
+use crate::{find_token_at, token_matches_symbol};
 use lsp_types::{Position, Range};
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
@@ -15,7 +16,8 @@ use tsql_token::TokenKind;
 ///
 /// `include_declaration` が true の場合は定義箇所も含める。
 pub fn reference_ranges(source: &str, position: Position, include_declaration: bool) -> Vec<Range> {
-    let offset = position_to_offset(source, position);
+    let line_index = LineIndex::new(source);
+    let offset = line_index.position_to_offset(source, position);
 
     let (target_kind, target_text) = match find_token_at(source, offset) {
         Some(t) => t,
@@ -34,7 +36,7 @@ pub fn reference_ranges(source: &str, position: Position, include_declaration: b
         };
 
         if token_matches_symbol(token.kind, token.text, &search_name, is_var) {
-            let range = token_span_to_range(source, &token);
+            let range = token_span_to_range(&line_index, &token);
 
             // 定義箇所の判定
             let is_declaration =
@@ -77,9 +79,9 @@ fn is_definition_token(source: &str, token: &tsql_lexer::Token<'_>, is_var: bool
 }
 
 /// トークンのSpanからLSP Rangeを生成
-fn token_span_to_range(source: &str, token: &tsql_lexer::Token<'_>) -> Range {
-    let (start_line, start_char) = offset_to_position(source, token.span.start);
-    let (end_line, end_char) = offset_to_position(source, token.span.end);
+fn token_span_to_range(line_index: &LineIndex, token: &tsql_lexer::Token<'_>) -> Range {
+    let (start_line, start_char) = line_index.offset_to_position(token.span.start);
+    let (end_line, end_char) = line_index.offset_to_position(token.span.end);
     Range {
         start: Position {
             line: start_line,
@@ -243,6 +245,72 @@ mod tests {
         // None of the ranges should be on line 0 (definition excluded)
         for range in &ranges {
             assert_ne!(range.start.line, 0, "Definition should be excluded");
+        }
+    }
+
+    #[test]
+    fn test_references_dedup_identical_ranges() {
+        // Same token appearing multiple times should be deduped
+        let source = "SELECT * FROM users WHERE users.id = 1";
+        let ranges = reference_ranges(
+            source,
+            Position {
+                line: 0,
+                character: 15,
+            },
+            true,
+        );
+        // "users" appears twice, should have 2 distinct ranges (not duplicated)
+        assert_eq!(ranges.len(), 2);
+        // Ranges should be unique
+        for i in 0..ranges.len() {
+            for j in (i + 1)..ranges.len() {
+                assert!(ranges[i].start != ranges[j].start || ranges[i].end != ranges[j].end);
+            }
+        }
+    }
+
+    #[test]
+    fn test_references_variable_comma_separated_declare() {
+        let source = "DECLARE @a INT, @b INT\nSET @a = 1\nSET @b = 2";
+        let ranges_with_decl = reference_ranges(
+            source,
+            Position {
+                line: 1,
+                character: 5,
+            },
+            true,
+        );
+        // @a: DECLARE + SET @a = 1
+        assert!(ranges_with_decl.len() >= 2);
+
+        let ranges_no_decl = reference_ranges(
+            source,
+            Position {
+                line: 1,
+                character: 5,
+            },
+            false,
+        );
+        // Only SET @a = 1 (DECLARE excluded)
+        assert_eq!(ranges_no_decl.len(), 1);
+    }
+
+    #[test]
+    fn test_references_range_has_correct_bounds() {
+        let source = "CREATE TABLE users (id INT)\nSELECT * FROM users";
+        let ranges = reference_ranges(
+            source,
+            Position {
+                line: 0,
+                character: 14,
+            },
+            true,
+        );
+        for range in &ranges {
+            assert!(
+                range.end.character > range.start.character || range.end.line > range.start.line
+            );
         }
     }
 }
