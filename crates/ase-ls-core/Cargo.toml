@@ -11,7 +11,7 @@ repository = "https://github.com/Protom512/tsqlremaker"
 tsql-parser = { path = "../tsql-parser" }
 tsql-lexer = { path = "../tsql-lexer" }
 tsql-token = { path = "../tsql-token" }
-lsp-types = "0.94"
+lsp-types = "0.97"
 thiserror = { workspace = true }
 once_cell = { workspace = true }
 
