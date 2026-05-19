@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use tsql_parser::ast::{CreateStatement, DataType, DeclareStatement, Statement};
 use tsql_token::Span;
 
-use crate::{offset_to_position, position_to_offset};
+use crate::line_index::LineIndex;
 
 /// シンボルテーブル
 #[derive(Debug, Clone, Default)]
@@ -125,6 +125,7 @@ impl SymbolTableBuilder {
     /// ソースコードからシンボルテーブルを構築する
     pub fn build(source: &str) -> SymbolTable {
         let mut table = SymbolTable::default();
+        let line_index = LineIndex::new(source);
 
         let statements = match tsql_parser::Parser::new(source).parse() {
             Ok(s) => s,
@@ -132,7 +133,7 @@ impl SymbolTableBuilder {
         };
 
         for stmt in &statements {
-            Self::collect_from_stmt(source, stmt, &mut table);
+            Self::collect_from_stmt(&line_index, stmt, &mut table);
         }
 
         table
@@ -141,6 +142,7 @@ impl SymbolTableBuilder {
     /// ソースコードからシンボルテーブルを構築（エラー許容）
     pub fn build_tolerant(source: &str) -> SymbolTable {
         let mut table = SymbolTable::default();
+        let line_index = LineIndex::new(source);
 
         let statements = match tsql_parser::Parser::new(source).parse_with_errors() {
             Ok((s, _)) => s,
@@ -148,13 +150,13 @@ impl SymbolTableBuilder {
         };
 
         for stmt in &statements {
-            Self::collect_from_stmt(source, stmt, &mut table);
+            Self::collect_from_stmt(&line_index, stmt, &mut table);
         }
 
         table
     }
 
-    fn collect_from_stmt(source: &str, stmt: &Statement, table: &mut SymbolTable) {
+    fn collect_from_stmt(line_index: &LineIndex, stmt: &Statement, table: &mut SymbolTable) {
         match stmt {
             Statement::Create(create) => match create.as_ref() {
                 CreateStatement::Table(td) => {
@@ -164,7 +166,7 @@ impl SymbolTableBuilder {
                         .iter()
                         .map(|col| ColumnSymbol {
                             name: col.name.name.clone(),
-                            range: span_to_range(source, col.name.span),
+                            range: span_to_range(line_index, col.name.span),
                             data_type: col.data_type.clone(),
                             nullable: col.nullability,
                             is_identity: col.identity,
@@ -218,7 +220,7 @@ impl SymbolTableBuilder {
                         name_upper,
                         TableSymbol {
                             name: td.name.name.clone(),
-                            range: span_to_range(source, td.name.span),
+                            range: span_to_range(line_index, td.name.span),
                             columns,
                             constraints,
                             is_temporary: td.temporary,
@@ -232,7 +234,7 @@ impl SymbolTableBuilder {
                         .iter()
                         .map(|p| ParameterSymbol {
                             name: p.name.name.clone(),
-                            range: span_to_range(source, p.name.span),
+                            range: span_to_range(line_index, p.name.span),
                             data_type: p.data_type.clone(),
                             is_output: p.is_output,
                         })
@@ -241,14 +243,14 @@ impl SymbolTableBuilder {
                     // プロシージャボディ内の変数を収集
                     let mut body_variables = Vec::new();
                     for body_stmt in &pd.body {
-                        Self::collect_variables(source, body_stmt, &mut body_variables);
+                        Self::collect_variables(line_index, body_stmt, &mut body_variables);
                     }
 
                     table.procedures.insert(
                         name_upper,
                         ProcedureSymbol {
                             name: pd.name.name.clone(),
-                            range: span_to_range(source, pd.name.span),
+                            range: span_to_range(line_index, pd.name.span),
                             parameters,
                             body_variables,
                         },
@@ -260,7 +262,7 @@ impl SymbolTableBuilder {
                         name_upper,
                         ViewSymbol {
                             name: vd.name.name.clone(),
-                            range: span_to_range(source, vd.name.span),
+                            range: span_to_range(line_index, vd.name.span),
                         },
                     );
                 }
@@ -270,7 +272,7 @@ impl SymbolTableBuilder {
                         name_upper,
                         IndexSymbol {
                             name: idx.name.name.clone(),
-                            range: span_to_range(source, idx.name.span),
+                            range: span_to_range(line_index, idx.name.span),
                             table_name: idx.table.name.clone(),
                             columns: idx.columns.iter().map(|c| c.name.clone()).collect(),
                             is_unique: idx.unique,
@@ -279,28 +281,28 @@ impl SymbolTableBuilder {
                 }
             },
             Statement::Declare(decl) => {
-                Self::collect_declare_variables(source, decl, &mut table.variables);
+                Self::collect_declare_variables(line_index, decl, &mut table.variables);
             }
             Statement::Block(block) => {
                 for s in &block.statements {
-                    Self::collect_from_stmt(source, s, table);
+                    Self::collect_from_stmt(line_index, s, table);
                 }
             }
             Statement::If(if_stmt) => {
-                Self::collect_from_stmt(source, &if_stmt.then_branch, table);
+                Self::collect_from_stmt(line_index, &if_stmt.then_branch, table);
                 if let Some(else_branch) = &if_stmt.else_branch {
-                    Self::collect_from_stmt(source, else_branch, table);
+                    Self::collect_from_stmt(line_index, else_branch, table);
                 }
             }
             Statement::While(while_stmt) => {
-                Self::collect_from_stmt(source, &while_stmt.body, table);
+                Self::collect_from_stmt(line_index, &while_stmt.body, table);
             }
             Statement::TryCatch(tc) => {
                 for s in &tc.try_block.statements {
-                    Self::collect_from_stmt(source, s, table);
+                    Self::collect_from_stmt(line_index, s, table);
                 }
                 for s in &tc.catch_block.statements {
-                    Self::collect_from_stmt(source, s, table);
+                    Self::collect_from_stmt(line_index, s, table);
                 }
             }
             _ => {}
@@ -309,7 +311,7 @@ impl SymbolTableBuilder {
 
     /// DECLARE文から変数を収集する
     fn collect_declare_variables(
-        source: &str,
+        line_index: &LineIndex,
         decl: &DeclareStatement,
         variables: &mut HashMap<String, VariableSymbol>,
     ) {
@@ -319,7 +321,7 @@ impl SymbolTableBuilder {
                 name_upper,
                 VariableSymbol {
                     name: var.name.name.clone(),
-                    range: span_to_range(source, var.name.span),
+                    range: span_to_range(line_index, var.name.span),
                     data_type: var.data_type.clone(),
                 },
             );
@@ -327,37 +329,41 @@ impl SymbolTableBuilder {
     }
 
     /// ステートメント内の変数を再帰的に収集する
-    fn collect_variables(source: &str, stmt: &Statement, variables: &mut Vec<VariableSymbol>) {
+    fn collect_variables(
+        line_index: &LineIndex,
+        stmt: &Statement,
+        variables: &mut Vec<VariableSymbol>,
+    ) {
         match stmt {
             Statement::Declare(decl) => {
                 for var in &decl.variables {
                     variables.push(VariableSymbol {
                         name: var.name.name.clone(),
-                        range: span_to_range(source, var.name.span),
+                        range: span_to_range(line_index, var.name.span),
                         data_type: var.data_type.clone(),
                     });
                 }
             }
             Statement::Block(block) => {
                 for s in &block.statements {
-                    Self::collect_variables(source, s, variables);
+                    Self::collect_variables(line_index, s, variables);
                 }
             }
             Statement::If(if_stmt) => {
-                Self::collect_variables(source, &if_stmt.then_branch, variables);
+                Self::collect_variables(line_index, &if_stmt.then_branch, variables);
                 if let Some(else_branch) = &if_stmt.else_branch {
-                    Self::collect_variables(source, else_branch, variables);
+                    Self::collect_variables(line_index, else_branch, variables);
                 }
             }
             Statement::While(while_stmt) => {
-                Self::collect_variables(source, &while_stmt.body, variables);
+                Self::collect_variables(line_index, &while_stmt.body, variables);
             }
             Statement::TryCatch(tc) => {
                 for s in &tc.try_block.statements {
-                    Self::collect_variables(source, s, variables);
+                    Self::collect_variables(line_index, s, variables);
                 }
                 for s in &tc.catch_block.statements {
-                    Self::collect_variables(source, s, variables);
+                    Self::collect_variables(line_index, s, variables);
                 }
             }
             _ => {}
@@ -390,7 +396,8 @@ impl SymbolTableBuilder {
         source: &str,
         position: Position,
     ) -> Option<(String, lsp_types::Range)> {
-        let offset = position_to_offset(source, position);
+        let line_index = LineIndex::new(source);
+        let offset = line_index.position_to_offset(source, position);
 
         for token_result in tsql_lexer::Lexer::new(source) {
             let token = match token_result {
@@ -404,7 +411,10 @@ impl SymbolTableBuilder {
                     token.kind,
                     tsql_token::TokenKind::Ident | tsql_token::TokenKind::LocalVar
                 ) {
-                    return Some((token.text.to_string(), span_to_range(source, token.span)));
+                    return Some((
+                        token.text.to_string(),
+                        span_to_range(&line_index, token.span),
+                    ));
                 }
                 return None;
             }
@@ -417,9 +427,9 @@ impl SymbolTableBuilder {
 }
 
 /// Span → LSP Range 変換
-fn span_to_range(source: &str, span: Span) -> Range {
-    let (start_line, start_char) = offset_to_position(source, span.start);
-    let (end_line, end_char) = offset_to_position(source, span.end);
+fn span_to_range(line_index: &LineIndex, span: Span) -> Range {
+    let (start_line, start_char) = line_index.offset_to_position(span.start);
+    let (end_line, end_char) = line_index.offset_to_position(span.end);
     Range {
         start: Position {
             line: start_line,

@@ -2,21 +2,22 @@
 //!
 //! パーサーのエラーを LSP Diagnostic に変換する。
 
-use crate::offset_to_position;
+use crate::line_index::LineIndex;
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use tsql_parser::ParseError;
 
 /// ParseError を LSP Diagnostic に変換する
 pub fn parse_errors_to_diagnostics(source: &str, errors: &[ParseError]) -> Vec<Diagnostic> {
+    let line_index = LineIndex::new(source);
     errors
         .iter()
-        .map(|e| parse_error_to_diagnostic(source, e))
+        .map(|e| parse_error_to_diagnostic(&line_index, e))
         .collect()
 }
 
 /// 単一の ParseError を Diagnostic に変換する
-fn parse_error_to_diagnostic(source: &str, error: &ParseError) -> Diagnostic {
-    let range = error_range(source, error);
+fn parse_error_to_diagnostic(line_index: &LineIndex, error: &ParseError) -> Diagnostic {
+    let range = error_range(line_index, error);
     let message = format!("{error}");
 
     Diagnostic {
@@ -29,11 +30,11 @@ fn parse_error_to_diagnostic(source: &str, error: &ParseError) -> Diagnostic {
 }
 
 /// ParseError から Range を取得する
-fn error_range(source: &str, error: &ParseError) -> Range {
+fn error_range(line_index: &LineIndex, error: &ParseError) -> Range {
     match error.span() {
         Some(span) => {
-            let start = offset_to_position(source, span.start);
-            let end = offset_to_position(source, span.end.max(span.start + 1));
+            let start = line_index.offset_to_position(span.start);
+            let end = line_index.offset_to_position(span.end.max(span.start + 1));
             Range {
                 start: Position {
                     line: start.0,
@@ -104,5 +105,41 @@ mod tests {
         let diags = diagnose_source("SELCT * FROM users");
         assert!(!diags.is_empty());
         assert!(!diags[0].message.is_empty());
+    }
+
+    #[test]
+    fn test_diagnostic_range_not_default() {
+        let diags = diagnose_source("SELCT * FROM users");
+        assert!(!diags.is_empty());
+        let range = diags[0].range;
+        assert!(
+            range.start.line > 0
+                || range.start.character > 0
+                || range.end.character > range.start.character
+        );
+    }
+
+    #[test]
+    fn test_diagnostic_end_after_start() {
+        let diags = diagnose_source("SELCT * FROM users");
+        assert!(!diags.is_empty());
+        let range = diags[0].range;
+        assert!(range.end.line >= range.start.line);
+        if range.end.line == range.start.line {
+            assert!(range.end.character > range.start.character);
+        }
+    }
+
+    #[test]
+    fn test_parse_errors_to_diagnostics_converts_all() {
+        let errors = diagnose_source("SELCT FRO users");
+        assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn test_valid_complex_sql_no_diagnostics() {
+        let source = "CREATE TABLE t (id INT)\nINSERT INTO t (id) VALUES (1)\nSELECT * FROM t";
+        let diags = diagnose_source(source);
+        assert!(diags.is_empty());
     }
 }

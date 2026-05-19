@@ -16,6 +16,7 @@ pub mod diagnostics;
 pub mod folding;
 pub mod formatting;
 pub mod hover;
+pub mod line_index;
 pub mod references;
 pub mod rename;
 pub mod semantic_tokens;
@@ -26,49 +27,6 @@ pub mod workspace_symbols;
 
 pub use tsql_lexer::Lexer;
 pub use tsql_parser::Parser;
-
-/// バイトオフセットから (0-indexed line, 0-indexed character) を計算する
-pub(crate) fn offset_to_position(source: &str, offset: u32) -> (u32, u32) {
-    let mut line = 0u32;
-    let mut last_newline = 0u32;
-    let bytes = source.as_bytes();
-    let end = (offset as usize).min(bytes.len());
-    for (i, &b) in bytes.iter().enumerate().take(end) {
-        if b == b'\n' {
-            line += 1;
-            last_newline = (i + 1) as u32;
-        }
-    }
-    let character = offset.saturating_sub(last_newline);
-    (line, character)
-}
-
-/// LSP Position (0-indexed) からバイトオフセットを計算する
-pub(crate) fn position_to_offset(source: &str, position: lsp_types::Position) -> usize {
-    let mut offset = 0;
-    let mut current_line = 0u32;
-
-    for ch in source.chars() {
-        if current_line == position.line {
-            let char_offset = offset;
-            let chars_to_target = position.character as usize;
-            let mut counted = 0;
-            for c in source[char_offset..].chars() {
-                if counted >= chars_to_target {
-                    return char_offset + counted;
-                }
-                counted += c.len_utf8();
-            }
-            return char_offset + counted;
-        }
-        offset += ch.len_utf8();
-        if ch == '\n' {
-            current_line += 1;
-        }
-    }
-
-    offset
-}
 
 /// カーソル位置のトークンを特定する（共有ユーティリティ）
 ///
@@ -150,32 +108,98 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_offset_to_position_start() {
-        let (line, col) = offset_to_position("SELECT * FROM t", 0);
-        assert_eq!(line, 0);
-        assert_eq!(col, 0);
+    fn test_find_token_at_start_of_token() {
+        let source = "SELECT * FROM users";
+        let result = find_token_at(source, 0);
+        assert!(result.is_some());
+        let (kind, text) = result.unwrap();
+        assert_eq!(text, "SELECT");
+        assert_eq!(kind, tsql_token::TokenKind::Select);
     }
 
     #[test]
-    fn test_offset_to_position_mid_line() {
-        let (line, col) = offset_to_position("SELECT * FROM t", 7);
-        assert_eq!(line, 0);
-        assert_eq!(col, 7);
+    fn test_find_token_at_mid_token() {
+        let source = "SELECT * FROM users";
+        let result = find_token_at(source, 2);
+        assert!(result.is_some());
+        let (kind, text) = result.unwrap();
+        assert_eq!(text, "SELECT");
+        assert_eq!(kind, tsql_token::TokenKind::Select);
     }
 
     #[test]
-    fn test_offset_to_position_second_line() {
-        let source = "SELECT *\nFROM t";
-        let (line, col) = offset_to_position(source, 9);
-        assert_eq!(line, 1);
-        assert_eq!(col, 0);
+    fn test_find_token_at_end_boundary() {
+        let source = "SELECT * FROM users";
+        // "SELECT" is bytes 0..6, so offset 6 is past it
+        let result = find_token_at(source, 6);
+        // offset 6 should be whitespace, not SELECT
+        assert!(
+            result.is_none()
+                || result
+                    .map(|(k, _)| k != tsql_token::TokenKind::Select)
+                    .unwrap_or(true)
+        );
     }
 
     #[test]
-    fn test_offset_to_position_multiline() {
-        let source = "line1\nline2\nline3";
-        let (line, col) = offset_to_position(source, 12);
-        assert_eq!(line, 2);
-        assert_eq!(col, 0);
+    fn test_find_token_at_past_all_tokens() {
+        let source = "SELECT";
+        let result = find_token_at(source, 100);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_token_at_whitespace() {
+        let source = "SELECT  FROM t";
+        let result = find_token_at(source, 7);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_token_matches_symbol_variable() {
+        assert!(token_matches_symbol(
+            tsql_token::TokenKind::LocalVar,
+            "@count",
+            "@COUNT",
+            true
+        ));
+        assert!(!token_matches_symbol(
+            tsql_token::TokenKind::Ident,
+            "count",
+            "@COUNT",
+            true
+        ));
+    }
+
+    #[test]
+    fn test_token_matches_symbol_identifier() {
+        assert!(token_matches_symbol(
+            tsql_token::TokenKind::Ident,
+            "users",
+            "USERS",
+            false
+        ));
+        assert!(!token_matches_symbol(
+            tsql_token::TokenKind::Ident,
+            "users",
+            "ORDERS",
+            false
+        ));
+    }
+
+    #[test]
+    fn test_token_matches_symbol_keyword_as_name() {
+        assert!(token_matches_symbol(
+            tsql_token::TokenKind::Select,
+            "select",
+            "SELECT",
+            false
+        ));
+        assert!(token_matches_symbol(
+            tsql_token::TokenKind::Table,
+            "table",
+            "TABLE",
+            false
+        ));
     }
 }

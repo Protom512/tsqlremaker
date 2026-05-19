@@ -5,7 +5,8 @@
 //! - テーブル名: CREATE TABLE + 全参照箇所をリネーム
 //! - プロシージャ/ビュー/インデックス: 定義 + 参照をリネーム
 
-use crate::{find_token_at, offset_to_position, position_to_offset, token_matches_symbol};
+use crate::line_index::LineIndex;
+use crate::{find_token_at, token_matches_symbol};
 use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
 use std::collections::HashMap;
 use tsql_lexer::Lexer;
@@ -20,7 +21,8 @@ pub fn rename(
     new_name: &str,
     uri: &Url,
 ) -> Option<WorkspaceEdit> {
-    let offset = position_to_offset(source, position);
+    let line_index = LineIndex::new(source);
+    let offset = line_index.position_to_offset(source, position);
 
     let (target_kind, target_text) = find_token_at(source, offset)?;
 
@@ -44,8 +46,8 @@ pub fn rename(
         };
 
         if token_matches_symbol(token.kind, token.text, &search_upper, is_var) {
-            let (start_line, start_char) = offset_to_position(source, token.span.start);
-            let (end_line, end_char) = offset_to_position(source, token.span.end);
+            let (start_line, start_char) = line_index.offset_to_position(token.span.start);
+            let (end_line, end_char) = line_index.offset_to_position(token.span.end);
             edits.push(TextEdit {
                 range: Range {
                     start: Position {
@@ -68,7 +70,7 @@ pub fn rename(
 
     // 重複除去（同じ位置の複数TextEditを防止）
     edits.dedup_by(|a, b| a.range.start == b.range.start && a.range.end == b.range.end);
-
+    #[allow(clippy::mutable_key_type)]
     let mut changes = HashMap::new();
     changes.insert(uri.clone(), edits);
 
@@ -83,7 +85,8 @@ pub fn rename(
 ///
 /// カーソル位置のシンボルの現在の名前を返す。
 pub fn get_rename_placeholder(source: &str, position: Position) -> Option<String> {
-    let offset = position_to_offset(source, position);
+    let line_index = LineIndex::new(source);
+    let offset = line_index.position_to_offset(source, position);
     let (_, text) = find_token_at(source, offset)?;
     Some(text)
 }
@@ -249,5 +252,77 @@ mod tests {
         let changes = edit.changes.unwrap();
         let text_edits = changes.get(&test_uri()).unwrap();
         assert!(text_edits.len() >= 2);
+    }
+
+    #[test]
+    fn test_rename_dedup_same_position() {
+        // Ensure overlapping positions are deduped
+        let source = "DECLARE @x INT\nSET @x = @x + 1\nSELECT @x";
+        let result = rename(
+            source,
+            Position {
+                line: 1,
+                character: 5,
+            },
+            "@y",
+            &test_uri(),
+        );
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        let changes = edit.changes.unwrap();
+        let text_edits = changes.get(&test_uri()).unwrap();
+        // No duplicate ranges
+        for i in 0..text_edits.len() {
+            for j in (i + 1)..text_edits.len() {
+                assert!(
+                    text_edits[i].range.start != text_edits[j].range.start
+                        || text_edits[i].range.end != text_edits[j].range.end
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_rename_edits_all_match_new_name() {
+        let source = "DECLARE @val INT\nSET @val = 1\nSELECT @val";
+        let result = rename(
+            source,
+            Position {
+                line: 1,
+                character: 5,
+            },
+            "@new_val",
+            &test_uri(),
+        );
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        let changes = edit.changes.unwrap();
+        let text_edits = changes.get(&test_uri()).unwrap();
+        assert!(text_edits.iter().all(|e| e.new_text == "@new_val"));
+        assert_eq!(text_edits.len(), 3);
+    }
+
+    #[test]
+    fn test_rename_edit_ranges_are_valid() {
+        let source = "CREATE TABLE users (id INT)\nSELECT * FROM users";
+        let result = rename(
+            source,
+            Position {
+                line: 0,
+                character: 14,
+            },
+            "customers",
+            &test_uri(),
+        );
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        let changes = edit.changes.unwrap();
+        let text_edits = changes.get(&test_uri()).unwrap();
+        for te in text_edits {
+            assert!(
+                te.range.end.character > te.range.start.character
+                    || te.range.end.line > te.range.start.line
+            );
+        }
     }
 }
