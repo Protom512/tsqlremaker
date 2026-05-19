@@ -88,8 +88,8 @@ pub fn reference_ranges(source: &str, position: Position, include_declaration: b
             let range = token_span_to_range(&line_index, &token);
 
             // 定義箇所の判定
-            let is_declaration =
-                !include_declaration && is_definition_token(source, token.span.start as usize, is_var);
+            let is_declaration = !include_declaration
+                && is_definition_token(source, token.span.start as usize, is_var);
 
             if include_declaration || !is_declaration {
                 refs.push(range);
