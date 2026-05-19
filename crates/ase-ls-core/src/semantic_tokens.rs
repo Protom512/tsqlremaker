@@ -109,6 +109,24 @@ fn token_kind_to_type_index(kind: TokenKind) -> Option<u32> {
     }
 }
 
+/// Resolve an identifier token's semantic type using the symbol table.
+fn resolve_ident_type(analysis: &DocumentAnalysis, text: &str) -> Option<u32> {
+    let upper = text.to_uppercase();
+    if analysis.symbol_table.tables.contains_key(&upper) {
+        return Some(9); // CLASS
+    }
+    if analysis.symbol_table.procedures.contains_key(&upper) {
+        return Some(2); // FUNCTION
+    }
+    if analysis.symbol_table.views.contains_key(&upper) {
+        return Some(9); // CLASS — views are table-like
+    }
+    if analysis.symbol_table.indexes.contains_key(&upper) {
+        return Some(9); // CLASS — indexes are objects
+    }
+    None
+}
+
 /// ソースコードから Semantic Tokens を生成する（DocumentAnalysis利用）
 pub fn semantic_tokens_full_with_analysis(analysis: &DocumentAnalysis) -> SemanticTokensResult {
     let mut tokens = Vec::new();
@@ -116,7 +134,15 @@ pub fn semantic_tokens_full_with_analysis(analysis: &DocumentAnalysis) -> Semant
     let mut prev_char = 0u32;
 
     for token in &analysis.tokens {
-        if let Some(type_idx) = token_kind_to_type_index(token.kind) {
+        let type_idx = token_kind_to_type_index(token.kind).or_else(|| {
+            if token.kind == TokenKind::Ident {
+                resolve_ident_type(analysis, &token.text)
+            } else {
+                None
+            }
+        });
+
+        if let Some(type_idx) = type_idx {
             let (line, character) = analysis.line_index.offset_to_position(token.span.start);
 
             let delta_line = line.saturating_sub(prev_line);
@@ -261,5 +287,66 @@ mod tests {
     fn test_legend_has_types() {
         let legend = semantic_tokens_legend();
         assert!(!legend.token_types.is_empty());
+    }
+
+    // --- Semantic token enhancement tests (Phase #83) ---
+
+    #[test]
+    fn test_table_name_gets_class_token() {
+        let source = "CREATE TABLE users (id INT)\nSELECT * FROM users";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = semantic_tokens_full_with_analysis(&analysis);
+        let tokens = match result {
+            lsp_types::SemanticTokensResult::Tokens(t) => t,
+            _ => panic!("Expected tokens"),
+        };
+        // Find token at "users" on line 1 (the FROM clause)
+        // CLASS = index 9
+        let class_tokens: Vec<_> = tokens.data.iter().filter(|t| t.token_type == 9).collect();
+        assert!(
+            !class_tokens.is_empty(),
+            "Table name 'users' should be highlighted as CLASS (type 9), got tokens: {:?}",
+            tokens
+                .data
+                .iter()
+                .map(|t| (t.token_type, t.delta_line, t.delta_start, t.length))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_procedure_name_gets_function_token() {
+        let source = "CREATE PROCEDURE my_proc AS BEGIN RETURN 1 END";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = semantic_tokens_full_with_analysis(&analysis);
+        let tokens = match result {
+            lsp_types::SemanticTokensResult::Tokens(t) => t,
+            _ => panic!("Expected tokens"),
+        };
+        // FUNCTION = index 2
+        let func_tokens: Vec<_> = tokens.data.iter().filter(|t| t.token_type == 2).collect();
+        assert!(
+            !func_tokens.is_empty(),
+            "Procedure name 'my_proc' should be highlighted as FUNCTION (type 2)"
+        );
+    }
+
+    #[test]
+    fn test_identifier_not_in_symbol_table_not_highlighted() {
+        let source = "SELECT * FROM unknown_table";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = semantic_tokens_full_with_analysis(&analysis);
+        let tokens = match result {
+            lsp_types::SemanticTokensResult::Tokens(t) => t,
+            _ => panic!("Expected tokens"),
+        };
+        // 'unknown_table' is not in any symbol table → should NOT get CLASS token
+        // But it will still be there as an Ident (not highlighted)
+        // Check that no CLASS (9) tokens exist since no tables are defined
+        let class_tokens: Vec<_> = tokens.data.iter().filter(|t| t.token_type == 9).collect();
+        assert!(
+            class_tokens.is_empty(),
+            "Unknown identifiers should not get CLASS token"
+        );
     }
 }
