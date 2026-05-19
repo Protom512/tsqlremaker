@@ -59,9 +59,13 @@ impl LineIndex {
     }
 
     /// Get the number of lines.
-    #[cfg(test)]
-    pub(crate) fn line_count(&self) -> usize {
+    pub fn line_count(&self) -> usize {
         self.line_offsets.len()
+    }
+
+    /// Get the byte offset of the start of a line. O(1).
+    pub fn line_offset(&self, line: usize) -> usize {
+        self.line_offsets.get(line).copied().unwrap_or(0) as usize
     }
 }
 
