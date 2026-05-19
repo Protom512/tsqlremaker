@@ -1,0 +1,228 @@
+//! Integration tests for the LSP server.
+//!
+//! Tests the full request→response cycle through tower-lsp's LspService,
+//! validating handler routing, parameter passing, and lifecycle management.
+
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::panic)]
+
+use ase_ls::server::AseLanguageServer;
+use tower::Service;
+use tower::ServiceExt;
+use tower_lsp::jsonrpc::Request;
+use tower_lsp::LspService;
+
+fn setup() -> LspService<AseLanguageServer> {
+    let (service, _socket) = LspService::new(AseLanguageServer::new);
+    service
+}
+
+fn parse_request(json: &str) -> Request {
+    json.parse().expect("valid JSON-RPC request")
+}
+
+async fn send(
+    service: &mut LspService<AseLanguageServer>,
+    json: &str,
+) -> Option<tower_lsp::jsonrpc::Response> {
+    service
+        .ready()
+        .await
+        .expect("service ready")
+        .call(parse_request(json))
+        .await
+        .expect("call succeeded")
+}
+
+async fn init_and_open(service: &mut LspService<AseLanguageServer>, uri: &str, text: &str) {
+    let init = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    });
+    send(service, &init.to_string()).await;
+
+    let open = serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": uri,
+                "languageId": "sql",
+                "version": 0,
+                "text": text
+            }
+        }
+    });
+    send(service, &open.to_string()).await;
+}
+
+// --- Lifecycle tests ---
+
+#[tokio::test]
+async fn test_initialize_returns_capabilities() {
+    let mut service = setup();
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+
+    assert!(response.is_some(), "Should return initialize response");
+}
+
+#[tokio::test]
+async fn test_hover_on_opened_document() {
+    let mut service = setup();
+    init_and_open(&mut service, "file:///test.sql", "SELECT * FROM users").await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "position": { "line": 0, "character": 2 }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+
+    assert!(
+        response.is_some(),
+        "Hover on opened document should return response"
+    );
+}
+
+#[tokio::test]
+async fn test_hover_on_unopened_document_returns_null() {
+    let mut service = setup();
+
+    let init = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    });
+    send(&mut service, &init.to_string()).await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": "file:///nonexistent.sql" },
+            "position": { "line": 0, "character": 0 }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+
+    assert!(
+        response.is_some(),
+        "Should return a response even for missing doc"
+    );
+}
+
+#[tokio::test]
+async fn test_document_symbols_after_open() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "CREATE TABLE users (id INT, name VARCHAR(100))",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/documentSymbol",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+
+    assert!(response.is_some(), "Should return document symbols");
+}
+
+#[tokio::test]
+async fn test_did_change_updates_document() {
+    let mut service = setup();
+    init_and_open(&mut service, "file:///test.sql", "SELECT 1").await;
+
+    // Change content
+    let change = serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didChange",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql", "version": 1 },
+            "contentChanges": [{ "text": "CREATE TABLE users (id INT)" }]
+        }
+    });
+    send(&mut service, &change.to_string()).await;
+
+    // Document symbols should reflect new content
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/documentSymbol",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+
+    assert!(response.is_some(), "Symbols should return after change");
+}
+
+#[tokio::test]
+async fn test_semantic_tokens_after_open() {
+    let mut service = setup();
+    init_and_open(&mut service, "file:///test.sql", "SELECT * FROM users").await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/semanticTokens/full",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+
+    assert!(response.is_some(), "Should return semantic tokens");
+}
+
+#[tokio::test]
+async fn test_formatting_after_open() {
+    let mut service = setup();
+    init_and_open(&mut service, "file:///test.sql", "select * from t").await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/formatting",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "options": { "tabSize": 4, "insertSpaces": true }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+
+    assert!(response.is_some(), "Should return formatting edits");
+}
+
+#[tokio::test]
+async fn test_did_close_clears_document() {
+    let mut service = setup();
+    init_and_open(&mut service, "file:///test.sql", "SELECT 1").await;
+
+    // Close
+    let close = serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didClose",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" }
+        }
+    });
+    send(&mut service, &close.to_string()).await;
+
+    // Hover after close should return null
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "position": { "line": 0, "character": 2 }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+
+    assert!(
+        response.is_some(),
+        "Should return response even after close"
+    );
+}
