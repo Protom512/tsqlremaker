@@ -4,10 +4,108 @@
 //! テーブル、プロシージャ、ビュー、インデックス、変数を
 //! クエリ文字列でフィルタリングする。
 
+use crate::analysis::DocumentAnalysis;
 use crate::symbol_table::SymbolTableBuilder;
 use lsp_types::{Location, SymbolInformation, SymbolKind, Url};
 
-/// ソースコードからクエリにマッチするシンボルを検索する
+/// DocumentAnalysisからクエリにマッチするシンボルを検索する
+#[allow(deprecated)]
+pub fn workspace_symbols_with_analysis(
+    analysis: &DocumentAnalysis,
+    query: &str,
+    uri: &Url,
+) -> Vec<SymbolInformation> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+
+    let query_upper = query.to_uppercase();
+    let mut results = Vec::new();
+
+    for sym in analysis.symbol_table.tables.values() {
+        if sym.name.to_uppercase().contains(&query_upper) {
+            results.push(SymbolInformation {
+                name: sym.name.clone(),
+                kind: SymbolKind::CLASS,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: uri.clone(),
+                    range: sym.range,
+                },
+                container_name: None,
+            });
+        }
+    }
+
+    for sym in analysis.symbol_table.procedures.values() {
+        if sym.name.to_uppercase().contains(&query_upper) {
+            results.push(SymbolInformation {
+                name: sym.name.clone(),
+                kind: SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: uri.clone(),
+                    range: sym.range,
+                },
+                container_name: None,
+            });
+        }
+    }
+
+    for sym in analysis.symbol_table.views.values() {
+        if sym.name.to_uppercase().contains(&query_upper) {
+            results.push(SymbolInformation {
+                name: sym.name.clone(),
+                kind: SymbolKind::INTERFACE,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: uri.clone(),
+                    range: sym.range,
+                },
+                container_name: None,
+            });
+        }
+    }
+
+    for sym in analysis.symbol_table.indexes.values() {
+        if sym.name.to_uppercase().contains(&query_upper) {
+            results.push(SymbolInformation {
+                name: sym.name.clone(),
+                kind: SymbolKind::PROPERTY,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: uri.clone(),
+                    range: sym.range,
+                },
+                container_name: None,
+            });
+        }
+    }
+
+    for sym in analysis.symbol_table.variables.values() {
+        if sym.name.to_uppercase().contains(&query_upper) {
+            results.push(SymbolInformation {
+                name: sym.name.clone(),
+                kind: SymbolKind::VARIABLE,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: uri.clone(),
+                    range: sym.range,
+                },
+                container_name: None,
+            });
+        }
+    }
+
+    results
+}
+
+/// ソースコードからクエリにマッチするシンボルを検索する（ソースから構築）
 ///
 /// 大文字小文字を区別しない部分一致でフィルタリングする。
 #[allow(deprecated)]

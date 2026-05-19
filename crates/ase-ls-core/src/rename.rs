@@ -5,6 +5,7 @@
 //! - テーブル名: CREATE TABLE + 全参照箇所をリネーム
 //! - プロシージャ/ビュー/インデックス: 定義 + 参照をリネーム
 
+use crate::analysis::DocumentAnalysis;
 use crate::line_index::LineIndex;
 use crate::{find_token_at, token_matches_symbol};
 use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
@@ -12,7 +13,83 @@ use std::collections::HashMap;
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
 
-/// カーソル位置のシンボルを新しい名前にリネームする
+/// カーソル位置のシンボルをリネームする（DocumentAnalysis利用）
+pub fn rename_with_analysis(
+    analysis: &DocumentAnalysis,
+    position: Position,
+    new_name: &str,
+    uri: &Url,
+) -> Option<WorkspaceEdit> {
+    let offset = analysis
+        .line_index
+        .position_to_offset(&analysis.source, position);
+
+    let (target_kind, target_text) = match analysis.find_token_at(offset) {
+        Some((t, _)) => (t.kind, t.text.clone()),
+        None => return None,
+    };
+
+    let search_upper = target_text.to_uppercase();
+    let is_var = target_kind == TokenKind::LocalVar;
+
+    if is_var && !new_name.starts_with('@') {
+        return None;
+    }
+    if new_name.trim().is_empty() {
+        return None;
+    }
+
+    let mut edits = Vec::new();
+
+    for token in &analysis.tokens {
+        if token_matches_symbol(token.kind, &token.text, &search_upper, is_var) {
+            let (start_line, start_char) = analysis.line_index.offset_to_position(token.span.start);
+            let (end_line, end_char) = analysis.line_index.offset_to_position(token.span.end);
+            edits.push(TextEdit {
+                range: Range {
+                    start: Position {
+                        line: start_line,
+                        character: start_char,
+                    },
+                    end: Position {
+                        line: end_line,
+                        character: end_char,
+                    },
+                },
+                new_text: new_name.to_string(),
+            });
+        }
+    }
+
+    if edits.is_empty() {
+        return None;
+    }
+
+    edits.dedup_by(|a, b| a.range.start == b.range.start && a.range.end == b.range.end);
+    #[allow(clippy::mutable_key_type)]
+    let mut changes = HashMap::new();
+    changes.insert(uri.clone(), edits);
+
+    Some(WorkspaceEdit {
+        changes: Some(changes),
+        document_changes: None,
+        change_annotations: None,
+    })
+}
+
+/// リネームプレースホルダーを取得する（DocumentAnalysis利用）
+pub fn get_rename_placeholder_with_analysis(
+    analysis: &DocumentAnalysis,
+    position: Position,
+) -> Option<String> {
+    let offset = analysis
+        .line_index
+        .position_to_offset(&analysis.source, position);
+    let (token, _) = analysis.find_token_at(offset)?;
+    Some(token.text.clone())
+}
+
+/// カーソル位置のシンボルを新しい名前にリネームする（ソースから構築）
 ///
 /// ソース内の全参照箇所を特定し、WorkspaceEditを返す。
 pub fn rename(

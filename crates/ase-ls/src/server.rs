@@ -212,8 +212,8 @@ impl LanguageServer for AseLanguageServer {
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = &params.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            Ok(Some(semantic_tokens::semantic_tokens_full(
-                &analysis.source,
+            Ok(Some(semantic_tokens::semantic_tokens_full_with_analysis(
+                &analysis,
             )))
         } else {
             Ok(None)
@@ -226,7 +226,7 @@ impl LanguageServer for AseLanguageServer {
     ) -> Result<Option<SemanticTokensRangeResult>> {
         let uri = &params.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            let result = semantic_tokens::semantic_tokens_full(&analysis.source);
+            let result = semantic_tokens::semantic_tokens_full_with_analysis(&analysis);
             match result {
                 SemanticTokensResult::Tokens(tokens) => {
                     Ok(Some(SemanticTokensRangeResult::Tokens(tokens)))
@@ -323,8 +323,8 @@ impl LanguageServer for AseLanguageServer {
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let uri = &params.text_document_position.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            let ranges = references::reference_ranges(
-                &analysis.source,
+            let ranges = references::reference_ranges_with_analysis(
+                &analysis,
                 params.text_document_position.position,
                 params.context.include_declaration,
             );
@@ -348,7 +348,7 @@ impl LanguageServer for AseLanguageServer {
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let uri = &params.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            let actions = code_actions::code_actions(&analysis.source, params.range, uri);
+            let actions = code_actions::code_actions_with_analysis(&analysis, params.range, uri);
             if actions.is_empty() {
                 Ok(None)
             } else {
@@ -362,8 +362,8 @@ impl LanguageServer for AseLanguageServer {
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         let uri = &params.text_document_position.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            Ok(rename::rename(
-                &analysis.source,
+            Ok(rename::rename_with_analysis(
+                &analysis,
                 params.text_document_position.position,
                 &params.new_name,
                 uri,
@@ -380,9 +380,13 @@ impl LanguageServer for AseLanguageServer {
         let docs = self.documents.read().await;
         let mut all_symbols = Vec::new();
 
-        for (uri_str, (source, _analysis)) in &docs.docs {
+        for (uri_str, (_source, analysis)) in &docs.docs {
             if let Ok(uri) = Url::parse(uri_str) {
-                let symbols = workspace_symbols::workspace_symbols(source, &params.query, &uri);
+                let symbols = workspace_symbols::workspace_symbols_with_analysis(
+                    analysis,
+                    &params.query,
+                    &uri,
+                );
                 all_symbols.extend(symbols);
             }
         }

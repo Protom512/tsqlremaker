@@ -2,6 +2,7 @@
 //!
 //! Lexer のトークンストリームから LSP Semantic Tokens を生成する。
 
+use crate::analysis::DocumentAnalysis;
 use crate::line_index::LineIndex;
 use lsp_types::{
     SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult,
@@ -108,7 +109,44 @@ fn token_kind_to_type_index(kind: TokenKind) -> Option<u32> {
     }
 }
 
-/// ソースコードから Semantic Tokens を生成する
+/// ソースコードから Semantic Tokens を生成する（DocumentAnalysis利用）
+pub fn semantic_tokens_full_with_analysis(analysis: &DocumentAnalysis) -> SemanticTokensResult {
+    let mut tokens = Vec::new();
+    let mut prev_line = 0u32;
+    let mut prev_char = 0u32;
+
+    for token in &analysis.tokens {
+        if let Some(type_idx) = token_kind_to_type_index(token.kind) {
+            let (line, character) = analysis.line_index.offset_to_position(token.span.start);
+
+            let delta_line = line.saturating_sub(prev_line);
+            let delta_start = if delta_line == 0 {
+                character.saturating_sub(prev_char)
+            } else {
+                character
+            };
+
+            tokens.push(SemanticToken {
+                delta_line,
+                delta_start,
+                length: token.span.len(),
+                token_type: type_idx,
+                token_modifiers_bitset: 0,
+            });
+
+            prev_line = line;
+            prev_char = character;
+        }
+    }
+
+    SemanticTokens {
+        result_id: None,
+        data: tokens,
+    }
+    .into()
+}
+
+/// ソースコードから Semantic Tokens を生成する（ソースから構築）
 pub fn semantic_tokens_full(source: &str) -> SemanticTokensResult {
     let line_index = LineIndex::new(source);
     let lexer = Lexer::new(source);
