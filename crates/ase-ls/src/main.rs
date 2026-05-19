@@ -2,11 +2,11 @@
 //!
 //! VSCode / Zed 用の SAP ASE (Sybase) T-SQL Language Server。
 
-mod config;
-mod server;
-
+use ase_ls::server::AseLanguageServer;
 use clap::Parser;
 use tower_lsp::LspService;
+
+use ase_ls::config::ServerConfig;
 
 /// SAP ASE Language Server
 #[derive(Parser, Debug)]
@@ -21,7 +21,7 @@ struct Args {
 async fn main() {
     let args = Args::parse();
 
-    let server_config = config::ServerConfig {
+    let server_config = ServerConfig {
         log_level: args.log_level,
     };
     server_config.init_logging();
@@ -31,7 +31,7 @@ async fn main() {
         env!("CARGO_PKG_VERSION")
     );
 
-    let (service, socket) = LspService::new(server::AseLanguageServer::new);
+    let (service, socket) = LspService::new(AseLanguageServer::new);
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
