@@ -300,6 +300,7 @@ fn get_line_at(source: &str, line: u32) -> String {
 
 /// WorkspaceEdit を生成するヘルパー
 fn make_text_edit(uri: &lsp_types::Url, range: Range, new_text: String) -> WorkspaceEdit {
+    #[allow(clippy::mutable_key_type)]
     let mut changes = HashMap::new();
     changes.insert(uri.clone(), vec![TextEdit { range, new_text }]);
     WorkspaceEdit {

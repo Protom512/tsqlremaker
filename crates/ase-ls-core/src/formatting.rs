@@ -336,4 +336,91 @@ mod tests {
         let second = format_sql(&result);
         assert_eq!(result, second, "CASE formatting should be idempotent");
     }
+
+    #[test]
+    fn test_format_string_preserves_content() {
+        let result = format_sql("SELECT 'hello' FROM t");
+        assert!(
+            result.contains("'hello'"),
+            "String content should be preserved: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_format_nstring_preserves_content() {
+        let result = format_sql("SELECT N'hello' FROM t");
+        assert!(
+            result.contains("N'hello'") || result.contains("hello"),
+            "NString content should be present: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_format_comment_preserves_content() {
+        let result = format_sql("SELECT 1 -- my comment\nFROM t");
+        assert!(
+            result.contains("-- my comment"),
+            "Line comment should be preserved: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_format_block_comment_preserves_content() {
+        let result = format_sql("SELECT 1 /* block */ FROM t");
+        assert!(
+            result.contains("/* block */"),
+            "Block comment should be preserved: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_format_newline_before_from() {
+        let result = format_sql("SELECT col1, col2 FROM users WHERE id = 1");
+        assert!(result.contains("FROM"), "Should contain FROM: {}", result);
+        // FROM should be on its own line
+        let lines: Vec<&str> = result.lines().collect();
+        let from_line = lines.iter().find(|l| l.trim().starts_with("FROM"));
+        assert!(from_line.is_some(), "FROM should start a line: {}", result);
+    }
+
+    #[test]
+    fn test_format_newline_before_where() {
+        let result = format_sql("SELECT * FROM users WHERE id = 1");
+        let lines: Vec<&str> = result.lines().collect();
+        let where_line = lines.iter().find(|l| l.trim().starts_with("WHERE"));
+        assert!(
+            where_line.is_some(),
+            "WHERE should start a line: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_format_space_between_tokens() {
+        let result = format_sql("SELECT*FROM t");
+        assert!(
+            result.contains("SELECT *"),
+            "Should add space after SELECT: {}",
+            result
+        );
+        assert!(
+            result.contains("FROM t"),
+            "Should add space after FROM: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_format_no_space_in_operators() {
+        let result = format_sql("SELECT * FROM t WHERE id = 1");
+        assert!(
+            result.contains("id = 1"),
+            "Spaces around = operator: {}",
+            result
+        );
+    }
 }
