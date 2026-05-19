@@ -35,14 +35,13 @@ pub fn format(source: &str) -> Vec<TextEdit> {
 /// SQL文字列をフォーマットする
 fn format_sql(source: &str) -> String {
     let lexer = Lexer::new(source).with_comments(true);
-    let tokens: Vec<_> = lexer.filter_map(Result::ok).collect();
 
     let mut result = String::new();
     let mut indent_level = 0u32;
     let mut prev_kind: Option<TokenKind> = None;
     let mut at_line_start = true;
 
-    for token in &tokens {
+    for token in lexer.filter_map(Result::ok) {
         if token.kind == TokenKind::Eof {
             break;
         }
@@ -422,5 +421,18 @@ mod tests {
             "Spaces around = operator: {}",
             result
         );
+    }
+
+    #[test]
+    fn test_format_large_input_still_correct() {
+        // Multi-batch with GO separator — exercises streaming over many tokens
+        let input = "select * from t1 where id = 1 go select col1, col2 from t2 go";
+        let first = format_sql(input);
+        let second = format_sql(&first);
+        assert_eq!(
+            first, second,
+            "Large multi-batch formatting should be idempotent"
+        );
+        assert!(first.contains("GO"), "GO separators should be preserved");
     }
 }
