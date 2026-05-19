@@ -305,7 +305,20 @@ impl SymbolTableBuilder {
                     Self::collect_from_stmt(line_index, s, table);
                 }
             }
-            _ => {}
+            // Flat statements — no nested definitions to extract
+            Statement::Select(_)
+            | Statement::Insert(_)
+            | Statement::Update(_)
+            | Statement::Delete(_)
+            | Statement::Set(_)
+            | Statement::VariableAssignment(_)
+            | Statement::Break(_)
+            | Statement::Continue(_)
+            | Statement::Return(_)
+            | Statement::Transaction(_)
+            | Statement::Throw(_)
+            | Statement::Raiserror(_)
+            | Statement::BatchSeparator(_) => {}
         }
     }
 
@@ -366,7 +379,21 @@ impl SymbolTableBuilder {
                     Self::collect_variables(line_index, s, variables);
                 }
             }
-            _ => {}
+            // Flat statements — no nested variable declarations
+            Statement::Select(_)
+            | Statement::Insert(_)
+            | Statement::Update(_)
+            | Statement::Delete(_)
+            | Statement::Create(_)
+            | Statement::Set(_)
+            | Statement::VariableAssignment(_)
+            | Statement::Break(_)
+            | Statement::Continue(_)
+            | Statement::Return(_)
+            | Statement::Transaction(_)
+            | Statement::Throw(_)
+            | Statement::Raiserror(_)
+            | Statement::BatchSeparator(_) => {}
         }
     }
 
@@ -599,5 +626,54 @@ mod tests {
         assert!(result.is_some());
         let (name, _range) = result.unwrap();
         assert_eq!(name, "users");
+    }
+
+    // --- Explicit variant coverage tests (#56) ---
+
+    #[test]
+    fn test_variable_after_set_statement() {
+        // SET @var = expr (VariableAssignment) is parsed separately from SET option
+        let source = "DECLARE @x INT\nSET @x = 1\nDECLARE @y INT";
+        let table = SymbolTableBuilder::build_tolerant(source);
+        assert!(table.variables.contains_key("@X"), "@x should be tracked");
+        assert!(
+            table.variables.contains_key("@Y"),
+            "@y after SET should still be tracked"
+        );
+    }
+
+    #[test]
+    fn test_variable_after_transaction() {
+        let source = "BEGIN TRAN\nDECLARE @x INT\nCOMMIT";
+        let table = SymbolTableBuilder::build_tolerant(source);
+        assert!(
+            table.variables.contains_key("@X"),
+            "Variable inside transaction context should be tracked"
+        );
+    }
+
+    #[test]
+    fn test_variable_after_select_statement() {
+        let source = "SELECT * FROM t\nDECLARE @result INT";
+        let table = SymbolTableBuilder::build_tolerant(source);
+        assert!(
+            table.variables.contains_key("@RESULT"),
+            "Variable after SELECT should be tracked"
+        );
+    }
+
+    #[test]
+    fn test_table_and_procedure_in_multi_batch() {
+        // GO separates batches — both should still be found
+        let source = "CREATE TABLE t (id INT)\nGO\nCREATE PROCEDURE p AS BEGIN RETURN 1 END";
+        let table = SymbolTableBuilder::build_tolerant(source);
+        assert!(
+            table.tables.contains_key("T"),
+            "Table before GO should be tracked"
+        );
+        assert!(
+            table.procedures.contains_key("P"),
+            "Procedure after GO should be tracked"
+        );
     }
 }
