@@ -5,13 +5,44 @@
 //! - INSERT INTO table → VALUES骨組み生成
 //! - BEGIN/END → TRY...CATCH ラッパー
 
+use crate::analysis::DocumentAnalysis;
 use crate::symbol_table::SymbolTableBuilder;
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, Position, Range, TextEdit, WorkspaceEdit,
 };
 use std::collections::HashMap;
 
-/// カーソル位置のコンテキストに基づいてCode Actionsを生成する
+/// Code Actionsを生成する（DocumentAnalysis利用）
+pub fn code_actions_with_analysis(
+    analysis: &DocumentAnalysis,
+    range: Range,
+    uri: &lsp_types::Url,
+) -> Vec<CodeActionOrCommand> {
+    let mut actions = Vec::new();
+
+    let line_text = get_line_at(&analysis.source, range.start.line);
+    if line_text.is_empty() {
+        return actions;
+    }
+
+    let symbol_table = &analysis.symbol_table;
+
+    if let Some(action) = try_expand_select_star(symbol_table, &line_text, range.start, uri) {
+        actions.push(CodeActionOrCommand::CodeAction(action));
+    }
+
+    if let Some(action) = try_generate_insert_skeleton(symbol_table, &line_text, range.start, uri) {
+        actions.push(CodeActionOrCommand::CodeAction(action));
+    }
+
+    if let Some(action) = try_wrap_try_catch(&analysis.source, &line_text, range.start, uri) {
+        actions.push(CodeActionOrCommand::CodeAction(action));
+    }
+
+    actions
+}
+
+/// Code Actionsを生成する（ソースから構築）
 pub fn code_actions(source: &str, range: Range, uri: &lsp_types::Url) -> Vec<CodeActionOrCommand> {
     let mut actions = Vec::new();
 

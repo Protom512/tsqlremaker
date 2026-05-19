@@ -348,7 +348,7 @@ impl LanguageServer for AseLanguageServer {
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let uri = &params.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            let actions = code_actions::code_actions(&analysis.source, params.range, uri);
+            let actions = code_actions::code_actions_with_analysis(&analysis, params.range, uri);
             if actions.is_empty() {
                 Ok(None)
             } else {
@@ -362,8 +362,8 @@ impl LanguageServer for AseLanguageServer {
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         let uri = &params.text_document_position.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            Ok(rename::rename(
-                &analysis.source,
+            Ok(rename::rename_with_analysis(
+                &analysis,
                 params.text_document_position.position,
                 &params.new_name,
                 uri,
@@ -380,9 +380,13 @@ impl LanguageServer for AseLanguageServer {
         let docs = self.documents.read().await;
         let mut all_symbols = Vec::new();
 
-        for (uri_str, (source, _analysis)) in &docs.docs {
+        for (uri_str, (_source, analysis)) in &docs.docs {
             if let Ok(uri) = Url::parse(uri_str) {
-                let symbols = workspace_symbols::workspace_symbols(source, &params.query, &uri);
+                let symbols = workspace_symbols::workspace_symbols_with_analysis(
+                    analysis,
+                    &params.query,
+                    &uri,
+                );
                 all_symbols.extend(symbols);
             }
         }
