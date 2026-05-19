@@ -2,12 +2,106 @@
 //!
 //! 組み込み関数のパラメータシグネチャを提供する。
 
+use crate::analysis::DocumentAnalysis;
 use crate::line_index::LineIndex;
 use lsp_types::{
     ParameterInformation, ParameterLabel, Position, SignatureHelp, SignatureInformation,
 };
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
+
+/// SignatureHelp情報を生成する（DocumentAnalysis利用）
+pub fn signature_help_with_analysis(
+    analysis: &DocumentAnalysis,
+    position: Position,
+) -> Option<SignatureHelp> {
+    let offset = analysis
+        .line_index
+        .position_to_offset(&analysis.source, position);
+
+    let mut func_name: Option<String> = None;
+    let mut paren_depth = 0i32;
+    let mut active_param = 0u32;
+    let mut found_open_paren = false;
+
+    for token in &analysis.tokens {
+        if token.span.start as usize > offset {
+            break;
+        }
+
+        match token.kind {
+            TokenKind::Ident => {
+                if !found_open_paren {
+                    func_name = Some(token.text.to_uppercase());
+                }
+            }
+            TokenKind::LParen => {
+                if !found_open_paren {
+                    found_open_paren = true;
+                    paren_depth = 1;
+                } else {
+                    paren_depth += 1;
+                }
+            }
+            TokenKind::RParen => {
+                paren_depth -= 1;
+                if paren_depth == 0 {
+                    found_open_paren = false;
+                    func_name = None;
+                    active_param = 0;
+                }
+            }
+            TokenKind::Comma => {
+                if paren_depth == 1 {
+                    active_param += 1;
+                }
+            }
+            _ => {
+                if !found_open_paren && token.kind.is_keyword() {
+                    func_name = Some(token.text.to_uppercase());
+                }
+            }
+        }
+    }
+
+    if !found_open_paren {
+        return None;
+    }
+    let name = func_name?;
+    let entry = crate::db_docs::lookup_function(name.as_str())?;
+
+    if entry.category != crate::db_docs::DocCategory::Function {
+        return None;
+    }
+
+    let parameters: Vec<ParameterInformation> = entry
+        .params
+        .iter()
+        .map(|p| ParameterInformation {
+            label: ParameterLabel::Simple(p.to_string()),
+            documentation: None,
+        })
+        .collect();
+
+    let active_parameter = if active_param < parameters.len() as u32 {
+        Some(active_param)
+    } else {
+        Some((parameters.len() as u32).saturating_sub(1))
+    };
+
+    Some(SignatureHelp {
+        signatures: vec![SignatureInformation {
+            label: entry.syntax.to_string(),
+            documentation: Some(lsp_types::Documentation::String(
+                entry.description.to_string(),
+            )),
+            parameters: Some(parameters),
+            active_parameter,
+        }],
+        active_signature: Some(0),
+        active_parameter,
+    })
+}
 
 /// SignatureHelp情報を生成する
 ///

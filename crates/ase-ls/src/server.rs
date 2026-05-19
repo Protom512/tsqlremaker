@@ -3,8 +3,9 @@
 //! tower-lsp を使用した Language Server のハンドラー実装。
 
 use ase_ls_core::{
-    code_actions, completion, definition, diagnostics, folding, formatting, hover, references,
-    rename, semantic_tokens, signature_help, symbols, workspace_symbols,
+    analysis::DocumentAnalysis, code_actions, completion, definition, diagnostics, folding,
+    formatting, hover, references, rename, semantic_tokens, signature_help, symbols,
+    workspace_symbols,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -20,8 +21,8 @@ pub struct AseLanguageServer {
 
 /// メモリ上のドキュメント管理
 struct DocumentStore {
-    /// URI → ドキュメントテキスト
-    docs: std::collections::HashMap<String, Arc<str>>,
+    /// URI → (source, analysis)
+    docs: std::collections::HashMap<String, (Arc<str>, DocumentAnalysis)>,
 }
 
 impl DocumentStore {
@@ -32,11 +33,15 @@ impl DocumentStore {
     }
 
     fn open(&mut self, uri: &str, text: &str) {
-        self.docs.insert(uri.to_string(), Arc::from(text));
+        let analysis = DocumentAnalysis::new(text);
+        self.docs
+            .insert(uri.to_string(), (Arc::from(text), analysis));
     }
 
     fn update(&mut self, uri: &str, text: &str) {
-        self.docs.insert(uri.to_string(), Arc::from(text));
+        let analysis = DocumentAnalysis::new(text);
+        self.docs
+            .insert(uri.to_string(), (Arc::from(text), analysis));
     }
 
     fn close(&mut self, uri: &str) {
@@ -54,22 +59,18 @@ impl AseLanguageServer {
 
     /// ドキュメントの診断情報をパブリッシュする
     async fn publish_diagnostics_for(&self, uri: &Url) {
-        if let Some(source) = self.get_source(uri).await {
-            let diags = diagnostics::diagnose_source(&source);
+        if let Some(analysis) = self.get_analysis(uri).await {
+            let diags = diagnostics::diagnose(&analysis);
             self.client
                 .publish_diagnostics(uri.clone(), diags, None)
                 .await;
         }
     }
 
-    /// URIに対応するドキュメントのソーステキストを取得する
-    ///
-    /// 全ハンドラーで共通する「ドキュメント取得」パターンを集約するヘルパー。
-    /// Arc<str>によりコピーコストを最小化しつつ、RwLockの保持期間を最短にする。
-    /// 存在しない場合は None を返す。
-    async fn get_source(&self, uri: &Url) -> Option<Arc<str>> {
+    /// URIに対応するDocumentAnalysisを取得する
+    async fn get_analysis(&self, uri: &Url) -> Option<DocumentAnalysis> {
         let docs = self.documents.read().await;
-        docs.docs.get(uri.as_str()).cloned()
+        docs.docs.get(uri.as_str()).map(|(_, a)| a).cloned()
     }
 }
 
@@ -189,8 +190,8 @@ impl LanguageServer for AseLanguageServer {
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
         let uri = &params.text_document.uri;
-        if let Some(source) = self.get_source(uri).await {
-            Ok(symbols::document_symbols(&source))
+        if let Some(analysis) = self.get_analysis(uri).await {
+            Ok(symbols::document_symbols(&analysis.source))
         } else {
             Ok(None)
         }
@@ -198,8 +199,8 @@ impl LanguageServer for AseLanguageServer {
 
     async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
         let uri = &params.text_document.uri;
-        if let Some(source) = self.get_source(uri).await {
-            Ok(Some(folding::folding_ranges(&source)))
+        if let Some(analysis) = self.get_analysis(uri).await {
+            Ok(Some(folding::folding_ranges(&analysis.source)))
         } else {
             Ok(Some(Vec::new()))
         }
@@ -210,8 +211,10 @@ impl LanguageServer for AseLanguageServer {
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = &params.text_document.uri;
-        if let Some(source) = self.get_source(uri).await {
-            Ok(Some(semantic_tokens::semantic_tokens_full(&source)))
+        if let Some(analysis) = self.get_analysis(uri).await {
+            Ok(Some(semantic_tokens::semantic_tokens_full(
+                &analysis.source,
+            )))
         } else {
             Ok(None)
         }
@@ -222,8 +225,8 @@ impl LanguageServer for AseLanguageServer {
         params: SemanticTokensRangeParams,
     ) -> Result<Option<SemanticTokensRangeResult>> {
         let uri = &params.text_document.uri;
-        if let Some(source) = self.get_source(uri).await {
-            let result = semantic_tokens::semantic_tokens_full(&source);
+        if let Some(analysis) = self.get_analysis(uri).await {
+            let result = semantic_tokens::semantic_tokens_full(&analysis.source);
             match result {
                 SemanticTokensResult::Tokens(tokens) => {
                     Ok(Some(SemanticTokensRangeResult::Tokens(tokens)))
@@ -237,9 +240,9 @@ impl LanguageServer for AseLanguageServer {
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = &params.text_document_position_params.text_document.uri;
-        if let Some(source) = self.get_source(uri).await {
-            Ok(hover::hover(
-                &source,
+        if let Some(analysis) = self.get_analysis(uri).await {
+            Ok(hover::hover_with_analysis(
+                &analysis,
                 params.text_document_position_params.position,
             ))
         } else {
@@ -249,8 +252,8 @@ impl LanguageServer for AseLanguageServer {
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let uri = &params.text_document.uri;
-        if let Some(source) = self.get_source(uri).await {
-            let edits = formatting::format(&source);
+        if let Some(analysis) = self.get_analysis(uri).await {
+            let edits = formatting::format(&analysis.source);
             if edits.is_empty() {
                 Ok(None)
             } else {
@@ -266,8 +269,8 @@ impl LanguageServer for AseLanguageServer {
         params: DocumentRangeFormattingParams,
     ) -> Result<Option<Vec<TextEdit>>> {
         let uri = &params.text_document.uri;
-        if let Some(source) = self.get_source(uri).await {
-            let edits = formatting::format(&source);
+        if let Some(analysis) = self.get_analysis(uri).await {
+            let edits = formatting::format(&analysis.source);
             if edits.is_empty() {
                 Ok(None)
             } else {
@@ -280,9 +283,9 @@ impl LanguageServer for AseLanguageServer {
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         let uri = &params.text_document_position_params.text_document.uri;
-        if let Some(source) = self.get_source(uri).await {
-            Ok(signature_help::signature_help(
-                &source,
+        if let Some(analysis) = self.get_analysis(uri).await {
+            Ok(signature_help::signature_help_with_analysis(
+                &analysis,
                 params.text_document_position_params.position,
             ))
         } else {
@@ -295,9 +298,9 @@ impl LanguageServer for AseLanguageServer {
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = &params.text_document_position_params.text_document.uri;
-        if let Some(source) = self.get_source(uri).await {
-            let ranges = definition::definition_ranges(
-                &source,
+        if let Some(analysis) = self.get_analysis(uri).await {
+            let ranges = definition::definition_ranges_with_analysis(
+                &analysis,
                 params.text_document_position_params.position,
             );
             if ranges.is_empty() {
@@ -319,9 +322,9 @@ impl LanguageServer for AseLanguageServer {
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let uri = &params.text_document_position.text_document.uri;
-        if let Some(source) = self.get_source(uri).await {
+        if let Some(analysis) = self.get_analysis(uri).await {
             let ranges = references::reference_ranges(
-                &source,
+                &analysis.source,
                 params.text_document_position.position,
                 params.context.include_declaration,
             );
@@ -344,8 +347,8 @@ impl LanguageServer for AseLanguageServer {
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let uri = &params.text_document.uri;
-        if let Some(source) = self.get_source(uri).await {
-            let actions = code_actions::code_actions(&source, params.range, uri);
+        if let Some(analysis) = self.get_analysis(uri).await {
+            let actions = code_actions::code_actions(&analysis.source, params.range, uri);
             if actions.is_empty() {
                 Ok(None)
             } else {
@@ -358,9 +361,9 @@ impl LanguageServer for AseLanguageServer {
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         let uri = &params.text_document_position.text_document.uri;
-        if let Some(source) = self.get_source(uri).await {
+        if let Some(analysis) = self.get_analysis(uri).await {
             Ok(rename::rename(
-                &source,
+                &analysis.source,
                 params.text_document_position.position,
                 &params.new_name,
                 uri,
@@ -377,7 +380,7 @@ impl LanguageServer for AseLanguageServer {
         let docs = self.documents.read().await;
         let mut all_symbols = Vec::new();
 
-        for (uri_str, source) in &docs.docs {
+        for (uri_str, (source, _analysis)) in &docs.docs {
             if let Ok(uri) = Url::parse(uri_str) {
                 let symbols = workspace_symbols::workspace_symbols(source, &params.query, &uri);
                 all_symbols.extend(symbols);

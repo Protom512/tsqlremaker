@@ -8,6 +8,7 @@
 #![warn(clippy::expect_used)]
 #![warn(clippy::panic)]
 
+pub mod analysis;
 pub mod code_actions;
 pub mod completion;
 pub mod db_docs;

@@ -3,12 +3,49 @@
 //! T-SQL キーワード、データ型、組み込み関数、変数のホバー情報を提供する。
 //! 静的ドキュメントデータは [`crate::db_docs`] モジュールに集約されている。
 
+use crate::analysis::DocumentAnalysis;
 use crate::line_index::LineIndex;
 use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Range};
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
 
-/// Hover情報を生成する
+/// Hover情報を生成する（DocumentAnalysis利用）
+pub fn hover_with_analysis(analysis: &DocumentAnalysis, position: Position) -> Option<Hover> {
+    let offset = analysis
+        .line_index
+        .position_to_offset(&analysis.source, position);
+
+    let (token, _idx) = analysis.find_token_at(offset)?;
+    let kind = token.kind;
+    let text = token.text.clone();
+    let start = token.span.start as usize;
+    let end = token.span.end as usize;
+
+    let content = build_schema_hover(&analysis.symbol_table, &kind, &text)
+        .or_else(|| build_hover_content(&kind, &text))?;
+
+    let (start_line, start_char) = analysis.line_index.offset_to_position(start as u32);
+    let (end_line, end_char) = analysis.line_index.offset_to_position(end as u32);
+
+    Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: content,
+        }),
+        range: Some(Range {
+            start: Position {
+                line: start_line,
+                character: start_char,
+            },
+            end: Position {
+                line: end_line,
+                character: end_char,
+            },
+        }),
+    })
+}
+
+/// Hover情報を生成する（ソースから構築）
 ///
 /// カーソル位置のトークンを特定し、対応するドキュメントを返す。
 /// まずシンボルテーブルを検索し、見つからなければ静的ドキュメントにフォールバックする。

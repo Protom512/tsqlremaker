@@ -2,9 +2,19 @@
 //!
 //! パーサーのエラーを LSP Diagnostic に変換する。
 
+use crate::analysis::DocumentAnalysis;
 use crate::line_index::LineIndex;
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use tsql_parser::ParseError;
+
+/// DocumentAnalysisから診断を生成する（キャッシュ利用）
+pub fn diagnose(analysis: &DocumentAnalysis) -> Vec<Diagnostic> {
+    analysis
+        .parse_errors
+        .iter()
+        .map(|e| parse_error_to_diagnostic(&analysis.line_index, e))
+        .collect()
+}
 
 /// ParseError を LSP Diagnostic に変換する
 pub fn parse_errors_to_diagnostics(source: &str, errors: &[ParseError]) -> Vec<Diagnostic> {
@@ -141,5 +151,25 @@ mod tests {
         let source = "CREATE TABLE t (id INT)\nINSERT INTO t (id) VALUES (1)\nSELECT * FROM t";
         let diags = diagnose_source(source);
         assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn test_diagnose_matches_diagnose_source() {
+        let sources = [
+            "SELECT * FROM users",
+            "SELCT * FROM",
+            "CREATE TABLE t (id INT)",
+            "",
+        ];
+        for source in &sources {
+            let analysis = crate::analysis::DocumentAnalysis::new(source);
+            let from_analysis = diagnose(&analysis);
+            let from_source = diagnose_source(source);
+            assert_eq!(
+                from_analysis.len(),
+                from_source.len(),
+                "Mismatch for source: {source:?}"
+            );
+        }
     }
 }

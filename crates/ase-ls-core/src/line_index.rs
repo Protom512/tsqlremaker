@@ -6,7 +6,7 @@ use lsp_types::Position;
 ///
 /// Builds a table of byte offsets for each line start, enabling
 /// binary search instead of linear scan for offset→position and position→offset.
-pub(crate) struct LineIndex {
+pub struct LineIndex {
     /// Byte offset of each line start. line_offsets[i] = byte offset of line i.
     /// Always has at least one entry (offset 0 for line 0).
     line_offsets: Vec<u32>,
@@ -14,7 +14,7 @@ pub(crate) struct LineIndex {
 
 impl LineIndex {
     /// Build the line index from source text. O(n) construction.
-    pub(crate) fn new(source: &str) -> Self {
+    pub fn new(source: &str) -> Self {
         let mut offsets = vec![0u32];
         for (i, b) in source.bytes().enumerate() {
             if b == b'\n' {
@@ -27,7 +27,7 @@ impl LineIndex {
     }
 
     /// Convert a byte offset to (line, character), both 0-indexed. O(log n).
-    pub(crate) fn offset_to_position(&self, offset: u32) -> (u32, u32) {
+    pub fn offset_to_position(&self, offset: u32) -> (u32, u32) {
         let line = self.line_number(offset);
         let line_start = self.line_offsets[line as usize];
         let character = offset.saturating_sub(line_start);
@@ -35,7 +35,7 @@ impl LineIndex {
     }
 
     /// Convert an LSP Position to a byte offset. O(log n) + O(line_length).
-    pub(crate) fn position_to_offset(&self, source: &str, position: Position) -> usize {
+    pub fn position_to_offset(&self, source: &str, position: Position) -> usize {
         let line = position.line as usize;
         if line >= self.line_offsets.len() {
             return source.len();

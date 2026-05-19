@@ -8,6 +8,7 @@
 //! - ビュー参照 → CREATE VIEW定義
 //! - インデックス参照 → CREATE INDEX定義
 
+use crate::analysis::DocumentAnalysis;
 use crate::line_index::LineIndex;
 use crate::symbol_table::{SymbolTable, SymbolTableBuilder};
 
@@ -15,9 +16,30 @@ use crate::find_token_at;
 use lsp_types::{Position, Range};
 use tsql_token::TokenKind;
 
-/// カーソル位置のシンボルの定義箇所を検索する
-///
-/// 戻り値は定義箇所のRangeのリスト。空の場合は定義なし。
+/// カーソル位置のシンボルの定義箇所を検索する（DocumentAnalysis利用）
+pub fn definition_ranges_with_analysis(
+    analysis: &DocumentAnalysis,
+    position: Position,
+) -> Vec<Range> {
+    let offset = analysis
+        .line_index
+        .position_to_offset(&analysis.source, position);
+
+    let (target_kind, target_text) = match analysis.find_token_at(offset) {
+        Some((t, _)) => (t.kind, t.text.clone()),
+        None => return Vec::new(),
+    };
+
+    let search_name = target_text.to_uppercase();
+
+    if target_kind == TokenKind::LocalVar {
+        find_variable_definition(&analysis.symbol_table, &search_name)
+    } else {
+        find_object_definition(&analysis.symbol_table, &search_name)
+    }
+}
+
+/// カーソル位置のシンボルの定義箇所を検索する（ソースから構築）
 pub fn definition_ranges(source: &str, position: Position) -> Vec<Range> {
     let line_index = LineIndex::new(source);
     let offset = line_index.position_to_offset(source, position);
