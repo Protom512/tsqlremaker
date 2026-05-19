@@ -6,11 +6,60 @@
 //! - プロシージャ: CREATE PROCEDURE + EXEC呼び出し
 //! - ビュー: CREATE VIEW + SELECT内の参照
 
+use crate::analysis::DocumentAnalysis;
 use crate::line_index::LineIndex;
 use crate::{find_token_at, token_matches_symbol};
 use lsp_types::{Position, Range};
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
+
+/// カーソル位置のシンボルの全参照箇所を検索する（DocumentAnalysis利用）
+pub fn reference_ranges_with_analysis(
+    analysis: &DocumentAnalysis,
+    position: Position,
+    include_declaration: bool,
+) -> Vec<Range> {
+    let offset = analysis
+        .line_index
+        .position_to_offset(&analysis.source, position);
+
+    let (target_kind, target_text) = match analysis.find_token_at(offset) {
+        Some((t, _)) => (t.kind, t.text.clone()),
+        None => return Vec::new(),
+    };
+
+    let search_name = target_text.to_uppercase();
+    let is_var = target_kind == TokenKind::LocalVar;
+
+    let mut refs = Vec::new();
+
+    for token in &analysis.tokens {
+        if token_matches_symbol(token.kind, &token.text, &search_name, is_var) {
+            let (start_line, start_char) = analysis.line_index.offset_to_position(token.span.start);
+            let (end_line, end_char) = analysis.line_index.offset_to_position(token.span.end);
+            let range = Range {
+                start: Position {
+                    line: start_line,
+                    character: start_char,
+                },
+                end: Position {
+                    line: end_line,
+                    character: end_char,
+                },
+            };
+
+            let is_declaration = !include_declaration
+                && is_definition_token(&analysis.source, token.span.start as usize, is_var);
+
+            if include_declaration || !is_declaration {
+                refs.push(range);
+            }
+        }
+    }
+
+    refs.dedup_by(|a, b| a.start == b.start && a.end == b.end);
+    refs
+}
 
 /// カーソル位置のシンボルの全参照箇所を検索する
 ///
@@ -40,7 +89,7 @@ pub fn reference_ranges(source: &str, position: Position, include_declaration: b
 
             // 定義箇所の判定
             let is_declaration =
-                !include_declaration && is_definition_token(source, &token, is_var);
+                !include_declaration && is_definition_token(source, token.span.start as usize, is_var);
 
             if include_declaration || !is_declaration {
                 refs.push(range);
@@ -55,8 +104,8 @@ pub fn reference_ranges(source: &str, position: Position, include_declaration: b
 }
 
 /// トークンが定義箇所かどうかを判定する
-fn is_definition_token(source: &str, token: &tsql_lexer::Token<'_>, is_var: bool) -> bool {
-    let before = &source[..token.span.start as usize];
+fn is_definition_token(source: &str, span_start: usize, is_var: bool) -> bool {
+    let before = &source[..span_start];
     let trimmed = before.trim_end();
     let upper = trimmed.to_uppercase();
 

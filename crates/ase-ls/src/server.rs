@@ -212,8 +212,8 @@ impl LanguageServer for AseLanguageServer {
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = &params.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            Ok(Some(semantic_tokens::semantic_tokens_full(
-                &analysis.source,
+            Ok(Some(semantic_tokens::semantic_tokens_full_with_analysis(
+                &analysis,
             )))
         } else {
             Ok(None)
@@ -226,7 +226,7 @@ impl LanguageServer for AseLanguageServer {
     ) -> Result<Option<SemanticTokensRangeResult>> {
         let uri = &params.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            let result = semantic_tokens::semantic_tokens_full(&analysis.source);
+            let result = semantic_tokens::semantic_tokens_full_with_analysis(&analysis);
             match result {
                 SemanticTokensResult::Tokens(tokens) => {
                     Ok(Some(SemanticTokensRangeResult::Tokens(tokens)))
@@ -323,8 +323,8 @@ impl LanguageServer for AseLanguageServer {
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let uri = &params.text_document_position.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            let ranges = references::reference_ranges(
-                &analysis.source,
+            let ranges = references::reference_ranges_with_analysis(
+                &analysis,
                 params.text_document_position.position,
                 params.context.include_declaration,
             );
