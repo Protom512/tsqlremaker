@@ -8,7 +8,7 @@
 use crate::analysis::DocumentAnalysis;
 use crate::line_index::LineIndex;
 use crate::{find_token_at, token_matches_symbol};
-use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
+use lsp_types::{Position, PrepareRenameResponse, Range, TextEdit, Url, WorkspaceEdit};
 use std::collections::HashMap;
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
@@ -87,6 +87,47 @@ pub fn get_rename_placeholder_with_analysis(
         .position_to_offset(&analysis.source, position);
     let (token, _) = analysis.find_token_at(offset)?;
     Some(token.text.clone())
+}
+
+/// カーソル位置がリネーム可能か検証する（DocumentAnalysis利用）
+///
+/// リネーム可能なトークン種別のみ許可し、キーワード・文字列・空白は拒否する。
+/// prepareRename LSPリクエストのハンドラとして使用する。
+pub fn prepare_rename_with_analysis(
+    analysis: &DocumentAnalysis,
+    position: Position,
+) -> Option<PrepareRenameResponse> {
+    let offset = analysis
+        .line_index
+        .position_to_offset(&analysis.source, position);
+
+    let (token, _) = analysis.find_token_at(offset)?;
+
+    let is_renamable = matches!(
+        token.kind,
+        TokenKind::Ident | TokenKind::LocalVar | TokenKind::GlobalVar
+    );
+
+    if !is_renamable {
+        return None;
+    }
+
+    let (start_line, start_char) = analysis.line_index.offset_to_position(token.span.start);
+    let (end_line, end_char) = analysis.line_index.offset_to_position(token.span.end);
+
+    Some(PrepareRenameResponse::RangeWithPlaceholder {
+        range: Range {
+            start: Position {
+                line: start_line,
+                character: start_char,
+            },
+            end: Position {
+                line: end_line,
+                character: end_char,
+            },
+        },
+        placeholder: token.text.clone(),
+    })
 }
 
 /// カーソル位置のシンボルを新しい名前にリネームする（ソースから構築）
@@ -400,6 +441,104 @@ mod tests {
                 te.range.end.character > te.range.start.character
                     || te.range.end.line > te.range.start.line
             );
+        }
+    }
+
+    // --- prepare_rename tests ---
+
+    #[test]
+    fn test_prepare_rename_on_identifier() {
+        let analysis = DocumentAnalysis::new("SELECT * FROM users");
+        let result = prepare_rename_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 15,
+            },
+        );
+        assert!(result.is_some());
+        match result {
+            Some(PrepareRenameResponse::RangeWithPlaceholder { placeholder, .. }) => {
+                assert_eq!(placeholder, "users");
+            }
+            _ => panic!("Expected RangeWithPlaceholder"),
+        }
+    }
+
+    #[test]
+    fn test_prepare_rename_on_variable() {
+        let analysis = DocumentAnalysis::new("DECLARE @count INT\nSET @count = 1");
+        let result = prepare_rename_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 9,
+            },
+        );
+        assert!(result.is_some());
+        match result {
+            Some(PrepareRenameResponse::RangeWithPlaceholder { placeholder, .. }) => {
+                assert_eq!(placeholder, "@count");
+            }
+            _ => panic!("Expected RangeWithPlaceholder"),
+        }
+    }
+
+    #[test]
+    fn test_prepare_rename_on_keyword_rejected() {
+        let analysis = DocumentAnalysis::new("SELECT * FROM users");
+        let result = prepare_rename_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 2,
+            },
+        );
+        assert!(result.is_none(), "Keywords should not be renamable");
+    }
+
+    #[test]
+    fn test_prepare_rename_on_whitespace_rejected() {
+        let analysis = DocumentAnalysis::new("SELECT  FROM t");
+        let result = prepare_rename_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 7,
+            },
+        );
+        assert!(result.is_none(), "Whitespace should not be renamable");
+    }
+
+    #[test]
+    fn test_prepare_rename_on_string_rejected() {
+        let analysis = DocumentAnalysis::new("SELECT 'hello' FROM t");
+        let result = prepare_rename_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 9,
+            },
+        );
+        assert!(result.is_none(), "String literals should not be renamable");
+    }
+
+    #[test]
+    fn test_prepare_rename_returns_valid_range() {
+        let analysis = DocumentAnalysis::new("SELECT * FROM users");
+        let result = prepare_rename_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 15,
+            },
+        );
+        match result {
+            Some(PrepareRenameResponse::RangeWithPlaceholder { range, .. }) => {
+                assert_eq!(range.start.line, 0);
+                assert!(range.start.character < range.end.character);
+            }
+            _ => panic!("Expected RangeWithPlaceholder"),
         }
     }
 }
