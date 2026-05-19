@@ -124,7 +124,12 @@ impl LanguageServer for AseLanguageServer {
                 references_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
-                rename_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Right(RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: WorkDoneProgressOptions {
+                        work_done_progress: None,
+                    },
+                })),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -367,6 +372,21 @@ impl LanguageServer for AseLanguageServer {
                 params.text_document_position.position,
                 &params.new_name,
                 uri,
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        let uri = &params.text_document.uri;
+        if let Some(analysis) = self.get_analysis(uri).await {
+            Ok(rename::prepare_rename_with_analysis(
+                &analysis,
+                params.position,
             ))
         } else {
             Ok(None)
