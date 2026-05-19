@@ -20,7 +20,7 @@ pub fn code_actions_with_analysis(
 ) -> Vec<CodeActionOrCommand> {
     let mut actions = Vec::new();
 
-    let line_text = get_line_at(&analysis.source, range.start.line);
+    let line_text = analysis.get_line(range.start.line).to_string();
     if line_text.is_empty() {
         return actions;
     }

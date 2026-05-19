@@ -109,6 +109,23 @@ impl DocumentAnalysis {
             None
         }
     }
+
+    /// Get the text of a specific line. O(1) line lookup via LineIndex.
+    pub fn get_line(&self, line: u32) -> &str {
+        let line_count = self.line_index.line_count();
+        let line = line as usize;
+        if line >= line_count {
+            return "";
+        }
+        let start = self.line_index.line_offset(line);
+        let end = if line + 1 < line_count {
+            self.line_index.line_offset(line + 1)
+        } else {
+            self.source.len()
+        };
+        let line_text = &self.source[start..end];
+        line_text.trim_end_matches('\n').trim_end_matches('\r')
+    }
 }
 
 #[cfg(test)]
@@ -204,5 +221,49 @@ mod tests {
         let (token, _) = analysis.find_token_at(8).unwrap();
         assert_eq!(token.kind, TokenKind::LocalVar);
         assert_eq!(token.text, "@count");
+    }
+
+    // --- get_line() tests (Phase 2-C: O(1) line lookup) ---
+
+    #[test]
+    fn test_get_line_single_line() {
+        let analysis = DocumentAnalysis::new("SELECT * FROM users");
+        assert_eq!(analysis.get_line(0), "SELECT * FROM users");
+    }
+
+    #[test]
+    fn test_get_line_multi_line() {
+        let analysis = DocumentAnalysis::new("SELECT *\nFROM users\nWHERE id = 1");
+        assert_eq!(analysis.get_line(0), "SELECT *");
+        assert_eq!(analysis.get_line(1), "FROM users");
+        assert_eq!(analysis.get_line(2), "WHERE id = 1");
+    }
+
+    #[test]
+    fn test_get_line_out_of_range_returns_empty() {
+        let analysis = DocumentAnalysis::new("SELECT *");
+        assert_eq!(analysis.get_line(5), "");
+    }
+
+    #[test]
+    fn test_get_line_empty_source() {
+        let analysis = DocumentAnalysis::new("");
+        assert_eq!(analysis.get_line(0), "");
+    }
+
+    #[test]
+    fn test_get_line_trailing_newline() {
+        let analysis = DocumentAnalysis::new("line1\nline2\n");
+        assert_eq!(analysis.get_line(0), "line1");
+        assert_eq!(analysis.get_line(1), "line2");
+        // trailing newline creates an empty line 2
+        assert_eq!(analysis.get_line(2), "");
+    }
+
+    #[test]
+    fn test_get_line_crlf() {
+        let analysis = DocumentAnalysis::new("line1\r\nline2");
+        assert_eq!(analysis.get_line(0), "line1");
+        assert_eq!(analysis.get_line(1), "line2");
     }
 }
