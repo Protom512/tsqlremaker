@@ -3,6 +3,13 @@
 //! SQL キーワード、データ型、組み込み関数の補完候補を提供する。
 
 use lsp_types::{CompletionItem, CompletionItemKind, CompletionList, CompletionResponse};
+use once_cell::sync::Lazy;
+
+/// 全補完候補のグローバルキャッシュ。初回アクセス時のみ構築される。
+static COMPLETE_ALL_CACHE: Lazy<CompletionResponse> = Lazy::new(build_complete_all);
+
+/// キーワード補完のグローバルキャッシュ。
+static COMPLETE_KEYWORDS_CACHE: Lazy<CompletionResponse> = Lazy::new(build_complete_keywords);
 
 /// 関数名とパラメータリストからLSP snippet形式のinsert_textを生成する
 ///
@@ -40,8 +47,13 @@ fn is_comma_separated_syntax(syntax: &str) -> bool {
     false
 }
 
-/// 全ての補完候補を返す（MVP: コンテキスト非依存）
+/// 全ての補完候補を返す（キャッシュ済み）
 pub fn complete_all() -> CompletionResponse {
+    COMPLETE_ALL_CACHE.clone()
+}
+
+/// 全ての補完候補を構築する（内部実装）
+fn build_complete_all() -> CompletionResponse {
     let mut items = Vec::new();
 
     // Keywords from db_docs
@@ -104,8 +116,13 @@ pub fn complete_all() -> CompletionResponse {
     })
 }
 
-/// キーワード補完のみを返す
+/// キーワード補完のみを返す（キャッシュ済み）
 pub fn complete_keywords() -> CompletionResponse {
+    COMPLETE_KEYWORDS_CACHE.clone()
+}
+
+/// キーワード補完を構築する（内部実装）
+fn build_complete_keywords() -> CompletionResponse {
     let items = crate::db_docs::keywords()
         .iter()
         .map(|entry| CompletionItem {
@@ -325,6 +342,30 @@ mod tests {
                 );
             }
             _ => panic!("Expected List response"),
+        }
+    }
+
+    #[test]
+    fn test_complete_all_cache_returns_same_instance() {
+        let a = complete_all();
+        let b = complete_all();
+        match (&a, &b) {
+            (CompletionResponse::List(la), CompletionResponse::List(lb)) => {
+                assert_eq!(la.items.len(), lb.items.len());
+            }
+            _ => panic!("Expected List"),
+        }
+    }
+
+    #[test]
+    fn test_complete_keywords_cache_returns_same_count() {
+        let a = complete_keywords();
+        let b = complete_keywords();
+        match (&a, &b) {
+            (CompletionResponse::List(la), CompletionResponse::List(lb)) => {
+                assert_eq!(la.items.len(), lb.items.len());
+            }
+            _ => panic!("Expected List"),
         }
     }
 }
