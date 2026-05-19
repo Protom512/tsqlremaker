@@ -182,6 +182,21 @@ fn build_schema_hover(
             if let Some(_view) = symbol_table.views.get(&upper) {
                 return Some(format!("**`{}`** — View", text));
             }
+            // インデックス情報を表示
+            if let Some(idx) = symbol_table.indexes.get(&upper) {
+                let unique = if idx.is_unique { "UNIQUE " } else { "" };
+                let cols = idx.columns.join(", ");
+                return Some(format!(
+                    "```tsql\n{}INDEX {} ON {} ({})\n```\n\n**Index** — {} column{} on `{}`",
+                    unique,
+                    idx.name,
+                    idx.table_name,
+                    cols,
+                    idx.columns.len(),
+                    if idx.columns.len() != 1 { "s" } else { "" },
+                    idx.table_name
+                ));
+            }
             None
         }
         _ => None,
@@ -500,6 +515,111 @@ mod tests {
         match &h.contents {
             HoverContents::Markup(mc) => {
                 assert!(mc.value.contains("View"));
+            }
+            _ => panic!("Expected Markup content"),
+        }
+    }
+
+    // --- Index and View hover enhancement tests (Phase #57) ---
+
+    #[test]
+    fn test_hover_index_shows_table_and_columns_via_source() {
+        let source =
+            "CREATE TABLE users (id INT, name VARCHAR(50))\nCREATE INDEX idx_name ON users (name)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 13,
+            },
+        );
+        assert!(result.is_some(), "Should return hover for index name");
+        let h = result.unwrap();
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(
+                    mc.value.contains("Index"),
+                    "Should mention Index: {}",
+                    mc.value
+                );
+                assert!(
+                    mc.value.contains("users"),
+                    "Should mention table: {}",
+                    mc.value
+                );
+            }
+            _ => panic!("Expected Markup content"),
+        }
+    }
+
+    #[test]
+    fn test_hover_index_with_analysis() {
+        let source =
+            "CREATE TABLE users (id INT, name VARCHAR(50))\nCREATE INDEX idx_name ON users (name)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 13, // on "idx_name"
+            },
+        );
+        assert!(result.is_some(), "Should return hover for index name");
+        let h = result.unwrap();
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(
+                    mc.value.contains("Index"),
+                    "Should mention Index: {}",
+                    mc.value
+                );
+                assert!(
+                    mc.value.contains("users"),
+                    "Should mention table name: {}",
+                    mc.value
+                );
+                assert!(
+                    mc.value.contains("name"),
+                    "Should mention indexed column: {}",
+                    mc.value
+                );
+            }
+            _ => panic!("Expected Markup content"),
+        }
+    }
+
+    #[test]
+    fn test_hover_index_on_referenced_table() {
+        let source =
+            "CREATE TABLE users (id INT, email VARCHAR(100))\nCREATE INDEX idx_email ON users (email)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 13, // on "idx_email"
+            },
+        );
+        assert!(result.is_some());
+        let h = result.unwrap();
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(
+                    mc.value.contains("Index"),
+                    "Should mention Index: {}",
+                    mc.value
+                );
+                assert!(
+                    mc.value.contains("email"),
+                    "Should mention indexed column: {}",
+                    mc.value
+                );
+                assert!(
+                    mc.value.contains("users"),
+                    "Should mention table: {}",
+                    mc.value
+                );
             }
             _ => panic!("Expected Markup content"),
         }
