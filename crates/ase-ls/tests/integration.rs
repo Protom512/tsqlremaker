@@ -226,3 +226,104 @@ async fn test_did_close_clears_document() {
         "Should return response even after close"
     );
 }
+
+// --- Folding Range tests (#76 AST-aware integration) ---
+
+#[tokio::test]
+async fn test_folding_range_begin_end() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "BEGIN\n    SELECT 1\n    SELECT 2\nEND",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/foldingRange",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+
+    assert!(response.is_some(), "Should return folding ranges");
+    let result = response.unwrap();
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    let ranges = result_val
+        .as_array()
+        .expect("folding ranges should be array");
+    assert!(
+        ranges
+            .iter()
+            .any(|r| r.get("kind").is_some_and(|k| k == "region")),
+        "Should contain at least one region fold for BEGIN...END"
+    );
+}
+
+#[tokio::test]
+async fn test_folding_range_if_without_begin() {
+    let mut service = setup();
+    // IF/ELSE without BEGIN — only AST-based folding detects this
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "IF 1 = 1\n    SELECT 1\nELSE\n    SELECT 2",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/foldingRange",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+
+    assert!(response.is_some(), "Should return folding ranges");
+    let result = response.unwrap();
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    let ranges = result_val
+        .as_array()
+        .expect("folding ranges should be array");
+    // Old token-based folding cannot detect IF without BEGIN — only AST path finds this
+    assert!(
+        !ranges.is_empty(),
+        "AST-based folding should detect IF/ELSE without BEGIN"
+    );
+}
+
+#[tokio::test]
+async fn test_folding_range_comment() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "/* multi-line\n   comment block */\nSELECT 1",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/foldingRange",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+
+    assert!(response.is_some(), "Should return folding ranges");
+    let result = response.unwrap();
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    let ranges = result_val
+        .as_array()
+        .expect("folding ranges should be array");
+    assert!(
+        ranges
+            .iter()
+            .any(|r| r.get("kind").is_some_and(|k| k == "comment")),
+        "Should contain comment fold for block comment"
+    );
+}
