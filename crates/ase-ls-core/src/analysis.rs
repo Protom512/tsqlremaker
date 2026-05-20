@@ -81,6 +81,23 @@ impl DocumentAnalysis {
         };
 
         let symbol_table = SymbolTableBuilder::build_tolerant(source);
+        let symbol_table = if symbol_table.tables.is_empty() && source.contains("CREATE TABLE") {
+            // Fallback: parse progressively shorter substrings to extract DDL definitions
+            // from partially valid sources (e.g., incomplete INSERT after CREATE TABLE)
+            let lines: Vec<&str> = source.lines().collect();
+            let mut best = symbol_table;
+            for cut in (1..lines.len()).rev() {
+                let partial: String = lines[..cut].join("\n");
+                let partial_table = SymbolTableBuilder::build_tolerant(&partial);
+                if !partial_table.tables.is_empty() {
+                    best = partial_table;
+                    break;
+                }
+            }
+            best
+        } else {
+            symbol_table
+        };
 
         let _ = tokens_with_comments;
         Self {

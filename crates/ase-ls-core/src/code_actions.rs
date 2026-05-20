@@ -11,6 +11,9 @@ use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, Position, Range, TextEdit, WorkspaceEdit,
 };
 use std::collections::HashMap;
+use tsql_parser::ast::{SelectItem, Statement, TableReference};
+use tsql_parser::AstNode;
+use tsql_token::TokenKind;
 
 /// Code Actionsを生成する（DocumentAnalysis利用）
 pub fn code_actions_with_analysis(
@@ -20,21 +23,26 @@ pub fn code_actions_with_analysis(
 ) -> Vec<CodeActionOrCommand> {
     let mut actions = Vec::new();
 
+    // AST-based detection: find the statement containing the cursor
+    if let Some(action) = try_expand_select_star_ast(analysis, range.start, uri) {
+        actions.push(CodeActionOrCommand::CodeAction(action));
+    }
+
+    if let Some(action) = try_generate_insert_skeleton_ast(analysis, range.start, uri) {
+        actions.push(CodeActionOrCommand::CodeAction(action));
+    } else {
+        // Fallback: incomplete INSERT (no VALUES) isn't parsed as Statement::Insert,
+        // so fall back to line-level string matching for INSERT skeleton generation.
+        let line_text = analysis.get_line(range.start.line).to_string();
+        if let Some(action) =
+            try_generate_insert_skeleton(&analysis.symbol_table, &line_text, range.start, uri)
+        {
+            actions.push(CodeActionOrCommand::CodeAction(action));
+        }
+    }
+
+    // TRY...CATCH still uses line-level matching (BEGIN/END detection)
     let line_text = analysis.get_line(range.start.line).to_string();
-    if line_text.is_empty() {
-        return actions;
-    }
-
-    let symbol_table = &analysis.symbol_table;
-
-    if let Some(action) = try_expand_select_star(symbol_table, &line_text, range.start, uri) {
-        actions.push(CodeActionOrCommand::CodeAction(action));
-    }
-
-    if let Some(action) = try_generate_insert_skeleton(symbol_table, &line_text, range.start, uri) {
-        actions.push(CodeActionOrCommand::CodeAction(action));
-    }
-
     if let Some(action) = try_wrap_try_catch(&analysis.source, &line_text, range.start, uri) {
         actions.push(CodeActionOrCommand::CodeAction(action));
     }
@@ -95,6 +103,251 @@ fn build_fallback_symbol_table(source: &str) -> crate::symbol_table::SymbolTable
     }
 
     table
+}
+
+/// Find the SELECT statement with Wildcard that the cursor position falls within.
+/// Uses token spans instead of statement spans because the parser may produce
+/// incorrect end offsets for multi-line statements.
+fn find_select_star_for_position(
+    analysis: &DocumentAnalysis,
+    position: Position,
+) -> Option<&Statement> {
+    let offset = analysis
+        .line_index
+        .position_to_offset(&analysis.source, position);
+
+    let mut found: Option<(usize, &Statement)> = None;
+
+    for (idx, stmt) in analysis.statements.iter().enumerate() {
+        let Statement::Select(sel) = stmt else {
+            continue;
+        };
+        if !sel
+            .columns
+            .iter()
+            .any(|item| matches!(item, SelectItem::Wildcard))
+        {
+            continue;
+        }
+        let Some(from) = &sel.from else {
+            continue;
+        };
+        let Some(_table_ref) = from.tables.first() else {
+            continue;
+        };
+
+        let sel_start = sel.span.start as usize;
+        if sel_start > offset {
+            continue;
+        }
+
+        // Upper bound: next statement's start, or end of source
+        let upper = analysis
+            .statements
+            .get(idx + 1)
+            .map(|s| {
+                let start = s.span().start as usize;
+                if start == 0 {
+                    analysis.source.len()
+                } else {
+                    start
+                }
+            })
+            .unwrap_or(analysis.source.len());
+
+        if offset <= upper {
+            found = Some((idx, stmt));
+            break;
+        }
+    }
+
+    // Verify the found SELECT has a valid table reference
+    if let Some((_, stmt)) = found {
+        if let Statement::Select(sel) = stmt {
+            if let Some(from) = &sel.from {
+                if let Some(table_ref) = from.tables.first() {
+                    if matches!(table_ref, TableReference::Table { .. }) {
+                        return Some(stmt);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Find the INSERT statement without complete VALUES that the cursor position falls within.
+fn find_insert_for_position(analysis: &DocumentAnalysis, position: Position) -> Option<&Statement> {
+    let offset = analysis
+        .line_index
+        .position_to_offset(&analysis.source, position);
+
+    for (idx, stmt) in analysis.statements.iter().enumerate() {
+        let Statement::Insert(ins) = stmt else {
+            continue;
+        };
+
+        let insert_start = ins.span.start as usize;
+        if insert_start > offset {
+            continue;
+        }
+
+        // Upper bound: next statement's start, or end of source
+        let upper = analysis
+            .statements
+            .get(idx + 1)
+            .map(|s| {
+                let start = s.span().start as usize;
+                if start == 0 {
+                    analysis.source.len()
+                } else {
+                    start
+                }
+            })
+            .unwrap_or(analysis.source.len());
+
+        if offset <= upper {
+            return Some(stmt);
+        }
+    }
+    None
+}
+
+/// AST-based SELECT * expansion using Statement spans.
+fn try_expand_select_star_ast(
+    analysis: &DocumentAnalysis,
+    position: Position,
+    uri: &lsp_types::Url,
+) -> Option<CodeAction> {
+    let stmt = find_select_star_for_position(analysis, position)?;
+
+    let Statement::Select(sel) = stmt else {
+        return None;
+    };
+
+    let from = sel.from.as_ref()?;
+    let table_ref = from.tables.first()?;
+    let table_name = match table_ref {
+        TableReference::Table { name, .. } => name.name.clone(),
+        _ => return None,
+    };
+
+    let tbl = SymbolTableBuilder::find_table(&analysis.symbol_table, &table_name)?;
+    if tbl.columns.is_empty() {
+        return None;
+    }
+
+    // Find the * token: use SELECT span start as lower bound
+    let sel_start = sel.span.start as usize;
+    let star_token = analysis
+        .tokens
+        .iter()
+        .find(|t| t.kind == TokenKind::Star && t.span.start as usize >= sel_start)?;
+
+    let columns: Vec<String> = tbl.columns.iter().map(|c| c.name.clone()).collect();
+    let expanded = format!("SELECT {}", columns.join(", "));
+
+    let (star_line, star_char_start) = analysis
+        .line_index
+        .offset_to_position(star_token.span.start);
+    let (_, star_char_end) = analysis.line_index.offset_to_position(star_token.span.end);
+
+    let edit = make_text_edit(
+        uri,
+        Range {
+            start: Position {
+                line: star_line,
+                character: star_char_start,
+            },
+            end: Position {
+                line: star_line,
+                character: star_char_end,
+            },
+        },
+        expanded,
+    );
+
+    Some(CodeAction {
+        title: format!("Expand SELECT * with columns from {table_name}"),
+        kind: Some(CodeActionKind::QUICKFIX),
+        diagnostics: None,
+        edit: Some(edit),
+        command: None,
+        is_preferred: Some(true),
+        disabled: None,
+        data: None,
+    })
+}
+
+/// AST-based INSERT skeleton generation using Statement spans.
+fn try_generate_insert_skeleton_ast(
+    analysis: &DocumentAnalysis,
+    position: Position,
+    uri: &lsp_types::Url,
+) -> Option<CodeAction> {
+    let stmt = find_insert_for_position(analysis, position)?;
+
+    let Statement::Insert(ins) = stmt else {
+        return None;
+    };
+
+    // Skip if already has VALUES or SELECT source
+    match &ins.source {
+        tsql_parser::InsertSource::Values(v) if !v.is_empty() => return None,
+        tsql_parser::InsertSource::Select(_) => return None,
+        _ => {}
+    }
+
+    let table_name = ins.table.name.clone();
+    let tbl = SymbolTableBuilder::find_table(&analysis.symbol_table, &table_name)?;
+    if tbl.columns.is_empty() {
+        return None;
+    }
+
+    let columns: Vec<&str> = tbl
+        .columns
+        .iter()
+        .filter(|c| !c.is_identity)
+        .map(|c| c.name.as_str())
+        .collect();
+    let col_list = columns.join(", ");
+    let placeholders = vec!["?"; columns.len()];
+    let values_list = placeholders.join(", ");
+
+    let new_text = format!(
+        "INSERT INTO {} ({}) VALUES ({})",
+        table_name, col_list, values_list
+    );
+
+    // Replace the entire INSERT statement span
+    let (start_line, start_char) = analysis.line_index.offset_to_position(ins.span.start);
+    let (end_line, end_char) = analysis.line_index.offset_to_position(ins.span.end);
+
+    let edit = make_text_edit(
+        uri,
+        Range {
+            start: Position {
+                line: start_line,
+                character: start_char,
+            },
+            end: Position {
+                line: end_line,
+                character: end_char,
+            },
+        },
+        new_text,
+    );
+
+    Some(CodeAction {
+        title: format!("Generate INSERT skeleton for {table_name}"),
+        kind: Some(CodeActionKind::QUICKFIX),
+        diagnostics: None,
+        edit: Some(edit),
+        command: None,
+        is_preferred: Some(true),
+        disabled: None,
+        data: None,
+    })
 }
 
 /// SELECT * FROM table → カラム展開クイックフィックス
@@ -544,5 +797,341 @@ mod tests {
             matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT skeleton"))
         });
         assert!(insert_action.is_none());
+    }
+
+    // === AST-aware tests (RED phase for #68) ===
+
+    fn make_analysis(source: &str) -> DocumentAnalysis {
+        DocumentAnalysis::new(source)
+    }
+
+    fn find_expand_action(actions: &[CodeActionOrCommand]) -> bool {
+        actions.iter().any(
+            |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Expand")),
+        )
+    }
+
+    #[allow(dead_code)]
+    fn find_insert_skeleton_action(actions: &[CodeActionOrCommand]) -> bool {
+        actions.iter().any(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT skeleton"))
+        })
+    }
+
+    #[test]
+    fn test_ast_select_star_multiline_cursor_on_from_line() {
+        // SELECT * on line 0, FROM on line 1 — cursor on FROM line
+        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\nSELECT *\nFROM users";
+        let analysis = make_analysis(source);
+        let range = Range {
+            start: Position {
+                line: 2,
+                character: 0,
+            },
+            end: Position {
+                line: 2,
+                character: 10,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        assert!(
+            find_expand_action(&actions),
+            "should detect SELECT * across lines via AST"
+        );
+    }
+
+    #[test]
+    fn test_ast_select_star_multiline_cursor_on_select_line() {
+        // SELECT * on line 0, FROM on line 1 — cursor on SELECT line
+        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\nSELECT *\nFROM users";
+        let analysis = make_analysis(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 9,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        assert!(
+            find_expand_action(&actions),
+            "should detect multi-line SELECT * with cursor on SELECT line"
+        );
+    }
+
+    #[test]
+    fn test_ast_select_star_three_lines() {
+        // SELECT * / FROM / table split across 3 lines
+        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\nSELECT\n*\nFROM users";
+        let analysis = make_analysis(source);
+        let range = Range {
+            start: Position {
+                line: 3,
+                character: 0,
+            },
+            end: Position {
+                line: 3,
+                character: 10,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        assert!(
+            find_expand_action(&actions),
+            "should detect SELECT * across 3 lines via AST"
+        );
+    }
+
+    #[test]
+    fn test_ast_select_star_with_where() {
+        // Multi-line SELECT * with WHERE clause
+        let source =
+            "CREATE TABLE users (id INT, name VARCHAR(100))\nSELECT *\nFROM users\nWHERE id = 1";
+        let analysis = make_analysis(source);
+        let range = Range {
+            start: Position {
+                line: 3,
+                character: 0,
+            },
+            end: Position {
+                line: 3,
+                character: 10,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        assert!(
+            find_expand_action(&actions),
+            "should detect multi-line SELECT * with WHERE"
+        );
+    }
+
+    #[test]
+    fn test_ast_no_expand_for_non_wildcard_select() {
+        // SELECT with explicit columns should NOT trigger expand
+        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\nSELECT id\nFROM users";
+        let analysis = make_analysis(source);
+        let range = Range {
+            start: Position {
+                line: 2,
+                character: 0,
+            },
+            end: Position {
+                line: 2,
+                character: 10,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        assert!(
+            !find_expand_action(&actions),
+            "should NOT expand non-wildcard SELECT"
+        );
+    }
+
+    // === Mutation-resistant tests ===
+
+    /// M1: Verify expanded SELECT * contains actual column names, not placeholder text
+    #[test]
+    fn test_ast_select_star_expand_columns_content() {
+        let source = "CREATE TABLE orders (order_id INT, customer_name VARCHAR(50), total DECIMAL)";
+        let source_full = format!("{source}\nSELECT *\nFROM orders");
+        let analysis = make_analysis(&source_full);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 9,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let action = actions
+            .iter()
+            .find(
+                |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Expand")),
+            )
+            .expect("should have expand action");
+        if let CodeActionOrCommand::CodeAction(ca) = action {
+            let edit = ca.edit.as_ref().expect("edit should exist");
+            let changes = edit.changes.as_ref().expect("changes should exist");
+            let text_edit = changes
+                .get(&test_uri())
+                .expect("should have changes for URI")
+                .first()
+                .expect("should have at least one edit");
+            assert!(
+                text_edit.new_text.contains("order_id"),
+                "expanded text must contain order_id, got: {}",
+                text_edit.new_text
+            );
+            assert!(
+                text_edit.new_text.contains("customer_name"),
+                "expanded text must contain customer_name, got: {}",
+                text_edit.new_text
+            );
+            assert!(
+                text_edit.new_text.contains("total"),
+                "expanded text must contain total, got: {}",
+                text_edit.new_text
+            );
+            assert!(
+                !text_edit.new_text.contains('*'),
+                "expanded text should not contain *"
+            );
+        }
+    }
+
+    /// M2: Verify the TextEdit range targets only the * token, not the entire line
+    #[test]
+    fn test_ast_select_star_edit_range_targets_star_only() {
+        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\nSELECT *\nFROM users";
+        let analysis = make_analysis(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 9,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let action = actions
+            .iter()
+            .find(
+                |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Expand")),
+            )
+            .expect("should have expand action");
+        if let CodeActionOrCommand::CodeAction(ca) = action {
+            let edit = ca.edit.as_ref().expect("edit");
+            let changes = edit.changes.as_ref().expect("changes");
+            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
+            assert_eq!(
+                text_edit.range.start.line, 1,
+                "edit should be on line 1 (SELECT line)"
+            );
+            assert_eq!(
+                text_edit.range.start.character, 7,
+                "edit should start at column 7 (after 'SELECT ')"
+            );
+            assert_eq!(
+                text_edit.range.end.character, 8,
+                "edit should end at column 8 (just the '*')"
+            );
+        }
+    }
+
+    /// M3: Test INSERT skeleton via code_actions_with_analysis (AST path)
+    #[test]
+    fn test_ast_insert_skeleton_via_analysis() {
+        let source = "CREATE TABLE products (id INT, name VARCHAR(100), price DECIMAL)\nINSERT INTO products";
+        let analysis = make_analysis(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 19,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let found = find_insert_skeleton_action(&actions);
+        assert!(found, "should generate INSERT skeleton via AST path");
+        let action = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT skeleton"))
+        }).expect("should have INSERT skeleton action");
+        if let CodeActionOrCommand::CodeAction(ca) = action {
+            let edit = ca.edit.as_ref().expect("edit");
+            let changes = edit.changes.as_ref().expect("changes");
+            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
+            assert!(
+                text_edit.new_text.contains("id"),
+                "skeleton must contain id column"
+            );
+            assert!(
+                text_edit.new_text.contains("name"),
+                "skeleton must contain name column"
+            );
+            assert!(
+                text_edit.new_text.contains("price"),
+                "skeleton must contain price column"
+            );
+            assert!(
+                text_edit.new_text.contains("VALUES"),
+                "skeleton must contain VALUES"
+            );
+        }
+    }
+
+    /// M4: SELECT * with unknown table should NOT generate action
+    #[test]
+    fn test_ast_select_star_unknown_table_no_action() {
+        let source = "CREATE TABLE users (id INT)\nSELECT *\nFROM nonexistent";
+        let analysis = make_analysis(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 9,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        assert!(
+            !find_expand_action(&actions),
+            "should NOT expand SELECT * for unknown table"
+        );
+    }
+
+    /// M5: Cursor outside any statement should produce no actions
+    #[test]
+    fn test_ast_cursor_outside_statement_no_action() {
+        let source = "CREATE TABLE users (id INT)\n\nSELECT * FROM users";
+        let analysis = make_analysis(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 0,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        assert!(
+            !find_expand_action(&actions),
+            "should NOT expand when cursor is on empty line between statements"
+        );
+    }
+
+    /// M6: INSERT with existing VALUES should NOT generate skeleton via analysis
+    #[test]
+    fn test_ast_insert_skip_when_values_exists() {
+        let source = "CREATE TABLE users (id INT)\nINSERT INTO users VALUES (1)";
+        let analysis = make_analysis(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 16,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        assert!(
+            !find_insert_skeleton_action(&actions),
+            "should NOT generate INSERT skeleton when VALUES already exists"
+        );
     }
 }
