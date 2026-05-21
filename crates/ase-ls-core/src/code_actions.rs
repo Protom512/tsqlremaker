@@ -11,6 +11,8 @@ use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, Position, Range, TextEdit, WorkspaceEdit,
 };
 use std::collections::HashMap;
+use tsql_parser::ast::{SelectItem, Statement};
+use tsql_token::TokenKind;
 
 /// Code Actionsを生成する（DocumentAnalysis利用）
 pub fn code_actions_with_analysis(
@@ -27,7 +29,8 @@ pub fn code_actions_with_analysis(
 
     let symbol_table = &analysis.symbol_table;
 
-    if let Some(action) = try_expand_select_star(symbol_table, &line_text, range.start, uri) {
+    // AST-based SELECT * expansion (handles multi-line, aliases)
+    if let Some(action) = try_expand_select_star_ast(analysis, range.start, uri) {
         actions.push(CodeActionOrCommand::CodeAction(action));
     }
 
@@ -40,6 +43,211 @@ pub fn code_actions_with_analysis(
     }
 
     actions
+}
+
+/// AST ベースの SELECT * カラム展開
+///
+/// ASTを走査してSelectItem::Wildcardを見つけ、
+/// FROM句のテーブル名を解決し、シンボルテーブルからカラムを展開する。
+fn try_expand_select_star_ast(
+    analysis: &DocumentAnalysis,
+    position: Position,
+    uri: &lsp_types::Url,
+) -> Option<CodeAction> {
+    let cursor_offset = analysis
+        .line_index
+        .position_to_offset(&analysis.source, position);
+
+    for stmt in &analysis.statements {
+        if let Some(action) = try_expand_in_statement(stmt, analysis, cursor_offset, uri) {
+            return Some(action);
+        }
+    }
+    None
+}
+
+/// 単一Statement内のSELECT *展開を試みる（再帰）
+fn try_expand_in_statement(
+    stmt: &Statement,
+    analysis: &DocumentAnalysis,
+    cursor_offset: usize,
+    uri: &lsp_types::Url,
+) -> Option<CodeAction> {
+    match stmt {
+        Statement::Select(sel) => {
+            // カーソルがこのSELECTのスパン内にあるか確認
+            let in_span = is_cursor_in_span(cursor_offset, &sel.span, &analysis.tokens);
+            if !in_span {
+                return None;
+            }
+
+            // Wildcardが含まれているか
+            let has_wildcard = sel
+                .columns
+                .iter()
+                .any(|item| matches!(item, SelectItem::Wildcard));
+            if !has_wildcard {
+                return None;
+            }
+
+            // FROM句からテーブル名を取得
+            let table_name = extract_table_name(sel)?;
+            if table_name.is_empty() {
+                return None;
+            }
+
+            // シンボルテーブルからカラムを検索
+            let tbl = SymbolTableBuilder::find_table(&analysis.symbol_table, &table_name)?;
+            if tbl.columns.is_empty() {
+                return None;
+            }
+
+            // *トークンの位置を特定
+            let star_token = find_star_token(&analysis.tokens, &sel.span)?;
+
+            // カラム展開テキストを生成（SELECTは含めない、* の置換のみ）
+            let columns: Vec<String> = tbl.columns.iter().map(|c| c.name.clone()).collect();
+            let expanded = columns.join(", ");
+
+            let start = analysis
+                .line_index
+                .offset_to_position(star_token.span.start);
+            let end = analysis
+                .line_index
+                .offset_to_position(star_token.span.end.max(star_token.span.start + 1));
+
+            let edit = make_text_edit(
+                uri,
+                Range {
+                    start: Position {
+                        line: start.0,
+                        character: start.1,
+                    },
+                    end: Position {
+                        line: end.0,
+                        character: end.1,
+                    },
+                },
+                expanded,
+            );
+
+            Some(CodeAction {
+                title: format!("Expand SELECT * with columns from {table_name}"),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: None,
+                edit: Some(edit),
+                command: None,
+                is_preferred: Some(true),
+                disabled: None,
+                data: None,
+            })
+        }
+        Statement::Block(block) => block
+            .statements
+            .iter()
+            .find_map(|child| try_expand_in_statement(child, analysis, cursor_offset, uri)),
+        Statement::If(if_stmt) => {
+            try_expand_in_statement(&if_stmt.then_branch, analysis, cursor_offset, uri).or_else(
+                || {
+                    if_stmt.else_branch.as_ref().and_then(|else_b| {
+                        try_expand_in_statement(else_b, analysis, cursor_offset, uri)
+                    })
+                },
+            )
+        }
+        Statement::While(while_stmt) => {
+            try_expand_in_statement(&while_stmt.body, analysis, cursor_offset, uri)
+        }
+        Statement::Create(create) => {
+            if let tsql_parser::ast::CreateStatement::Procedure(proc) = &**create {
+                proc.body
+                    .iter()
+                    .find_map(|child| try_expand_in_statement(child, analysis, cursor_offset, uri))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// FROM句の最初のテーブル名を抽出する
+fn extract_table_name(sel: &tsql_parser::ast::SelectStatement) -> Option<String> {
+    let from = sel.from.as_ref()?;
+    let first_table = from.tables.first()?;
+    match first_table {
+        tsql_parser::ast::TableReference::Table { name, .. } => Some(name.name.clone()),
+        _ => None,
+    }
+}
+
+/// カーソルがスパン範囲内にあるか確認する
+/// Parser壊れスパン対策付き
+fn is_cursor_in_span(
+    cursor_offset: usize,
+    span: &tsql_token::Span,
+    tokens: &[crate::analysis::OwnedToken],
+) -> bool {
+    let start = span.start as usize;
+    // 壊れスパン対策: end が start 未満なら、SELECTトークン以降200バイトまでを範囲とする
+    let end = if span.end == 0 || span.end <= span.start {
+        find_statement_end(tokens, span.start).unwrap_or(start + 200)
+    } else {
+        span.end as usize
+    };
+    cursor_offset >= start && cursor_offset <= end
+}
+
+/// トークンリストからステートメントの実際の終了位置を推定する
+fn find_statement_end(tokens: &[crate::analysis::OwnedToken], start: u32) -> Option<usize> {
+    let mut found_start = false;
+    for tok in tokens {
+        if tok.span.start == start && tok.kind == TokenKind::Select {
+            found_start = true;
+        }
+        if found_start && tok.kind == TokenKind::Semicolon {
+            return Some(tok.span.end as usize);
+        }
+    }
+    // セミコロンがなければ最後のトークンの終了位置
+    tokens.last().map(|t| t.span.end as usize)
+}
+
+/// SELECTスパン内の * トークンを探す
+fn find_star_token<'a>(
+    tokens: &'a [crate::analysis::OwnedToken],
+    select_span: &tsql_token::Span,
+) -> Option<&'a crate::analysis::OwnedToken> {
+    let mut found_select = false;
+    let mut search_end = select_span.end;
+    if search_end == 0 || search_end <= select_span.start {
+        search_end = select_span.start.saturating_add(200);
+    }
+
+    for tok in tokens {
+        if tok.span.start < select_span.start {
+            continue;
+        }
+        if tok.span.start > search_end {
+            break;
+        }
+        if tok.kind == TokenKind::Select {
+            found_select = true;
+            continue;
+        }
+        if found_select && tok.kind == TokenKind::Star {
+            return Some(tok);
+        }
+        if found_select
+            && !matches!(
+                tok.kind,
+                TokenKind::Whitespace | TokenKind::LineComment | TokenKind::BlockComment
+            )
+        {
+            found_select = false;
+        }
+    }
+    None
 }
 
 /// Code Actionsを生成する（ソースから構築）
@@ -544,5 +752,187 @@ mod tests {
             matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT skeleton"))
         });
         assert!(insert_action.is_none());
+    }
+
+    // === AST-based SELECT * expansion tests ===
+
+    #[test]
+    fn test_ast_expand_select_star_multiline() {
+        // 複数行SELECT: 文字列ベースではカーソル行にFROMがなく失敗、AST版は成功
+        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\nSELECT *\nFROM users";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 10,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let expand = actions.iter().find(
+            |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Expand")),
+        );
+        assert!(expand.is_some(), "AST should detect SELECT * across lines");
+    }
+
+    #[test]
+    fn test_ast_expand_select_star_with_table_alias() {
+        // テーブルエイリアス: ASTは元のテーブル名を解決
+        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\nSELECT * FROM users AS u";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let expand = actions.iter().find(
+            |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Expand")),
+        );
+        assert!(
+            expand.is_some(),
+            "AST should resolve table name despite alias"
+        );
+        if let CodeActionOrCommand::CodeAction(ca) = expand.unwrap() {
+            let edit = ca.edit.as_ref().unwrap();
+            let changes = edit.changes.as_ref().unwrap();
+            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
+            assert!(text_edit.new_text.contains("id"));
+            assert!(text_edit.new_text.contains("name"));
+        }
+    }
+
+    #[test]
+    fn test_ast_expand_select_star_replaces_only_star() {
+        // * のみを置換し、SELECTキーワードは残す
+        let source = "CREATE TABLE t (a INT, b INT)\nSELECT * FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 7,
+            },
+            end: Position {
+                line: 1,
+                character: 8,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let expand = actions.iter().find(
+            |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Expand")),
+        );
+        assert!(expand.is_some());
+        if let CodeActionOrCommand::CodeAction(ca) = expand.unwrap() {
+            let edit = ca.edit.as_ref().unwrap();
+            let changes = edit.changes.as_ref().unwrap();
+            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
+            // new_text should NOT contain SELECT (only column list)
+            assert!(!text_edit.new_text.contains("SELECT"));
+            assert!(text_edit.new_text.contains("a"));
+            assert!(text_edit.new_text.contains("b"));
+            // * is at character 7 (after "SELECT ")
+            assert_eq!(text_edit.range.start.character, 7);
+            assert_eq!(text_edit.range.end.character, 8);
+        }
+    }
+
+    #[test]
+    fn test_ast_no_expand_without_wildcard() {
+        // SELECTにWildcardがなければ展開しない
+        let source = "CREATE TABLE users (id INT)\nSELECT id FROM users";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 10,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let expand = actions.iter().find(
+            |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Expand")),
+        );
+        assert!(expand.is_none(), "Should not expand without * wildcard");
+    }
+
+    #[test]
+    fn test_ast_no_expand_without_table_in_symbol_table() {
+        // シンボルテーブルにテーブルがなければ展開しない
+        let source = "SELECT * FROM unknown_table";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 10,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let expand = actions.iter().find(
+            |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Expand")),
+        );
+        assert!(
+            expand.is_none(),
+            "Should not expand when table not in symbol table"
+        );
+    }
+
+    #[test]
+    fn test_ast_expand_selects_correct_statement_when_multiple() {
+        // 2つのSELECT *がある場合、カーソル位置のSELECTを展開
+        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\n\
+                       CREATE TABLE orders (order_id INT, amount INT)\n\
+                       SELECT * FROM users\n\
+                       SELECT * FROM orders";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+
+        // カーソルは4行目のSELECT * FROM orders上
+        let range = Range {
+            start: Position {
+                line: 3,
+                character: 7,
+            },
+            end: Position {
+                line: 3,
+                character: 8,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let expand = actions.iter().find(
+            |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Expand")),
+        );
+        assert!(expand.is_some());
+        if let CodeActionOrCommand::CodeAction(ca) = expand.unwrap() {
+            // ordersテーブルのカラムが展開されるべき
+            assert!(
+                ca.title.contains("orders"),
+                "Should expand orders table, not users"
+            );
+            let edit = ca.edit.as_ref().unwrap();
+            let changes = edit.changes.as_ref().unwrap();
+            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
+            assert!(
+                text_edit.new_text.contains("order_id"),
+                "Should contain order_id column"
+            );
+            assert!(
+                text_edit.new_text.contains("amount"),
+                "Should contain amount column"
+            );
+        }
     }
 }
