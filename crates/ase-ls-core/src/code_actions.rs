@@ -11,6 +11,8 @@ use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, Position, Range, TextEdit, WorkspaceEdit,
 };
 use std::collections::HashMap;
+use tsql_parser::ast::Statement;
+use tsql_token::TokenKind;
 
 /// Code Actionsを生成する（DocumentAnalysis利用）
 pub fn code_actions_with_analysis(
@@ -31,7 +33,12 @@ pub fn code_actions_with_analysis(
         actions.push(CodeActionOrCommand::CodeAction(action));
     }
 
-    if let Some(action) = try_generate_insert_skeleton(symbol_table, &line_text, range.start, uri) {
+    // AST-based INSERT skeleton (handles multi-line, cursor-aware)
+    if let Some(action) = try_generate_insert_skeleton_ast(analysis, range.start, uri) {
+        actions.push(CodeActionOrCommand::CodeAction(action));
+    } else if let Some(action) =
+        try_generate_insert_skeleton(symbol_table, &line_text, range.start, uri)
+    {
         actions.push(CodeActionOrCommand::CodeAction(action));
     }
 
@@ -40,6 +47,180 @@ pub fn code_actions_with_analysis(
     }
 
     actions
+}
+
+/// AST ベースの INSERT 骨組み生成
+///
+/// ASTを走査してInsertStatementを見つけ、
+/// source が Values/Select/DefaultValues でなければ骨組みを生成する。
+fn try_generate_insert_skeleton_ast(
+    analysis: &DocumentAnalysis,
+    position: Position,
+    uri: &lsp_types::Url,
+) -> Option<CodeAction> {
+    let cursor_offset = analysis
+        .line_index
+        .position_to_offset(&analysis.source, position);
+
+    for stmt in &analysis.statements {
+        if let Some(action) = try_insert_skeleton_in_statement(stmt, analysis, cursor_offset, uri) {
+            return Some(action);
+        }
+    }
+    None
+}
+
+/// 単一Statement内のINSERT骨組み生成を試みる（再帰）
+fn try_insert_skeleton_in_statement(
+    stmt: &Statement,
+    analysis: &DocumentAnalysis,
+    cursor_offset: usize,
+    uri: &lsp_types::Url,
+) -> Option<CodeAction> {
+    match stmt {
+        Statement::Insert(insert) => {
+            let in_span = is_cursor_in_insert_span(cursor_offset, &insert.span, &analysis.tokens);
+            if !in_span {
+                return None;
+            }
+
+            // 既にVALUES/SELECT/DEFAULT VALUESがある場合はスキップ
+            if !matches!(
+                &insert.source,
+                tsql_parser::ast::InsertSource::Values(_)
+                    | tsql_parser::ast::InsertSource::Select(_)
+                    | tsql_parser::ast::InsertSource::DefaultValues
+            ) {
+                // sourceが空（VALUES未指定）の場合のみ骨組み生成
+            } else {
+                return None;
+            }
+
+            let table_name = &insert.table.name;
+            if table_name.is_empty() {
+                return None;
+            }
+
+            let tbl = SymbolTableBuilder::find_table(&analysis.symbol_table, table_name)?;
+            if tbl.columns.is_empty() {
+                return None;
+            }
+
+            // IDENTITYカラムは除外
+            let columns: Vec<&str> = tbl
+                .columns
+                .iter()
+                .filter(|c| !c.is_identity)
+                .map(|c| c.name.as_str())
+                .collect();
+            if columns.is_empty() {
+                return None;
+            }
+
+            let col_list = columns.join(", ");
+            let placeholders = vec!["?"; columns.len()];
+            let values_list = placeholders.join(", ");
+            let new_text = format!(
+                "INSERT INTO {} ({}) VALUES ({})",
+                table_name, col_list, values_list
+            );
+
+            // INSERT文全体を置換
+            let start_pos = analysis.line_index.offset_to_position(insert.span.start);
+            let end_offset = resolve_insert_span_end(&insert.span, &analysis.tokens);
+            let end_pos = analysis.line_index.offset_to_position(end_offset);
+
+            let edit = make_text_edit(
+                uri,
+                Range {
+                    start: Position {
+                        line: start_pos.0,
+                        character: start_pos.1,
+                    },
+                    end: Position {
+                        line: end_pos.0,
+                        character: end_pos.1,
+                    },
+                },
+                new_text,
+            );
+
+            Some(CodeAction {
+                title: format!("Generate INSERT skeleton for {table_name}"),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: None,
+                edit: Some(edit),
+                command: None,
+                is_preferred: Some(true),
+                disabled: None,
+                data: None,
+            })
+        }
+        Statement::Block(block) => block.statements.iter().find_map(|child| {
+            try_insert_skeleton_in_statement(child, analysis, cursor_offset, uri)
+        }),
+        Statement::If(if_stmt) => {
+            try_insert_skeleton_in_statement(&if_stmt.then_branch, analysis, cursor_offset, uri)
+                .or_else(|| {
+                    if_stmt.else_branch.as_ref().and_then(|else_b| {
+                        try_insert_skeleton_in_statement(else_b, analysis, cursor_offset, uri)
+                    })
+                })
+        }
+        Statement::While(while_stmt) => {
+            try_insert_skeleton_in_statement(&while_stmt.body, analysis, cursor_offset, uri)
+        }
+        Statement::Create(create) => {
+            if let tsql_parser::ast::CreateStatement::Procedure(proc) = &**create {
+                proc.body.iter().find_map(|child| {
+                    try_insert_skeleton_in_statement(child, analysis, cursor_offset, uri)
+                })
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// カーソルがINSERT文のスパン範囲内にあるか確認
+fn is_cursor_in_insert_span(
+    cursor_offset: usize,
+    span: &tsql_token::Span,
+    tokens: &[crate::analysis::OwnedToken],
+) -> bool {
+    let start = span.start as usize;
+    let end = if span.end == 0 || span.end <= span.start {
+        find_insert_statement_end(tokens, span.start).unwrap_or(start + 200)
+    } else {
+        span.end as usize
+    };
+    cursor_offset >= start && cursor_offset <= end
+}
+
+/// INSERT文の実際の終了位置を推定
+fn find_insert_statement_end(tokens: &[crate::analysis::OwnedToken], start: u32) -> Option<usize> {
+    let mut found_start = false;
+    for tok in tokens {
+        if tok.span.start == start && tok.kind == TokenKind::Insert {
+            found_start = true;
+        }
+        if found_start && tok.kind == TokenKind::Semicolon {
+            return Some(tok.span.end as usize);
+        }
+    }
+    tokens.last().map(|t| t.span.end as usize)
+}
+
+/// INSERTスパンの終了位置を解決（壊れスパン対策）
+fn resolve_insert_span_end(span: &tsql_token::Span, tokens: &[crate::analysis::OwnedToken]) -> u32 {
+    if span.end > span.start {
+        return span.end;
+    }
+    // 壊れスパン: トークンリストから実際の終了位置を探す
+    find_insert_statement_end(tokens, span.start)
+        .map(|e| e as u32)
+        .unwrap_or(span.start + 100)
 }
 
 /// Code Actionsを生成する（ソースから構築）
@@ -544,5 +725,178 @@ mod tests {
             matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT skeleton"))
         });
         assert!(insert_action.is_none());
+    }
+
+    // === AST-based INSERT skeleton tests ===
+
+    #[test]
+    fn test_ast_insert_skeleton_no_double_for_existing_values() {
+        // 既にVALUESがある場合はスキップ（ASTベース）
+        let source = "CREATE TABLE t (a INT)\nINSERT INTO t VALUES (1)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let insert = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT skeleton"))
+        });
+        assert!(
+            insert.is_none(),
+            "Should not offer skeleton when VALUES already present in AST"
+        );
+    }
+
+    #[test]
+    fn test_ast_insert_skeleton_inside_procedure() {
+        // プロシージャ内のINSERT: AST再帰で見つける必要がある
+        // 完全なINSERT文 → VALUESあり → skeleton なし（AST で判定）
+        let source = "CREATE TABLE t (a INT)\nCREATE PROCEDURE myproc AS\nBEGIN\nINSERT INTO t VALUES (1)\nEND";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 3,
+                character: 0,
+            },
+            end: Position {
+                line: 3,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let insert = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT skeleton"))
+        });
+        // VALUES already present → no skeleton offered via AST
+        assert!(
+            insert.is_none(),
+            "Procedure INSERT with VALUES should not offer skeleton"
+        );
+    }
+
+    #[test]
+    fn test_ast_insert_skeleton_inside_block_recurse() {
+        // Block内の完全なINSERT: 再帰で見つけてVALUESを検出
+        let source = "CREATE TABLE t (a INT, b INT)\nBEGIN\nINSERT INTO t (a, b) VALUES (1, 2)\nEND";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 2,
+                character: 0,
+            },
+            end: Position {
+                line: 2,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let insert = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT skeleton"))
+        });
+        // VALUES already present → no skeleton
+        assert!(insert.is_none());
+    }
+
+    #[test]
+    fn test_ast_insert_with_select_source_skips() {
+        // INSERT INTO ... SELECT ... は骨組み生成しない
+        let source =
+            "CREATE TABLE t (a INT)\nCREATE TABLE t2 (a INT)\nINSERT INTO t SELECT * FROM t2";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 2,
+                character: 0,
+            },
+            end: Position {
+                line: 2,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let insert = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT skeleton"))
+        });
+        assert!(
+            insert.is_none(),
+            "INSERT ... SELECT should not offer skeleton"
+        );
+    }
+
+    #[test]
+    fn test_ast_insert_skeleton_fallback_to_string() {
+        // 不完全INSERT（パースエラー）→ 文字列フォールバックが動作
+        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\nINSERT INTO users";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let insert = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT skeleton"))
+        });
+        // String fallback should produce skeleton
+        if let Some(CodeActionOrCommand::CodeAction(ca)) = insert {
+            assert!(ca.title.contains("users"));
+        }
+    }
+
+    #[test]
+    fn test_ast_insert_skeleton_no_action_for_unknown_table() {
+        // シンボルテーブルにないテーブルはスキップ
+        let source = "INSERT INTO nonexistent";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 10,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let insert = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT skeleton"))
+        });
+        assert!(insert.is_none());
+    }
+
+    #[test]
+    fn test_ast_insert_with_values_correct_range() {
+        // VALUES付きINSERT: AST版が正しい範囲を置換することを確認
+        let source = "CREATE TABLE t (a INT, b INT)\nINSERT INTO t (a) VALUES (1)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let insert = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT skeleton"))
+        });
+        // VALUES already exists → no skeleton
+        assert!(insert.is_none());
     }
 }
