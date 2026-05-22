@@ -81,7 +81,7 @@ impl DocumentAnalysis {
         };
 
         let symbol_table = SymbolTableBuilder::build_tolerant(source);
-        let symbol_table = if symbol_table.tables.is_empty() && source.contains("CREATE TABLE") {
+        let symbol_table = if symbol_table.tables.is_empty() && source.to_ascii_uppercase().contains("CREATE TABLE") {
             // Fallback: parse progressively shorter substrings to extract DDL definitions
             // from partially valid sources (e.g., incomplete INSERT after CREATE TABLE)
             let lines: Vec<&str> = source.lines().collect();
