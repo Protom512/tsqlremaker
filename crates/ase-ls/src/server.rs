@@ -205,7 +205,7 @@ impl LanguageServer for AseLanguageServer {
     async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
         let uri = &params.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            Ok(Some(folding::folding_ranges(&analysis.source)))
+            Ok(Some(folding::folding_ranges_with_analysis(&analysis)))
         } else {
             Ok(Some(Vec::new()))
         }
