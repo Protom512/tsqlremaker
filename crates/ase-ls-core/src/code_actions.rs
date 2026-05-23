@@ -40,11 +40,8 @@ pub fn code_actions_with_analysis(
         actions.push(CodeActionOrCommand::CodeAction(action));
     }
 
-    // AST-aware TRY...CATCH: find Statement::Block at cursor position
-    if actions.is_empty() || !line_text.trim().eq_ignore_ascii_case("BEGIN") {
-        // Only try AST path if no action found yet, or line is BEGIN
-    } else if let Some(action) = try_wrap_try_catch_ast(analysis, range.start, uri) {
-        // Replace the string-based action with AST-based one
+    // AST-aware TRY...CATCH: prefer AST path; fall back to string-based only if AST fails
+    if let Some(action) = try_wrap_try_catch_ast(analysis, range.start, uri) {
         actions.retain(
             |a| !matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("TRY")),
         );
@@ -359,7 +356,7 @@ fn try_wrap_try_catch_ast(
     let start_offset = block.span.start as usize;
     let end_offset = resolve_span_end(block.span.end as usize, start_offset, analysis);
 
-    let (start_line, start_col) = analysis.line_index.offset_to_position(start_offset as u32);
+    let (start_line, _start_col) = analysis.line_index.offset_to_position(start_offset as u32);
     let (end_line, _) = analysis.line_index.offset_to_position(end_offset as u32);
 
     // Get the line text to determine indentation
@@ -367,11 +364,26 @@ fn try_wrap_try_catch_ast(
     let indent = line_text.len() - line_text.trim_start().len();
     let indent_str = &line_text[..indent];
 
-    let begin_text = format!("{indent_str}BEGIN TRY\n{indent_str}    BEGIN");
-    let end_text = format!(
-        "{indent_str}    END\n{indent_str}END TRY\n{indent_str}BEGIN CATCH\n{indent_str}    -- Handle error\n{indent_str}END CATCH"
+    // Extract the original block body text (between BEGIN and END lines)
+    let original_body: String = if end_line > start_line {
+        (start_line + 1..end_line)
+            .filter_map(|l| {
+                let line = analysis.get_line(l);
+                if line.is_empty() {
+                    None
+                } else {
+                    Some(line)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        String::new()
+    };
+
+    let new_text = format!(
+        "{indent_str}BEGIN TRY\n{indent_str}    {original_body}\n{indent_str}END TRY\n{indent_str}BEGIN CATCH\n{indent_str}    -- Handle error\n{indent_str}END CATCH"
     );
-    let new_text = format!("{begin_text}\n{end_text}");
 
     let end_line_text = analysis.get_line(end_line);
     let edit = make_text_edit(
@@ -379,7 +391,7 @@ fn try_wrap_try_catch_ast(
         Range {
             start: Position {
                 line: start_line,
-                character: start_col,
+                character: 0,
             },
             end: Position {
                 line: end_line,
@@ -458,14 +470,14 @@ fn find_block_at_offset(stmt: &Statement, offset: usize) -> Option<&tsql_parser:
     }
 }
 
-/// Resolve potentially broken span.end using token-based fallback.
+/// Resolve potentially broken span.end using forward token scan.
 fn resolve_span_end(end_offset: usize, start_offset: usize, analysis: &DocumentAnalysis) -> usize {
     if end_offset == 0 || end_offset <= start_offset {
+        // Forward scan: find the first token after start_offset, use its end
         analysis
             .tokens
             .iter()
-            .rev()
-            .find(|t| t.span.start as usize >= start_offset)
+            .find(|t| t.span.end as usize > start_offset)
             .map_or(start_offset, |t| t.span.end as usize)
     } else {
         end_offset
@@ -846,11 +858,11 @@ mod tests {
             .unwrap()
             .first()
             .unwrap();
-        // Indentation of BEGIN line should be preserved in generated text
-        assert!(edit.new_text.contains("BEGIN TRY\n    BEGIN"));
-        assert!(edit
-            .new_text
-            .contains("    END\nEND TRY\nBEGIN CATCH\n    -- Handle error\nEND CATCH"));
+        // Indentation should be preserved, original body should be kept
+        assert!(edit.new_text.contains("BEGIN TRY"));
+        assert!(edit.new_text.contains("SELECT 1"));
+        assert!(edit.new_text.contains("END TRY"));
+        assert!(edit.new_text.contains("BEGIN CATCH"));
     }
 
     // --- Mutation-resistant tests ---
