@@ -12,6 +12,7 @@ use lsp_types::{
 };
 use std::collections::HashMap;
 use tsql_parser::ast::Statement;
+use tsql_parser::AstNode;
 
 /// Code Actionsを生成する（DocumentAnalysis利用）
 pub fn code_actions_with_analysis(
@@ -418,7 +419,7 @@ fn find_block_at_offset(stmt: &Statement, offset: usize) -> Option<&tsql_parser:
     match stmt {
         Statement::Block(block) => {
             let start = block.span.start as usize;
-            let end = resolve_span_end_block(block.span.end as usize, start);
+            let end = resolve_span_end_block(block);
             if offset >= start && offset <= end {
                 // Check children first for innermost match
                 for child in &block.statements {
@@ -484,15 +485,25 @@ fn resolve_span_end(end_offset: usize, start_offset: usize, analysis: &DocumentA
     }
 }
 
-/// Resolve span.end for a Block, checking if END token is at the expected position.
-fn resolve_span_end_block(end_offset: usize, start_offset: usize) -> usize {
-    if end_offset == 0 || end_offset <= start_offset {
-        // Approximate: the block spans at least from start to the last statement's end
-        // This is a rough fallback; the full token-based version is used in try_wrap_try_catch_ast
-        start_offset + 5 // "BEGIN" = 5 chars minimum
-    } else {
-        end_offset
+/// Resolve span.end for a Block using child statement spans as fallback.
+fn resolve_span_end_block(block: &tsql_parser::ast::Block) -> usize {
+    let span = &block.span;
+    if span.end > span.start {
+        return span.end as usize;
     }
+    // Fallback: use the end of the last child statement's span
+    block
+        .statements
+        .last()
+        .and_then(|last| {
+            let s = last.span();
+            if s.end > s.start {
+                Some(s.end as usize)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(span.start as usize + 5)
 }
 
 /// 指定行のテキストを取得する
