@@ -85,14 +85,12 @@ fn try_insert_skeleton_in_statement(
             }
 
             // 既にVALUES/SELECT/DEFAULT VALUESがある場合はスキップ
-            if !matches!(
+            if matches!(
                 &insert.source,
                 tsql_parser::ast::InsertSource::Values(_)
                     | tsql_parser::ast::InsertSource::Select(_)
                     | tsql_parser::ast::InsertSource::DefaultValues
             ) {
-                // sourceが空（VALUES未指定）の場合のみ骨組み生成
-            } else {
                 return None;
             }
 
@@ -170,6 +168,23 @@ fn try_insert_skeleton_in_statement(
         Statement::While(while_stmt) => {
             try_insert_skeleton_in_statement(&while_stmt.body, analysis, cursor_offset, uri)
         }
+        Statement::TryCatch(try_catch) => {
+            for child in &try_catch.try_block.statements {
+                if let Some(action) =
+                    try_insert_skeleton_in_statement(child, analysis, cursor_offset, uri)
+                {
+                    return Some(action);
+                }
+            }
+            for child in &try_catch.catch_block.statements {
+                if let Some(action) =
+                    try_insert_skeleton_in_statement(child, analysis, cursor_offset, uri)
+                {
+                    return Some(action);
+                }
+            }
+            None
+        }
         Statement::Create(create) => {
             if let tsql_parser::ast::CreateStatement::Procedure(proc) = &**create {
                 proc.body.iter().find_map(|child| {
@@ -200,12 +215,9 @@ fn is_cursor_in_insert_span(
 
 /// INSERT文の実際の終了位置を推定
 fn find_insert_statement_end(tokens: &[crate::analysis::OwnedToken], start: u32) -> Option<usize> {
-    let mut found_start = false;
-    for tok in tokens {
-        if tok.span.start == start && tok.kind == TokenKind::Insert {
-            found_start = true;
-        }
-        if found_start && tok.kind == TokenKind::Semicolon {
+    let start_idx = tokens.partition_point(|t| t.span.end <= start);
+    for tok in &tokens[start_idx..] {
+        if tok.kind == TokenKind::Semicolon {
             return Some(tok.span.end as usize);
         }
     }
@@ -784,7 +796,8 @@ mod tests {
     #[test]
     fn test_ast_insert_skeleton_inside_block_recurse() {
         // Block内の完全なINSERT: 再帰で見つけてVALUESを検出
-        let source = "CREATE TABLE t (a INT, b INT)\nBEGIN\nINSERT INTO t (a, b) VALUES (1, 2)\nEND";
+        let source =
+            "CREATE TABLE t (a INT, b INT)\nBEGIN\nINSERT INTO t (a, b) VALUES (1, 2)\nEND";
         let analysis = crate::analysis::DocumentAnalysis::new(source);
         let range = Range {
             start: Position {
