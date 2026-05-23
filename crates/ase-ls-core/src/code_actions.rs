@@ -201,12 +201,33 @@ fn is_cursor_in_span(
 /// トークンリストからステートメントの実際の終了位置を推定する
 fn find_statement_end(tokens: &[crate::analysis::OwnedToken], start: u32) -> Option<usize> {
     let start_idx = tokens.partition_point(|t| t.span.end <= start);
+    let mut found_select = false;
     for tok in &tokens[start_idx..] {
-        if tok.kind == TokenKind::Semicolon {
+        if tok.kind == TokenKind::Select && !found_select {
+            found_select = true;
+        }
+        if found_select && tok.kind == TokenKind::Semicolon {
             return Some(tok.span.end as usize);
         }
+        // Stop at next statement-starting keyword after SELECT
+        if found_select
+            && matches!(
+                tok.kind,
+                TokenKind::Insert
+                    | TokenKind::Update
+                    | TokenKind::Delete
+                    | TokenKind::Create
+                    | TokenKind::Declare
+            )
+        {
+            return Some(tok.span.start as usize);
+        }
     }
-    tokens.last().map(|t| t.span.end as usize)
+    if found_select {
+        tokens.last().map(|t| t.span.end as usize)
+    } else {
+        None
+    }
 }
 
 /// SELECTスパン内の * トークンを探す
@@ -234,13 +255,15 @@ fn find_star_token<'a>(
         if found_select && tok.kind == TokenKind::Star {
             return Some(tok);
         }
-        // Skip over DISTINCT, TOP, whitespace, comments between SELECT and *
+        // Skip over DISTINCT, TOP, commas, whitespace, comments, identifiers between SELECT and *
         if found_select
             && !matches!(
                 tok.kind,
                 TokenKind::Distinct
                     | TokenKind::Top
                     | TokenKind::Number
+                    | TokenKind::Comma
+                    | TokenKind::Ident
                     | TokenKind::Whitespace
                     | TokenKind::LineComment
                     | TokenKind::BlockComment
