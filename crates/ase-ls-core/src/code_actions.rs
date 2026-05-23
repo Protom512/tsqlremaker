@@ -200,16 +200,12 @@ fn is_cursor_in_span(
 
 /// トークンリストからステートメントの実際の終了位置を推定する
 fn find_statement_end(tokens: &[crate::analysis::OwnedToken], start: u32) -> Option<usize> {
-    let mut found_start = false;
-    for tok in tokens {
-        if tok.span.start == start && tok.kind == TokenKind::Select {
-            found_start = true;
-        }
-        if found_start && tok.kind == TokenKind::Semicolon {
+    let start_idx = tokens.partition_point(|t| t.span.end <= start);
+    for tok in &tokens[start_idx..] {
+        if tok.kind == TokenKind::Semicolon {
             return Some(tok.span.end as usize);
         }
     }
-    // セミコロンがなければ最後のトークンの終了位置
     tokens.last().map(|t| t.span.end as usize)
 }
 
@@ -218,16 +214,16 @@ fn find_star_token<'a>(
     tokens: &'a [crate::analysis::OwnedToken],
     select_span: &tsql_token::Span,
 ) -> Option<&'a crate::analysis::OwnedToken> {
-    let mut found_select = false;
-    let mut search_end = select_span.end;
-    if search_end == 0 || search_end <= select_span.start {
-        search_end = select_span.start.saturating_add(200);
-    }
+    let search_end = if select_span.end == 0 || select_span.end <= select_span.start {
+        select_span.start.saturating_add(200)
+    } else {
+        select_span.end
+    };
 
-    for tok in tokens {
-        if tok.span.start < select_span.start {
-            continue;
-        }
+    let start_idx = tokens.partition_point(|t| t.span.end <= select_span.start);
+
+    let mut found_select = false;
+    for tok in &tokens[start_idx..] {
         if tok.span.start > search_end {
             break;
         }
@@ -238,10 +234,16 @@ fn find_star_token<'a>(
         if found_select && tok.kind == TokenKind::Star {
             return Some(tok);
         }
+        // Skip over DISTINCT, TOP, whitespace, comments between SELECT and *
         if found_select
             && !matches!(
                 tok.kind,
-                TokenKind::Whitespace | TokenKind::LineComment | TokenKind::BlockComment
+                TokenKind::Distinct
+                    | TokenKind::Top
+                    | TokenKind::Number
+                    | TokenKind::Whitespace
+                    | TokenKind::LineComment
+                    | TokenKind::BlockComment
             )
         {
             found_select = false;
