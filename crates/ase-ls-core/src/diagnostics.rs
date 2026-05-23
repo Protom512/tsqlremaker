@@ -46,6 +46,25 @@ fn collect_select_star_warnings(
                     }
                 }
             }
+            // Recurse into subqueries in FROM clause
+            if let Some(from_clause) = &sel.from {
+                for table_ref in &from_clause.tables {
+                    collect_from_table_ref(table_ref, analysis, diags);
+                }
+            }
+        }
+        Statement::Insert(insert) => {
+            if let tsql_parser::ast::InsertSource::Select(sub_sel) = &insert.source {
+                collect_select_star_warnings(&Statement::Select(sub_sel.clone()), analysis, diags);
+            }
+        }
+        Statement::Update(update) => {
+            collect_from_table_ref(&update.table, analysis, diags);
+            if let Some(from_clause) = &update.from_clause {
+                for table_ref in &from_clause.tables {
+                    collect_from_table_ref(table_ref, analysis, diags);
+                }
+            }
         }
         Statement::If(if_stmt) => {
             collect_select_star_warnings(&if_stmt.then_branch, analysis, diags);
@@ -69,14 +88,41 @@ fn collect_select_star_warnings(
                 collect_select_star_warnings(child, analysis, diags);
             }
         }
-        Statement::Create(create) => {
-            if let tsql_parser::ast::CreateStatement::Procedure(proc) = &**create {
+        Statement::Create(create) => match &**create {
+            tsql_parser::ast::CreateStatement::Procedure(proc) => {
                 for child in &proc.body {
                     collect_select_star_warnings(child, analysis, diags);
                 }
             }
-        }
+            tsql_parser::ast::CreateStatement::View(view) => {
+                collect_select_star_warnings(
+                    &Statement::Select(view.query.clone()),
+                    analysis,
+                    diags,
+                );
+            }
+            _ => {}
+        },
         _ => {}
+    }
+}
+
+/// Recurse into TableReference to find subqueries with SELECT *
+fn collect_from_table_ref(
+    table_ref: &tsql_parser::ast::TableReference,
+    analysis: &DocumentAnalysis,
+    diags: &mut Vec<Diagnostic>,
+) {
+    match table_ref {
+        tsql_parser::ast::TableReference::Subquery { query, .. } => {
+            collect_select_star_warnings(&Statement::Select(query.clone()), analysis, diags);
+        }
+        tsql_parser::ast::TableReference::Joined { joins, .. } => {
+            for join in joins {
+                collect_from_table_ref(&join.table, analysis, diags);
+            }
+        }
+        tsql_parser::ast::TableReference::Table { .. } => {}
     }
 }
 
@@ -117,16 +163,16 @@ fn find_star_token_after_select<'a>(
 ) -> Option<&'a crate::analysis::OwnedToken> {
     let mut found_select = false;
     let mut select_end = select_span.end;
-    // Parserの壊れたスパン対策: end=0なら幅を広げて探す
-    if select_end == 0 || select_end <= select_span.start {
-        // 大量トークンをスキャンしないよう制限（最大50トークン）
+    // Parserの壊れたスパン対策: end が無効/不正なら start から一定バイト幅で探す
+    if select_end <= select_span.start {
+        // 過剰スキャンを避けるためバイト単位で上限を設ける（最大200バイト）
         select_end = select_span.start.saturating_add(200);
     }
 
-    for tok in tokens {
-        if tok.span.start < select_span.start {
-            continue;
-        }
+    // Use binary search to find starting token index
+    let start_idx = tokens.partition_point(|t| t.span.start < select_span.start);
+
+    for tok in &tokens[start_idx..] {
         if tok.span.start > select_end {
             break;
         }
@@ -137,11 +183,16 @@ fn find_star_token_after_select<'a>(
         if found_select && tok.kind == TokenKind::Star {
             return Some(tok);
         }
-        // SELECTと*の間の空白等はスキップ、それ以外のトークンが来たら*はない
+        // Allow commas (for `SELECT col, *`), DISTINCT, ALL, TOP keywords
         if found_select
             && !matches!(
                 tok.kind,
-                TokenKind::Whitespace | TokenKind::LineComment | TokenKind::BlockComment
+                TokenKind::Comma
+                    | TokenKind::Distinct
+                    | TokenKind::All
+                    | TokenKind::Top
+                    | TokenKind::Number
+                    | TokenKind::Ident
             )
         {
             found_select = false;
@@ -424,6 +475,50 @@ mod tests {
         assert!(
             !star_warnings.is_empty(),
             "SELECT * inside PROCEDURE should produce warning"
+        );
+    }
+
+    #[test]
+    fn test_select_star_in_insert_select_warns() {
+        let source = "INSERT INTO t2 SELECT * FROM t1";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let diags = diagnose(&analysis);
+        let star_warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.message.contains("SELECT *"))
+            .collect();
+        assert!(
+            !star_warnings.is_empty(),
+            "SELECT * in INSERT...SELECT should produce warning"
+        );
+    }
+
+    #[test]
+    fn test_insert_select_star_warns() {
+        let source = "INSERT INTO t2 SELECT * FROM t1";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let diags = diagnose(&analysis);
+        let star_warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.message.contains("SELECT *"))
+            .collect();
+        assert!(
+            !star_warnings.is_empty(),
+            "SELECT * in INSERT...SELECT should produce warning"
+        );
+    }
+
+    #[test]
+    fn test_select_star_id_comma_star_warns() {
+        let analysis = crate::analysis::DocumentAnalysis::new("SELECT id, * FROM users");
+        let diags = diagnose(&analysis);
+        let star_warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.message.contains("SELECT *"))
+            .collect();
+        assert!(
+            !star_warnings.is_empty(),
+            "SELECT id, * should warn about *"
         );
     }
 }
