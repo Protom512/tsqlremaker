@@ -320,23 +320,26 @@ fn try_add_insert_columns_in_stmt(
 
             // VALUESトークンの開始位置を見つける
             let values_start = find_values_token_start(&analysis.tokens, insert.span.start)?;
-            let table_start_offset = insert.table.span.start;
-            let t_start = analysis.line_index.offset_to_position(table_start_offset);
+
+            // Insert column list between table name end and VALUES start
+            // Range covers from after table name to before VALUES keyword
+            let table_end = insert.table.span.end;
+            let t_end = analysis.line_index.offset_to_position(table_end);
             let v_start = analysis.line_index.offset_to_position(values_start);
 
             let edit = make_text_edit(
                 uri,
                 Range {
                     start: Position {
-                        line: t_start.0,
-                        character: t_start.1,
+                        line: t_end.0,
+                        character: t_end.1,
                     },
                     end: Position {
                         line: v_start.0,
                         character: v_start.1,
                     },
                 },
-                format!("{table_name} ({col_list}) VALUES"),
+                format!(" ({col_list}) "),
             );
 
             Some(CodeAction {
@@ -383,12 +386,9 @@ fn resolve_stmt_end(span: &tsql_token::Span, tokens: &[crate::analysis::OwnedTok
     if span.end > span.start {
         return span.end;
     }
-    let mut found = false;
-    for tok in tokens {
-        if tok.span.start == span.start {
-            found = true;
-        }
-        if found && tok.kind == TokenKind::Semicolon {
+    let start_idx = tokens.partition_point(|t| t.span.end <= span.start);
+    for tok in &tokens[start_idx..] {
+        if tok.kind == TokenKind::Semicolon {
             return tok.span.end;
         }
     }
@@ -403,12 +403,9 @@ fn find_values_token_start(
     tokens: &[crate::analysis::OwnedToken],
     insert_start: u32,
 ) -> Option<u32> {
-    let mut found = false;
-    for tok in tokens {
-        if tok.span.start == insert_start && tok.kind == TokenKind::Insert {
-            found = true;
-        }
-        if found && tok.kind == TokenKind::Values {
+    let start_idx = tokens.partition_point(|t| t.span.end <= insert_start);
+    for tok in &tokens[start_idx..] {
+        if tok.kind == TokenKind::Values {
             return Some(tok.span.start);
         }
     }
@@ -742,13 +739,14 @@ mod tests {
             let changes = edit.changes.as_ref().unwrap();
             let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
             assert!(
-                text_edit.new_text.contains("(id, name)"),
+                text_edit.new_text.contains("id, name"),
                 "new_text: {}",
                 text_edit.new_text
             );
+            // new_text inserts column list between table name and VALUES, not including VALUES
             assert!(
-                text_edit.new_text.contains("VALUES"),
-                "Should preserve VALUES"
+                !text_edit.new_text.contains("VALUES"),
+                "new_text should not duplicate VALUES keyword"
             );
         }
     }
@@ -858,12 +856,10 @@ mod tests {
             let changes = edit.changes.as_ref().unwrap();
             let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
             let new = &text_edit.new_text;
-            // new_text replaces from table name start to VALUES start
+            // new_text inserts column list between table name end and VALUES start
             assert!(new.contains("a, b, c"), "Should contain column list");
-            assert!(new.contains("VALUES"), "Should contain VALUES keyword");
-            // When applied: "t VALUES (1,2,3)" → "t (a, b, c) VALUES (1,2,3)"
-            // Range covers only table name through VALUES keyword
-            assert!(new.starts_with("t"));
+            // VALUES is NOT in new_text — it stays in the document at its original position
+            assert!(!new.contains("VALUES"), "Should not duplicate VALUES");
         }
     }
 }
