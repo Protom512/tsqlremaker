@@ -512,6 +512,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_case_insensitive_key_equality() {
+        let a = CaseInsensitiveKey::new("Users");
+        let b = CaseInsensitiveKey::new("users");
+        let c = CaseInsensitiveKey::new("USERS");
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+    }
+
+    #[test]
+    fn test_case_insensitive_key_hash_match() {
+        let mut map: HashMap<CaseInsensitiveKey, i32> = HashMap::new();
+        map.insert(CaseInsensitiveKey::new("Users"), 1);
+        // Lookup works with uppercase str (same as stored form)
+        assert_eq!(map.get("USERS"), Some(&1));
+        assert_eq!(map.get("unknown"), None);
+        // Lookup with pre-computed uppercase String via Borrow<String>
+        let upper = "USERS".to_string();
+        assert_eq!(map.get(&upper), Some(&1));
+    }
+
+    #[test]
+    fn test_case_insensitive_key_borrow_string() {
+        let mut map: HashMap<CaseInsensitiveKey, i32> = HashMap::new();
+        map.insert(CaseInsensitiveKey::new("Tbl"), 42);
+        let upper = "TBL".to_string();
+        assert_eq!(map.get(&upper), Some(&42));
+    }
+
+    #[test]
     fn test_build_table_symbol() {
         let source = "CREATE TABLE users (id INT, name VARCHAR(100))";
         let table = SymbolTableBuilder::build(source);
