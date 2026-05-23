@@ -20,7 +20,7 @@ use crate::line_index::LineIndex;
 ///
 /// Stores the uppercase form; hashes/compares case-insensitively.
 /// Implements `Borrow<str>` so `HashMap::get("foo")` works directly.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CaseInsensitiveKey {
     upper: String,
 }
@@ -30,12 +30,6 @@ impl CaseInsensitiveKey {
         Self {
             upper: name.to_uppercase(),
         }
-    }
-}
-
-impl std::hash::Hash for CaseInsensitiveKey {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.upper.hash(state);
     }
 }
 
@@ -433,24 +427,26 @@ impl SymbolTableBuilder {
         }
     }
 
-    /// テーブル名でテーブルを検索 (case-insensitive, zero-allocation lookup)
+    /// テーブル名でテーブルを検索 (case-insensitive)
     pub fn find_table<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a TableSymbol> {
-        table.tables.get(name.to_uppercase().as_str())
+        let key = CaseInsensitiveKey::new(name);
+        table.tables.get::<str>(key.borrow())
     }
 
     /// プロシージャ名でプロシージャを検索 (case-insensitive)
     pub fn find_procedure<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a ProcedureSymbol> {
-        table.procedures.get(name.to_uppercase().as_str())
+        let key = CaseInsensitiveKey::new(name);
+        table.procedures.get::<str>(key.borrow())
     }
 
     /// 変数名で変数を検索 (case-insensitive, @prefix auto-added)
     pub fn find_variable<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a VariableSymbol> {
         let search_name = if name.starts_with('@') {
-            name.to_uppercase()
+            CaseInsensitiveKey::new(name)
         } else {
-            format!("@{}", name.to_uppercase())
+            CaseInsensitiveKey::new(&format!("@{}", name))
         };
-        table.variables.get(search_name.as_str())
+        table.variables.get::<str>(search_name.borrow())
     }
 
     /// カーソル位置の識別子を特定
