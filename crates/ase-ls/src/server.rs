@@ -116,7 +116,7 @@ impl LanguageServer for AseLanguageServer {
                             },
                             legend: semantic_tokens::semantic_tokens_legend(),
                             range: Some(true),
-                            full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
                         },
                     ),
                 ),
