@@ -84,7 +84,10 @@ fn try_insert_skeleton_in_statement(
                 return None;
             }
 
-            // 既にVALUES/SELECT/DEFAULT VALUESがある場合はスキップ
+            // InsertSource has 3 variants (Values/Select/DefaultValues), all meaning
+            // the INSERT already has a complete source. Skip skeleton generation for those.
+            // Note: incomplete INSERT statements (no VALUES) typically result in parse errors
+            // and won't appear in the AST, so this path is reached only for edge cases.
             if matches!(
                 &insert.source,
                 tsql_parser::ast::InsertSource::Values(_)
