@@ -37,15 +37,11 @@ pub fn code_actions_with_analysis(
         actions.push(CodeActionOrCommand::CodeAction(action));
     }
 
-    if let Some(action) = try_wrap_try_catch(&analysis.source, &line_text, range.start, uri) {
-        actions.push(CodeActionOrCommand::CodeAction(action));
-    }
-
     // AST-aware TRY...CATCH: prefer AST path; fall back to string-based only if AST fails
     if let Some(action) = try_wrap_try_catch_ast(analysis, range.start, uri) {
-        actions.retain(
-            |a| !matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("TRY")),
-        );
+        actions.push(CodeActionOrCommand::CodeAction(action));
+    } else if let Some(action) = try_wrap_try_catch(&analysis.source, &line_text, range.start, uri)
+    {
         actions.push(CodeActionOrCommand::CodeAction(action));
     }
 
@@ -368,14 +364,7 @@ fn try_wrap_try_catch_ast(
     // Extract the original block body text (between BEGIN and END lines)
     let original_body: String = if end_line > start_line {
         (start_line + 1..end_line)
-            .filter_map(|l| {
-                let line = analysis.get_line(l);
-                if line.is_empty() {
-                    None
-                } else {
-                    Some(line)
-                }
-            })
+            .map(|l| analysis.get_line(l))
             .collect::<Vec<_>>()
             .join("\n")
     } else {
@@ -474,11 +463,15 @@ fn find_block_at_offset(stmt: &Statement, offset: usize) -> Option<&tsql_parser:
 /// Resolve potentially broken span.end using forward token scan.
 fn resolve_span_end(end_offset: usize, start_offset: usize, analysis: &DocumentAnalysis) -> usize {
     if end_offset == 0 || end_offset <= start_offset {
-        // Forward scan: find the first token after start_offset, use its end
+        // Reverse scan: find the last token within a reasonable range after start_offset
+        let limit = (start_offset + 500).min(analysis.source.len());
         analysis
             .tokens
             .iter()
-            .find(|t| t.span.end as usize > start_offset)
+            .rev()
+            .find(|t| {
+                t.span.start as usize >= start_offset && t.span.start as usize <= limit
+            })
             .map_or(start_offset, |t| t.span.end as usize)
     } else {
         end_offset
