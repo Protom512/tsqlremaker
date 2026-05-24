@@ -377,6 +377,23 @@ fn try_add_insert_columns_in_stmt(
                 None
             }
         }
+        Statement::TryCatch(try_catch) => {
+            for child in &try_catch.try_block.statements {
+                if let Some(action) =
+                    try_add_insert_columns_in_stmt(child, analysis, cursor_offset, uri)
+                {
+                    return Some(action);
+                }
+            }
+            for child in &try_catch.catch_block.statements {
+                if let Some(action) =
+                    try_add_insert_columns_in_stmt(child, analysis, cursor_offset, uri)
+                {
+                    return Some(action);
+                }
+            }
+            None
+        }
         _ => None,
     }
 }
