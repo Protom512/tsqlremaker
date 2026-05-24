@@ -117,6 +117,25 @@ fn build_column_hover(
     None
 }
 
+/// Collect table names from a list of TableReference, including JOINed tables.
+fn collect_table_names(tables: &[TableReference]) -> Vec<String> {
+    let mut names = Vec::new();
+    for tr in tables {
+        match tr {
+            TableReference::Table { name, .. } => {
+                names.push(name.name.to_uppercase());
+            }
+            TableReference::Joined { joins, .. } => {
+                for join in joins {
+                    names.extend(collect_table_names(std::slice::from_ref(&join.table)));
+                }
+            }
+            TableReference::Subquery { .. } => {}
+        }
+    }
+    names
+}
+
 fn resolve_column_in_statement(
     stmt: &Statement,
     symbol_table: &crate::symbol_table::SymbolTable,
@@ -136,16 +155,9 @@ fn resolve_column_in_statement(
                 return None;
             }
 
-            // Collect table names from FROM clause
+            // Collect table names from FROM clause (including JOINs)
             let from = sel.from.as_ref()?;
-            let table_names: Vec<String> = from
-                .tables
-                .iter()
-                .filter_map(|tr| match tr {
-                    TableReference::Table { name, .. } => Some(name.name.to_uppercase()),
-                    _ => None,
-                })
-                .collect();
+            let table_names = collect_table_names(&from.tables);
 
             // Search each table for the column
             for table_name in &table_names {
@@ -214,19 +226,26 @@ fn resolve_column_in_statement(
                 TableReference::Table { name, .. } => name.name.to_uppercase(),
                 _ => return None,
             };
-            if let Some(tbl) = crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, &table_name) {
-                for col in &tbl.columns {
-                    if col.name.to_uppercase() == upper_ident {
-                        let nullable = match col.nullable {
-                            Some(true) => " NULL",
-                            Some(false) => " NOT NULL",
-                            None => "",
-                        };
-                        let identity = if col.is_identity { " IDENTITY" } else { "" };
-                        return Some(format!(
-                            "```tsql\n{} {:?}{}{}\n```\n\n**Column** of `{}`",
-                            col.name, col.data_type, nullable, identity, tbl.name
-                        ));
+            // Collect tables from both the UPDATE target and FROM clause
+            let mut all_tables = vec![table_name.clone()];
+            if let Some(from_clause) = &update.from_clause {
+                all_tables.extend(collect_table_names(&from_clause.tables));
+            }
+            for tbl_name in &all_tables {
+                if let Some(tbl) = crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, tbl_name) {
+                    for col in &tbl.columns {
+                        if col.name.to_uppercase() == upper_ident {
+                            let nullable = match col.nullable {
+                                Some(true) => " NULL",
+                                Some(false) => " NOT NULL",
+                                None => "",
+                            };
+                            let identity = if col.is_identity { " IDENTITY" } else { "" };
+                            return Some(format!(
+                                "```tsql\n{} {:?}{}{}\n```\n\n**Column** of `{}`",
+                                col.name, col.data_type, nullable, identity, tbl.name
+                            ));
+                        }
                     }
                 }
             }
@@ -889,15 +908,12 @@ mod tests {
         // "nonexistent" is not a column of t — should not resolve as column
         // (might still show static keyword hover if it matches something)
         if let Some(h) = result {
-            match &h.contents {
-                HoverContents::Markup(mc) => {
-                    assert!(
-                        !mc.value.contains("Column"),
-                        "Nonexistent column should not resolve as column: {}",
-                        mc.value
-                    );
-                }
-                _ => {}
+            if let HoverContents::Markup(mc) = &h.contents {
+                assert!(
+                    !mc.value.contains("Column"),
+                    "Nonexistent column should not resolve as column: {}",
+                    mc.value
+                );
             }
         }
     }
