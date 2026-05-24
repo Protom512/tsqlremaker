@@ -336,6 +336,12 @@ fn try_wrap_try_catch_ast(
     position: Position,
     uri: &lsp_types::Url,
 ) -> Option<CodeAction> {
+    // Only trigger when cursor is on the BEGIN line itself
+    let line_text = analysis.get_line(position.line);
+    if !line_text.trim().eq_ignore_ascii_case("BEGIN") {
+        return None;
+    }
+
     let cursor_offset = analysis
         .line_index
         .position_to_offset(&analysis.source, position);
@@ -372,7 +378,7 @@ fn try_wrap_try_catch_ast(
     };
 
     let new_text = format!(
-        "{indent_str}BEGIN TRY\n{indent_str}    {original_body}\n{indent_str}END TRY\n{indent_str}BEGIN CATCH\n{indent_str}    -- Handle error\n{indent_str}END CATCH"
+        "{indent_str}BEGIN TRY\n{original_body}\n{indent_str}END TRY\n{indent_str}BEGIN CATCH\n{indent_str}    -- Handle error\n{indent_str}END CATCH"
     );
 
     let end_line_text = analysis.get_line(end_line);
@@ -460,17 +466,39 @@ fn find_block_at_offset(stmt: &Statement, offset: usize) -> Option<&tsql_parser:
     }
 }
 
-/// Resolve potentially broken span.end using forward token scan.
+/// Resolve potentially broken span.end using depth-aware forward token scan.
 fn resolve_span_end(end_offset: usize, start_offset: usize, analysis: &DocumentAnalysis) -> usize {
     if end_offset == 0 || end_offset <= start_offset {
-        // Reverse scan: find the last token within a reasonable range after start_offset
-        let limit = (start_offset + 500).min(analysis.source.len());
-        analysis
-            .tokens
-            .iter()
-            .rev()
-            .find(|t| t.span.start as usize >= start_offset && t.span.start as usize <= limit)
-            .map_or(start_offset, |t| t.span.end as usize)
+        // Depth-aware forward scan: find the matching END for the BEGIN at start_offset
+        let mut depth = 0;
+        let mut found_begin = false;
+        for t in &analysis.tokens {
+            let ts = t.span.start as usize;
+            if ts < start_offset {
+                continue;
+            }
+            let te = t.span.end as usize;
+            if ts > start_offset + 5000 {
+                break;
+            }
+            if !found_begin && ts <= start_offset && te > start_offset {
+                found_begin = true;
+                depth = 1;
+                continue;
+            }
+            if found_begin {
+                let text = t.text.to_uppercase();
+                if text == "BEGIN" {
+                    depth += 1;
+                } else if text == "END" {
+                    depth -= 1;
+                    if depth == 0 {
+                        return te;
+                    }
+                }
+            }
+        }
+        start_offset
     } else {
         end_offset
     }
