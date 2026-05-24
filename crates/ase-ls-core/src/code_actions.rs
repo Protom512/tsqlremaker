@@ -469,9 +469,7 @@ fn resolve_span_end(end_offset: usize, start_offset: usize, analysis: &DocumentA
             .tokens
             .iter()
             .rev()
-            .find(|t| {
-                t.span.start as usize >= start_offset && t.span.start as usize <= limit
-            })
+            .find(|t| t.span.start as usize >= start_offset && t.span.start as usize <= limit)
             .map_or(start_offset, |t| t.span.end as usize)
     } else {
         end_offset
