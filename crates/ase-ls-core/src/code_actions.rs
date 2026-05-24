@@ -169,16 +169,12 @@ fn try_expand_in_statement(
         }
         Statement::TryCatch(try_catch) => {
             for child in &try_catch.try_block.statements {
-                if let Some(action) =
-                    try_expand_in_statement(child, analysis, cursor_offset, uri)
-                {
+                if let Some(action) = try_expand_in_statement(child, analysis, cursor_offset, uri) {
                     return Some(action);
                 }
             }
             for child in &try_catch.catch_block.statements {
-                if let Some(action) =
-                    try_expand_in_statement(child, analysis, cursor_offset, uri)
-                {
+                if let Some(action) = try_expand_in_statement(child, analysis, cursor_offset, uri) {
                     return Some(action);
                 }
             }
