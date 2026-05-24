@@ -275,11 +275,20 @@ impl LanguageServer for AseLanguageServer {
     ) -> Result<Option<Vec<TextEdit>>> {
         let uri = &params.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            let edits = formatting::format(&analysis.source);
-            if edits.is_empty() {
+            let all_edits = formatting::format(&analysis.source);
+            // Filter edits to only those within the requested range
+            let range = params.range;
+            let filtered: Vec<TextEdit> = all_edits
+                .into_iter()
+                .filter(|edit| {
+                    edit.range.start.line >= range.start.line
+                        && edit.range.end.line <= range.end.line
+                })
+                .collect();
+            if filtered.is_empty() {
                 Ok(None)
             } else {
-                Ok(Some(edits))
+                Ok(Some(filtered))
             }
         } else {
             Ok(None)
