@@ -231,13 +231,10 @@ impl LanguageServer for AseLanguageServer {
     ) -> Result<Option<SemanticTokensRangeResult>> {
         let uri = &params.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            let result = semantic_tokens::semantic_tokens_full_with_analysis(&analysis);
-            match result {
-                SemanticTokensResult::Tokens(tokens) => {
-                    Ok(Some(SemanticTokensRangeResult::Tokens(tokens)))
-                }
-                _ => Ok(None),
-            }
+            Ok(Some(semantic_tokens::semantic_tokens_range_with_analysis(
+                &analysis,
+                params.range,
+            )))
         } else {
             Ok(None)
         }

@@ -5,7 +5,8 @@
 use crate::analysis::DocumentAnalysis;
 use crate::line_index::LineIndex;
 use lsp_types::{
-    SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult,
+    Range, SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend,
+    SemanticTokensRangeResult, SemanticTokensResult,
 };
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
@@ -170,6 +171,65 @@ pub fn semantic_tokens_full_with_analysis(analysis: &DocumentAnalysis) -> Semant
         data: tokens,
     }
     .into()
+}
+
+/// Generate Semantic Tokens for a specific range using DocumentAnalysis.
+/// Only tokens whose start position falls within [range.start, range.end] are included.
+pub fn semantic_tokens_range_with_analysis(
+    analysis: &DocumentAnalysis,
+    range: Range,
+) -> SemanticTokensRangeResult {
+    let mut tokens = Vec::new();
+    let mut prev_line = 0u32;
+    let mut prev_char = 0u32;
+
+    for token in &analysis.tokens {
+        let (line, character) = analysis.line_index.offset_to_position(token.span.start);
+
+        // Skip tokens before range
+        if line < range.start.line
+            || (line == range.start.line && character < range.start.character)
+        {
+            continue;
+        }
+        // Stop past range
+        if line > range.end.line || (line == range.end.line && character > range.end.character) {
+            break;
+        }
+
+        let type_idx = token_kind_to_type_index(token.kind).or_else(|| {
+            if token.kind == TokenKind::Ident {
+                resolve_ident_type(analysis, &token.text)
+            } else {
+                None
+            }
+        });
+
+        if let Some(type_idx) = type_idx {
+            let delta_line = line.saturating_sub(prev_line);
+            let delta_start = if delta_line == 0 {
+                character.saturating_sub(prev_char)
+            } else {
+                character
+            };
+
+            tokens.push(SemanticToken {
+                delta_line,
+                delta_start,
+                length: token.span.len(),
+                token_type: type_idx,
+                token_modifiers_bitset: 0,
+            });
+
+            prev_line = line;
+            prev_char = character;
+        }
+    }
+
+    SemanticTokensRangeResult::Tokens(SemanticTokens {
+        result_id: None,
+        data: tokens,
+    })
 }
 
 /// ソースコードから Semantic Tokens を生成する（ソースから構築）
