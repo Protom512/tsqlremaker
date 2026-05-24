@@ -156,6 +156,9 @@ fn make_star_diagnostic(
     })
 }
 
+/// Maximum byte range to scan for * token when parser span is broken
+const BROKEN_SPAN_SCAN_LIMIT: u32 = 200;
+
 /// SELECTスパン内で、SELECTキーワードの直後にあるStarトークンを探す
 fn find_star_token_after_select<'a>(
     tokens: &'a [crate::analysis::OwnedToken],
@@ -165,8 +168,8 @@ fn find_star_token_after_select<'a>(
     let mut select_end = select_span.end;
     // Parserの壊れたスパン対策: end が無効/不正なら start から一定バイト幅で探す
     if select_end <= select_span.start {
-        // 過剰スキャンを避けるためバイト単位で上限を設ける（最大200バイト）
-        select_end = select_span.start.saturating_add(200);
+        // 過剰スキャンを避けるためバイト単位で上限を設ける
+        select_end = select_span.start.saturating_add(BROKEN_SPAN_SCAN_LIMIT);
     }
 
     // Use binary search to find starting token index
@@ -519,6 +522,64 @@ mod tests {
         assert!(
             !star_warnings.is_empty(),
             "SELECT id, * should warn about *"
+        );
+    }
+
+    #[test]
+    fn test_select_distinct_star_warns() {
+        let analysis = crate::analysis::DocumentAnalysis::new("SELECT DISTINCT * FROM users");
+        let diags = diagnose(&analysis);
+        let star_warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.message.contains("SELECT *"))
+            .collect();
+        assert!(
+            !star_warnings.is_empty(),
+            "SELECT DISTINCT * should warn about *"
+        );
+    }
+
+    #[test]
+    fn test_select_top_star_warns() {
+        let analysis = crate::analysis::DocumentAnalysis::new("SELECT TOP 10 * FROM users");
+        let diags = diagnose(&analysis);
+        let star_warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.message.contains("SELECT *"))
+            .collect();
+        assert!(
+            !star_warnings.is_empty(),
+            "SELECT TOP 10 * should warn about *"
+        );
+    }
+
+    #[test]
+    fn test_select_distinct_star_with_table_warns() {
+        let source = "CREATE TABLE t (id INT)\nSELECT DISTINCT * FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let diags = diagnose(&analysis);
+        let star_warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.message.contains("SELECT *"))
+            .collect();
+        assert!(
+            !star_warnings.is_empty(),
+            "SELECT DISTINCT * should produce warning"
+        );
+    }
+
+    #[test]
+    fn test_select_star_in_create_view_warns() {
+        let source = "CREATE VIEW v AS SELECT * FROM users";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let diags = diagnose(&analysis);
+        let star_warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.message.contains("SELECT *"))
+            .collect();
+        assert!(
+            !star_warnings.is_empty(),
+            "SELECT * in CREATE VIEW should produce warning"
         );
     }
 }
