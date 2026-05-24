@@ -954,9 +954,9 @@ mod tests {
         };
         let actions = code_actions_with_analysis(&analysis, range, &test_uri());
         // String-based fallback should handle incomplete INSERT
-        let insert = actions.iter().find(|a| {
-            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT"))
-        });
+        let insert = actions.iter().find(
+            |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT")),
+        );
         // Incomplete INSERT may or may not produce an action depending on parse result
         // The important thing is it doesn't crash
         let _ = insert;
