@@ -110,7 +110,9 @@ fn build_column_hover(
     let upper_ident = ident_text.to_uppercase();
 
     for stmt in &analysis.statements {
-        if let Some(result) = resolve_column_in_statement(stmt, &analysis.symbol_table, offset, &upper_ident) {
+        if let Some(result) =
+            resolve_column_in_statement(stmt, &analysis.symbol_table, offset, &upper_ident)
+        {
             return Some(result);
         }
     }
@@ -161,7 +163,9 @@ fn resolve_column_in_statement(
 
             // Search each table for the column
             for table_name in &table_names {
-                if let Some(tbl) = crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, table_name) {
+                if let Some(tbl) =
+                    crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, table_name)
+                {
                     for col in &tbl.columns {
                         if col.name.to_uppercase() == upper_ident {
                             let nullable = match col.nullable {
@@ -193,7 +197,9 @@ fn resolve_column_in_statement(
 
             // Check inserted columns
             let table_name = insert.table.name.to_uppercase();
-            if let Some(tbl) = crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, &table_name) {
+            if let Some(tbl) =
+                crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, &table_name)
+            {
                 for col in &tbl.columns {
                     if col.name.to_uppercase() == upper_ident {
                         let nullable = match col.nullable {
@@ -232,7 +238,9 @@ fn resolve_column_in_statement(
                 all_tables.extend(collect_table_names(&from_clause.tables));
             }
             for tbl_name in &all_tables {
-                if let Some(tbl) = crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, tbl_name) {
+                if let Some(tbl) =
+                    crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, tbl_name)
+                {
                     for col in &tbl.columns {
                         if col.name.to_uppercase() == upper_ident {
                             let nullable = match col.nullable {
@@ -251,10 +259,9 @@ fn resolve_column_in_statement(
             }
             None
         }
-        Statement::Block(block) => block
-            .statements
-            .iter()
-            .find_map(|child| resolve_column_in_statement(child, symbol_table, offset, upper_ident)),
+        Statement::Block(block) => block.statements.iter().find_map(|child| {
+            resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+        }),
         Statement::If(if_stmt) => {
             resolve_column_in_statement(&if_stmt.then_branch, symbol_table, offset, upper_ident)
                 .or_else(|| {
@@ -268,12 +275,16 @@ fn resolve_column_in_statement(
         }
         Statement::TryCatch(tc) => {
             for child in &tc.try_block.statements {
-                if let Some(r) = resolve_column_in_statement(child, symbol_table, offset, upper_ident) {
+                if let Some(r) =
+                    resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+                {
                     return Some(r);
                 }
             }
             for child in &tc.catch_block.statements {
-                if let Some(r) = resolve_column_in_statement(child, symbol_table, offset, upper_ident) {
+                if let Some(r) =
+                    resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+                {
                     return Some(r);
                 }
             }
@@ -281,9 +292,9 @@ fn resolve_column_in_statement(
         }
         Statement::Create(create) => {
             if let tsql_parser::ast::CreateStatement::Procedure(proc) = &**create {
-                proc.body
-                    .iter()
-                    .find_map(|child| resolve_column_in_statement(child, symbol_table, offset, upper_ident))
+                proc.body.iter().find_map(|child| {
+                    resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+                })
             } else {
                 None
             }
@@ -826,15 +837,30 @@ mod tests {
         // Hover over "id" in SELECT (line 1, char 7)
         let result = hover_with_analysis(
             &analysis,
-            Position { line: 1, character: 7 },
+            Position {
+                line: 1,
+                character: 7,
+            },
         );
         assert!(result.is_some(), "Should resolve column 'id'");
         let h = result.unwrap();
         match &h.contents {
             HoverContents::Markup(mc) => {
-                assert!(mc.value.contains("Column"), "Should be a column hover: {}", mc.value);
-                assert!(mc.value.contains("Int"), "Should show data type: {}", mc.value);
-                assert!(mc.value.contains("users"), "Should mention table: {}", mc.value);
+                assert!(
+                    mc.value.contains("Column"),
+                    "Should be a column hover: {}",
+                    mc.value
+                );
+                assert!(
+                    mc.value.contains("Int"),
+                    "Should show data type: {}",
+                    mc.value
+                );
+                assert!(
+                    mc.value.contains("users"),
+                    "Should mention table: {}",
+                    mc.value
+                );
             }
             _ => panic!("Expected Markup content"),
         }
@@ -847,14 +873,25 @@ mod tests {
         // Hover over "total" in WHERE (line 1, char 30)
         let result = hover_with_analysis(
             &analysis,
-            Position { line: 1, character: 30 },
+            Position {
+                line: 1,
+                character: 30,
+            },
         );
         assert!(result.is_some(), "Should resolve column 'total'");
         let h = result.unwrap();
         match &h.contents {
             HoverContents::Markup(mc) => {
-                assert!(mc.value.contains("Column"), "Should be a column hover: {}", mc.value);
-                assert!(mc.value.contains("NOT NULL"), "Should show nullable: {}", mc.value);
+                assert!(
+                    mc.value.contains("Column"),
+                    "Should be a column hover: {}",
+                    mc.value
+                );
+                assert!(
+                    mc.value.contains("NOT NULL"),
+                    "Should show nullable: {}",
+                    mc.value
+                );
             }
             _ => panic!("Expected Markup content"),
         }
@@ -866,13 +903,20 @@ mod tests {
         let analysis = crate::analysis::DocumentAnalysis::new(source);
         let result = hover_with_analysis(
             &analysis,
-            Position { line: 1, character: 7 },
+            Position {
+                line: 1,
+                character: 7,
+            },
         );
         assert!(result.is_some(), "Should resolve identity column");
         let h = result.unwrap();
         match &h.contents {
             HoverContents::Markup(mc) => {
-                assert!(mc.value.contains("IDENTITY"), "Should show IDENTITY: {}", mc.value);
+                assert!(
+                    mc.value.contains("IDENTITY"),
+                    "Should show IDENTITY: {}",
+                    mc.value
+                );
             }
             _ => panic!("Expected Markup content"),
         }
@@ -885,13 +929,20 @@ mod tests {
         // Hover over "a" in INSERT column list (line 1, char 15)
         let result = hover_with_analysis(
             &analysis,
-            Position { line: 1, character: 15 },
+            Position {
+                line: 1,
+                character: 15,
+            },
         );
         assert!(result.is_some(), "Should resolve column in INSERT");
         let h = result.unwrap();
         match &h.contents {
             HoverContents::Markup(mc) => {
-                assert!(mc.value.contains("Column"), "Should be a column hover: {}", mc.value);
+                assert!(
+                    mc.value.contains("Column"),
+                    "Should be a column hover: {}",
+                    mc.value
+                );
             }
             _ => panic!("Expected Markup content"),
         }
@@ -903,7 +954,10 @@ mod tests {
         let analysis = crate::analysis::DocumentAnalysis::new(source);
         let result = hover_with_analysis(
             &analysis,
-            Position { line: 1, character: 7 },
+            Position {
+                line: 1,
+                character: 7,
+            },
         );
         // "nonexistent" is not a column of t — should not resolve as column
         // (might still show static keyword hover if it matches something)
