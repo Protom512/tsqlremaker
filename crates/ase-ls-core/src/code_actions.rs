@@ -41,6 +41,11 @@ pub fn code_actions_with_analysis(
         }
     }
 
+    // INSERT INTO table VALUES (...) → add column list
+    if let Some(action) = try_add_insert_column_list_ast(analysis, range.start, uri) {
+        actions.push(CodeActionOrCommand::CodeAction(action));
+    }
+
     // AST-aware TRY...CATCH: prefer AST path; fall back to string-based
     if let Some(action) = try_wrap_try_catch_ast(analysis, range.start, uri) {
         actions.push(CodeActionOrCommand::CodeAction(action));
@@ -335,6 +340,178 @@ fn try_generate_insert_skeleton(
         format!("Generate INSERT skeleton for {table_name}"),
         edit,
     ))
+}
+
+/// INSERT INTO table VALUES (...) → カラムリスト追加
+///
+/// ASTのInsertStatementでcolumnsが空、sourceがValuesの場合、
+/// シンボルテーブルからカラムリストを生成して挿入する。
+fn try_add_insert_column_list_ast(
+    analysis: &DocumentAnalysis,
+    position: Position,
+    uri: &lsp_types::Url,
+) -> Option<CodeAction> {
+    let cursor_offset = analysis
+        .line_index
+        .position_to_offset(&analysis.source, position);
+
+    for stmt in &analysis.statements {
+        if let Some(action) = try_add_insert_columns_in_stmt(stmt, analysis, cursor_offset, uri) {
+            return Some(action);
+        }
+    }
+    None
+}
+
+fn try_add_insert_columns_in_stmt(
+    stmt: &Statement,
+    analysis: &DocumentAnalysis,
+    cursor_offset: usize,
+    uri: &lsp_types::Url,
+) -> Option<CodeAction> {
+    match stmt {
+        Statement::Insert(insert) => {
+            let span_end = resolve_insert_stmt_end(&insert.span, &analysis.tokens);
+            let start = insert.span.start as usize;
+            if cursor_offset < start || cursor_offset > span_end as usize {
+                return None;
+            }
+
+            if !insert.columns.is_empty() {
+                return None;
+            }
+
+            if !matches!(&insert.source, tsql_parser::ast::InsertSource::Values(_)) {
+                return None;
+            }
+
+            let table_name = &insert.table.name;
+            let tbl = SymbolTableBuilder::find_table(&analysis.symbol_table, table_name)?;
+            if tbl.columns.is_empty() {
+                return None;
+            }
+
+            let columns: Vec<&str> = tbl
+                .columns
+                .iter()
+                .filter(|c| !c.is_identity)
+                .map(|c| c.name.as_str())
+                .collect();
+            if columns.is_empty() {
+                return None;
+            }
+
+            let col_list = columns.join(", ");
+            let values_start = find_values_token_start(&analysis.tokens, insert.span.start)?;
+
+            let table_end = insert.table.span.end;
+            let t_end = analysis.line_index.offset_to_position(table_end);
+            let v_start = analysis.line_index.offset_to_position(values_start);
+
+            let edit = make_text_edit(
+                uri,
+                Range {
+                    start: Position {
+                        line: t_end.0,
+                        character: t_end.1,
+                    },
+                    end: Position {
+                        line: v_start.0,
+                        character: v_start.1,
+                    },
+                },
+                format!(" ({col_list}) "),
+            );
+
+            Some(CodeAction {
+                title: format!("Add column list to INSERT for {table_name}"),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: None,
+                edit: Some(edit),
+                command: None,
+                is_preferred: Some(true),
+                disabled: None,
+                data: None,
+            })
+        }
+        Statement::Block(block) => block
+            .statements
+            .iter()
+            .find_map(|child| try_add_insert_columns_in_stmt(child, analysis, cursor_offset, uri)),
+        Statement::If(if_stmt) => {
+            try_add_insert_columns_in_stmt(&if_stmt.then_branch, analysis, cursor_offset, uri)
+                .or_else(|| {
+                    if_stmt.else_branch.as_ref().and_then(|else_b| {
+                        try_add_insert_columns_in_stmt(else_b, analysis, cursor_offset, uri)
+                    })
+                })
+        }
+        Statement::While(while_stmt) => {
+            try_add_insert_columns_in_stmt(&while_stmt.body, analysis, cursor_offset, uri)
+        }
+        Statement::Create(create) => {
+            if let tsql_parser::ast::CreateStatement::Procedure(proc) = &**create {
+                proc.body.iter().find_map(|child| {
+                    try_add_insert_columns_in_stmt(child, analysis, cursor_offset, uri)
+                })
+            } else if let tsql_parser::ast::CreateStatement::Trigger(trigger) = &**create {
+                trigger.body.iter().find_map(|child| {
+                    try_add_insert_columns_in_stmt(child, analysis, cursor_offset, uri)
+                })
+            } else {
+                None
+            }
+        }
+        Statement::TryCatch(try_catch) => {
+            for child in &try_catch.try_block.statements {
+                if let Some(action) =
+                    try_add_insert_columns_in_stmt(child, analysis, cursor_offset, uri)
+                {
+                    return Some(action);
+                }
+            }
+            for child in &try_catch.catch_block.statements {
+                if let Some(action) =
+                    try_add_insert_columns_in_stmt(child, analysis, cursor_offset, uri)
+                {
+                    return Some(action);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// INSERTスパンの終了位置を解決
+fn resolve_insert_stmt_end(span: &tsql_token::Span, tokens: &[crate::analysis::OwnedToken]) -> u32 {
+    if span.end > span.start {
+        return span.end;
+    }
+    let start_idx = tokens.partition_point(|t| t.span.end <= span.start);
+    for tok in &tokens[start_idx..] {
+        if tok.kind == TokenKind::Semicolon {
+            return tok.span.end;
+        }
+    }
+    tokens
+        .last()
+        .map(|t| t.span.end)
+        .unwrap_or(span.start + 100)
+}
+
+/// VALUESトークンの開始位置を見つける
+fn find_values_token_start(
+    tokens: &[crate::analysis::OwnedToken],
+    insert_start: u32,
+) -> Option<u32> {
+    let start_idx = tokens.partition_point(|t| t.span.end <= insert_start);
+    for tok in &tokens[start_idx..] {
+        if tok.kind == TokenKind::Values {
+            return Some(tok.span.start);
+        }
+    }
+    None
 }
 
 /// BEGIN → TRY...CATCH ラッパー
@@ -1240,5 +1417,149 @@ mod tests {
             action.is_some(),
             "TRY...CATCH wrap should be offered for BEGIN block inside CREATE TRIGGER"
         );
+    }
+
+    // === INSERT column list code action ===
+
+    #[test]
+    fn test_insert_add_column_list() {
+        let source = "CREATE TABLE t (id INT, name VARCHAR(100))\nINSERT INTO t VALUES (1, 'test')";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(add_cols.is_some(), "Should offer to add column list");
+        if let CodeActionOrCommand::CodeAction(ca) = add_cols.unwrap() {
+            let edit = ca.edit.as_ref().unwrap();
+            let changes = edit.changes.as_ref().unwrap();
+            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
+            assert!(
+                text_edit.new_text.contains("id, name"),
+                "new_text: {}",
+                text_edit.new_text
+            );
+            assert!(
+                !text_edit.new_text.contains("VALUES"),
+                "new_text should not duplicate VALUES keyword"
+            );
+        }
+    }
+
+    #[test]
+    fn test_insert_skip_when_columns_exist() {
+        let source =
+            "CREATE TABLE t (id INT, name VARCHAR(100))\nINSERT INTO t (id, name) VALUES (1, 'test')";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(
+            add_cols.is_none(),
+            "Should not offer when columns already listed"
+        );
+    }
+
+    #[test]
+    fn test_insert_column_list_skips_identity() {
+        let source =
+            "CREATE TABLE t (id INT IDENTITY, name VARCHAR(100))\nINSERT INTO t VALUES ('test')";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(add_cols.is_some());
+        if let CodeActionOrCommand::CodeAction(ca) = add_cols.unwrap() {
+            let edit = ca.edit.as_ref().unwrap();
+            let changes = edit.changes.as_ref().unwrap();
+            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
+            assert!(
+                !text_edit.new_text.contains("id"),
+                "IDENTITY should be excluded"
+            );
+            assert!(text_edit.new_text.contains("name"));
+        }
+    }
+
+    #[test]
+    fn test_insert_column_list_unknown_table_skip() {
+        let source = "INSERT INTO unknown VALUES (1)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 10,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(add_cols.is_none());
+    }
+
+    #[test]
+    fn test_insert_column_list_preserves_values() {
+        let source = "CREATE TABLE t (a INT, b INT, c INT)\nINSERT INTO t VALUES (1, 2, 3)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(add_cols.is_some());
+        if let CodeActionOrCommand::CodeAction(ca) = add_cols.unwrap() {
+            let edit = ca.edit.as_ref().unwrap();
+            let changes = edit.changes.as_ref().unwrap();
+            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
+            let new = &text_edit.new_text;
+            assert!(new.contains("a, b, c"), "Should contain column list");
+            assert!(!new.contains("VALUES"), "Should not duplicate VALUES");
+        }
     }
 }
