@@ -349,7 +349,7 @@ fn try_wrap_try_catch_ast(
     // Find the Statement::Block that starts at or near the cursor line
     let mut target_block: Option<&tsql_parser::ast::Block> = None;
     for stmt in &analysis.statements {
-        if let Some(block) = find_block_at_offset(stmt, cursor_offset) {
+        if let Some(block) = find_block_at_offset(stmt, cursor_offset, analysis) {
             target_block = Some(block);
             break;
         }
@@ -357,7 +357,7 @@ fn try_wrap_try_catch_ast(
 
     let block = target_block?;
     let start_offset = block.span.start as usize;
-    let end_offset = resolve_span_end(block.span.end as usize, start_offset, analysis);
+    let end_offset = resolve_block_end(block, analysis)?;
 
     let (start_line, _start_col) = analysis.line_index.offset_to_position(start_offset as u32);
     let (end_line, _) = analysis.line_index.offset_to_position(end_offset as u32);
@@ -410,15 +410,19 @@ fn try_wrap_try_catch_ast(
 }
 
 /// Find the innermost Statement::Block containing the given offset.
-fn find_block_at_offset(stmt: &Statement, offset: usize) -> Option<&tsql_parser::ast::Block> {
+fn find_block_at_offset<'a>(
+    stmt: &'a Statement,
+    offset: usize,
+    analysis: &DocumentAnalysis,
+) -> Option<&'a tsql_parser::ast::Block> {
     match stmt {
         Statement::Block(block) => {
             let start = block.span.start as usize;
-            let end = resolve_span_end_block(block);
+            let end = resolve_block_end(block, analysis)?;
             if offset >= start && offset <= end {
                 // Check children first for innermost match
                 for child in &block.statements {
-                    if let Some(inner) = find_block_at_offset(child, offset) {
+                    if let Some(inner) = find_block_at_offset(child, offset, analysis) {
                         return Some(inner);
                     }
                 }
@@ -428,25 +432,25 @@ fn find_block_at_offset(stmt: &Statement, offset: usize) -> Option<&tsql_parser:
             }
         }
         Statement::If(if_stmt) => {
-            if let Some(b) = find_block_at_offset(&if_stmt.then_branch, offset) {
+            if let Some(b) = find_block_at_offset(&if_stmt.then_branch, offset, analysis) {
                 return Some(b);
             }
             if let Some(else_branch) = &if_stmt.else_branch {
-                if let Some(b) = find_block_at_offset(else_branch, offset) {
+                if let Some(b) = find_block_at_offset(else_branch, offset, analysis) {
                     return Some(b);
                 }
             }
             None
         }
-        Statement::While(while_stmt) => find_block_at_offset(&while_stmt.body, offset),
+        Statement::While(while_stmt) => find_block_at_offset(&while_stmt.body, offset, analysis),
         Statement::TryCatch(try_catch) => {
             for child in &try_catch.try_block.statements {
-                if let Some(b) = find_block_at_offset(child, offset) {
+                if let Some(b) = find_block_at_offset(child, offset, analysis) {
                     return Some(b);
                 }
             }
             for child in &try_catch.catch_block.statements {
-                if let Some(b) = find_block_at_offset(child, offset) {
+                if let Some(b) = find_block_at_offset(child, offset, analysis) {
                     return Some(b);
                 }
             }
@@ -455,7 +459,7 @@ fn find_block_at_offset(stmt: &Statement, offset: usize) -> Option<&tsql_parser:
         Statement::Create(create) => {
             if let tsql_parser::ast::CreateStatement::Procedure(proc) = create.as_ref() {
                 for child in &proc.body {
-                    if let Some(b) = find_block_at_offset(child, offset) {
+                    if let Some(b) = find_block_at_offset(child, offset, analysis) {
                         return Some(b);
                     }
                 }
@@ -467,62 +471,62 @@ fn find_block_at_offset(stmt: &Statement, offset: usize) -> Option<&tsql_parser:
 }
 
 /// Resolve potentially broken span.end using depth-aware forward token scan.
-fn resolve_span_end(end_offset: usize, start_offset: usize, analysis: &DocumentAnalysis) -> usize {
-    if end_offset == 0 || end_offset <= start_offset {
-        // Depth-aware forward scan: find the matching END for the BEGIN at start_offset
-        let mut depth = 0;
-        let mut found_begin = false;
-        for t in &analysis.tokens {
-            let ts = t.span.start as usize;
-            if ts < start_offset {
-                continue;
-            }
-            let te = t.span.end as usize;
-            if ts > start_offset + 5000 {
-                break;
-            }
-            if !found_begin && ts <= start_offset && te > start_offset {
-                found_begin = true;
-                depth = 1;
-                continue;
-            }
-            if found_begin {
-                let text = t.text.to_uppercase();
-                if text == "BEGIN" {
-                    depth += 1;
-                } else if text == "END" {
-                    depth -= 1;
-                    if depth == 0 {
-                        return te;
-                    }
+///
+/// Returns `Some(end_offset)` when the matching END token is found.
+/// Returns `None` when the span looks valid already, or when the forward
+/// scan cannot locate the matching END.
+fn resolve_span_end_fallback(start_offset: usize, analysis: &DocumentAnalysis) -> Option<usize> {
+    let mut depth = 0;
+    let mut found_begin = false;
+    for t in &analysis.tokens {
+        let ts = t.span.start as usize;
+        if ts < start_offset {
+            continue;
+        }
+        let te = t.span.end as usize;
+        if ts > start_offset + 5000 {
+            break;
+        }
+        if !found_begin && ts <= start_offset && te > start_offset {
+            found_begin = true;
+            depth = 1;
+            continue;
+        }
+        if found_begin {
+            let text = t.text.to_uppercase();
+            if text == "BEGIN" {
+                depth += 1;
+            } else if text == "END" {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(te);
                 }
             }
         }
-        start_offset
-    } else {
-        end_offset
     }
+    None
 }
 
-/// Resolve span.end for a Block using child statement spans as fallback.
-fn resolve_span_end_block(block: &tsql_parser::ast::Block) -> usize {
+/// Resolve the end offset for a Block, using span.end when valid,
+/// falling back to child-statement spans, and finally to depth-aware token scan.
+fn resolve_block_end(
+    block: &tsql_parser::ast::Block,
+    analysis: &DocumentAnalysis,
+) -> Option<usize> {
     let span = &block.span;
+    // Primary: use AST span if it looks valid
     if span.end > span.start {
-        return span.end as usize;
+        return Some(span.end as usize);
     }
-    // Fallback: use the end of the last child statement's span
-    block
-        .statements
-        .last()
-        .and_then(|last| {
-            let s = last.span();
-            if s.end > s.start {
-                Some(s.end as usize)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(span.start as usize + 5)
+    // Fallback 1: end of last child statement's span
+    if let Some(last) = block.statements.last() {
+        let s = last.span();
+        if s.end > s.start {
+            return Some(s.end as usize);
+        }
+    }
+    // Fallback 2: depth-aware forward token scan
+    resolve_span_end_fallback(span.start as usize, analysis)
 }
 
 /// 指定行のテキストを取得する
@@ -841,18 +845,28 @@ mod tests {
     }
 
     #[test]
-    fn test_ast_try_catch_no_trigger_on_begin_try() {
-        // "BEGIN TRY" line text should NOT trigger wrap
-        // (line_text is "BEGIN TRY", not just "BEGIN")
+    fn test_ast_try_catch_no_trigger_on_body_line() {
+        // Cursor on a body line (SELECT 1) inside BEGIN...END → should NOT offer wrap.
+        // This exercises the full production path, not just string comparison.
         let source = "BEGIN\n    SELECT 1\nEND";
-        let _analysis = make_analysis_ca(source);
-        // Simulate cursor on a line that says "BEGIN TRY" by directly testing
-        // the check logic: line_text must be exactly "BEGIN"
-        let line_text = "BEGIN TRY";
-        let trimmed = line_text.trim();
+        let analysis = make_analysis_ca(source);
+        let actions = code_actions_with_analysis(
+            &analysis,
+            Range {
+                start: Position {
+                    line: 1,
+                    character: 4,
+                },
+                end: Position {
+                    line: 1,
+                    character: 12,
+                },
+            },
+            &test_uri(),
+        );
         assert!(
-            !trimmed.eq_ignore_ascii_case("BEGIN"),
-            "BEGIN TRY should not match the BEGIN-only check"
+            find_try_catch_action(&actions).is_none(),
+            "TRY...CATCH wrap should NOT be offered when cursor is on a body line, not BEGIN"
         );
     }
 
@@ -925,15 +939,29 @@ mod tests {
     }
 
     #[test]
-    fn test_ast_try_catch_no_wrap_on_begin_try_in_procedure() {
-        // BEGIN TRY inside a procedure should NOT trigger the wrap action
-        // because line_text is "BEGIN TRY", not just "BEGIN".
-        // NOTE: Using simple source since standalone BEGIN TRY causes parser OOM.
-        // The key check is: `line_text.trim() != "BEGIN"` for "BEGIN TRY"
-        let line_text = "    BEGIN TRY";
-        assert!(!line_text.trim().eq_ignore_ascii_case("BEGIN"));
-        // Also verify the string-based guard works
-        assert!(!line_text.trim().eq_ignore_ascii_case("BEGIN"));
+    fn test_ast_try_catch_no_trigger_on_end_line() {
+        // Cursor on the END line → should NOT offer wrap.
+        // Exercises production code path: line_text.trim() is "END", not "BEGIN".
+        let source = "BEGIN\n    SELECT 1\nEND";
+        let analysis = make_analysis_ca(source);
+        let actions = code_actions_with_analysis(
+            &analysis,
+            Range {
+                start: Position {
+                    line: 2,
+                    character: 0,
+                },
+                end: Position {
+                    line: 2,
+                    character: 3,
+                },
+            },
+            &test_uri(),
+        );
+        assert!(
+            find_try_catch_action(&actions).is_none(),
+            "TRY...CATCH wrap should NOT be offered when cursor is on END line"
+        );
     }
 
     #[test]
