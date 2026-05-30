@@ -41,10 +41,14 @@ pub fn code_actions_with_analysis(
         }
     }
 
-    // TRY...CATCH still uses line-level matching (BEGIN/END detection)
-    let line_text = analysis.get_line(range.start.line).to_string();
-    if let Some(action) = try_wrap_try_catch(&analysis.source, &line_text, range.start, uri) {
+    // AST-aware TRY...CATCH: prefer AST path; fall back to string-based
+    if let Some(action) = try_wrap_try_catch_ast(analysis, range.start, uri) {
         actions.push(CodeActionOrCommand::CodeAction(action));
+    } else {
+        let line_text = analysis.get_line(range.start.line).to_string();
+        if let Some(action) = try_wrap_try_catch(&analysis.source, &line_text, range.start, uri) {
+            actions.push(CodeActionOrCommand::CodeAction(action));
+        }
     }
 
     actions
@@ -577,7 +581,198 @@ fn find_matching_end(source: &str, begin_line: u32) -> Option<u32> {
     None
 }
 
-/// 指定行のテキストを取得する
+/// AST-aware TRY...CATCH wrapper using Statement::Block spans.
+fn try_wrap_try_catch_ast(
+    analysis: &DocumentAnalysis,
+    position: Position,
+    uri: &lsp_types::Url,
+) -> Option<CodeAction> {
+    // Only trigger when cursor is on the BEGIN line itself
+    let line_text = analysis.get_line(position.line);
+    if !line_text.trim().eq_ignore_ascii_case("BEGIN") {
+        return None;
+    }
+
+    let cursor_offset = analysis
+        .line_index
+        .position_to_offset(&analysis.source, position);
+
+    // Find the Statement::Block that starts at or near the cursor line
+    let mut target_block: Option<&tsql_parser::ast::Block> = None;
+    for stmt in &analysis.statements {
+        if let Some(block) = find_block_at_offset(stmt, cursor_offset, analysis) {
+            target_block = Some(block);
+            break;
+        }
+    }
+
+    let block = target_block?;
+    let start_offset = block.span.start as usize;
+    let end_offset = resolve_block_end(block, analysis)?;
+
+    let (start_line, _start_col) = analysis.line_index.offset_to_position(start_offset as u32);
+    let (end_line, _) = analysis.line_index.offset_to_position(end_offset as u32);
+
+    // Get the line text to determine indentation
+    let line_text = analysis.get_line(start_line);
+    let indent = line_text.len() - line_text.trim_start().len();
+    let indent_str = &line_text[..indent];
+
+    // Extract the original block body text (between BEGIN and END lines)
+    let original_body: String = if end_line > start_line {
+        (start_line + 1..end_line)
+            .map(|l| analysis.get_line(l))
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        String::new()
+    };
+
+    let new_text = format!(
+        "{indent_str}BEGIN TRY\n{original_body}\n{indent_str}END TRY\n{indent_str}BEGIN CATCH\n{indent_str}    -- Handle error\n{indent_str}END CATCH"
+    );
+
+    let end_line_text = analysis.get_line(end_line);
+    let edit = make_text_edit(
+        uri,
+        Range {
+            start: Position {
+                line: start_line,
+                character: 0,
+            },
+            end: Position {
+                line: end_line,
+                character: end_line_text.len() as u32,
+            },
+        },
+        new_text,
+    );
+
+    Some(CodeAction {
+        title: "Wrap with TRY...CATCH".to_string(),
+        kind: Some(CodeActionKind::REFACTOR),
+        diagnostics: None,
+        edit: Some(edit),
+        command: None,
+        is_preferred: None,
+        disabled: None,
+        data: None,
+    })
+}
+
+/// Find the innermost Statement::Block containing the given offset.
+fn find_block_at_offset<'a>(
+    stmt: &'a Statement,
+    offset: usize,
+    analysis: &DocumentAnalysis,
+) -> Option<&'a tsql_parser::ast::Block> {
+    match stmt {
+        Statement::Block(block) => {
+            let start = block.span.start as usize;
+            let end = resolve_block_end(block, analysis)?;
+            if offset >= start && offset <= end {
+                for child in &block.statements {
+                    if let Some(inner) = find_block_at_offset(child, offset, analysis) {
+                        return Some(inner);
+                    }
+                }
+                Some(block)
+            } else {
+                None
+            }
+        }
+        Statement::If(if_stmt) => {
+            if let Some(b) = find_block_at_offset(&if_stmt.then_branch, offset, analysis) {
+                return Some(b);
+            }
+            if let Some(else_branch) = &if_stmt.else_branch {
+                if let Some(b) = find_block_at_offset(else_branch, offset, analysis) {
+                    return Some(b);
+                }
+            }
+            None
+        }
+        Statement::While(while_stmt) => find_block_at_offset(&while_stmt.body, offset, analysis),
+        Statement::TryCatch(try_catch) => {
+            for child in &try_catch.try_block.statements {
+                if let Some(b) = find_block_at_offset(child, offset, analysis) {
+                    return Some(b);
+                }
+            }
+            for child in &try_catch.catch_block.statements {
+                if let Some(b) = find_block_at_offset(child, offset, analysis) {
+                    return Some(b);
+                }
+            }
+            None
+        }
+        Statement::Create(create) => {
+            if let tsql_parser::ast::CreateStatement::Procedure(proc) = create.as_ref() {
+                for child in &proc.body {
+                    if let Some(b) = find_block_at_offset(child, offset, analysis) {
+                        return Some(b);
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Resolve potentially broken span.end using depth-aware forward token scan.
+///
+/// Returns `Some(end_offset)` when the matching END token is found, `None` otherwise.
+fn resolve_span_end_fallback(start_offset: usize, analysis: &DocumentAnalysis) -> Option<usize> {
+    let mut depth = 0;
+    let mut found_begin = false;
+    for t in &analysis.tokens {
+        let ts = t.span.start as usize;
+        if ts < start_offset {
+            continue;
+        }
+        let te = t.span.end as usize;
+        if ts > start_offset + 5000 {
+            break;
+        }
+        if !found_begin && ts <= start_offset && te > start_offset {
+            found_begin = true;
+            depth = 1;
+            continue;
+        }
+        if found_begin {
+            let text = t.text.to_uppercase();
+            if text == "BEGIN" {
+                depth += 1;
+            } else if text == "END" {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(te);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Resolve the end offset for a Block, using span.end when valid,
+/// falling back to child-statement spans, and finally to depth-aware token scan.
+fn resolve_block_end(
+    block: &tsql_parser::ast::Block,
+    analysis: &DocumentAnalysis,
+) -> Option<usize> {
+    let span = &block.span;
+    if span.end > span.start {
+        return Some(span.end as usize);
+    }
+    if let Some(last) = block.statements.last() {
+        let s = last.span();
+        if s.end > s.start {
+            return Some(s.end as usize);
+        }
+    }
+    resolve_span_end_fallback(span.start as usize, analysis)
+}
 fn get_line_at(source: &str, line: u32) -> String {
     source.lines().nth(line as usize).unwrap_or("").to_string()
 }
@@ -1132,6 +1327,241 @@ mod tests {
         assert!(
             !find_insert_skeleton_action(&actions),
             "should NOT generate INSERT skeleton when VALUES already exists"
+        );
+    }
+
+    // === AST-aware TRY...CATCH tests ===
+
+    fn find_try_catch_action(actions: &[CodeActionOrCommand]) -> Option<&CodeAction> {
+        actions.iter().find_map(|a| match a {
+            CodeActionOrCommand::CodeAction(ca) if ca.title.contains("TRY") => Some(ca),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn test_ast_try_catch_wraps_block_at_cursor() {
+        let source = "BEGIN\n    SELECT 1\nEND";
+        let analysis = make_analysis(source);
+        let actions = code_actions_with_analysis(
+            &analysis,
+            Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 5,
+                },
+            },
+            &test_uri(),
+        );
+        let action = find_try_catch_action(&actions);
+        assert!(
+            action.is_some(),
+            "Should offer TRY...CATCH wrap for BEGIN block"
+        );
+        let ca = action.unwrap();
+        let edit = ca
+            .edit
+            .as_ref()
+            .unwrap()
+            .changes
+            .as_ref()
+            .unwrap()
+            .get(&test_uri())
+            .unwrap()
+            .first()
+            .unwrap();
+        assert!(edit.new_text.contains("BEGIN TRY"));
+        assert!(edit.new_text.contains("BEGIN CATCH"));
+        assert!(edit.new_text.contains("SELECT 1"));
+        assert_eq!(edit.range.start.line, 0);
+        assert_eq!(edit.range.end.line, 2);
+    }
+
+    #[test]
+    fn test_ast_try_catch_nested_inner_block() {
+        let source = "BEGIN\n    BEGIN\n        SELECT 1\n    END\nEND";
+        let analysis = make_analysis(source);
+        let actions = code_actions_with_analysis(
+            &analysis,
+            Range {
+                start: Position {
+                    line: 1,
+                    character: 4,
+                },
+                end: Position {
+                    line: 1,
+                    character: 9,
+                },
+            },
+            &test_uri(),
+        );
+        let action = find_try_catch_action(&actions);
+        assert!(action.is_some(), "Should offer wrap for inner BEGIN");
+        let ca = action.unwrap();
+        let edit = ca
+            .edit
+            .as_ref()
+            .unwrap()
+            .changes
+            .as_ref()
+            .unwrap()
+            .get(&test_uri())
+            .unwrap()
+            .first()
+            .unwrap();
+        assert_eq!(edit.range.start.line, 1);
+        assert_eq!(edit.range.end.line, 3);
+    }
+
+    #[test]
+    fn test_ast_try_catch_no_trigger_on_body_line() {
+        // Cursor on a body line (SELECT 1) inside BEGIN...END → should NOT offer wrap.
+        let source = "BEGIN\n    SELECT 1\nEND";
+        let analysis = make_analysis(source);
+        let actions = code_actions_with_analysis(
+            &analysis,
+            Range {
+                start: Position {
+                    line: 1,
+                    character: 4,
+                },
+                end: Position {
+                    line: 1,
+                    character: 12,
+                },
+            },
+            &test_uri(),
+        );
+        assert!(
+            find_try_catch_action(&actions).is_none(),
+            "TRY...CATCH wrap should NOT be offered when cursor is on a body line"
+        );
+    }
+
+    #[test]
+    fn test_ast_try_catch_no_trigger_on_end_line() {
+        // Cursor on the END line → should NOT offer wrap.
+        let source = "BEGIN\n    SELECT 1\nEND";
+        let analysis = make_analysis(source);
+        let actions = code_actions_with_analysis(
+            &analysis,
+            Range {
+                start: Position {
+                    line: 2,
+                    character: 0,
+                },
+                end: Position {
+                    line: 2,
+                    character: 3,
+                },
+            },
+            &test_uri(),
+        );
+        assert!(
+            find_try_catch_action(&actions).is_none(),
+            "TRY...CATCH wrap should NOT be offered when cursor is on END line"
+        );
+    }
+
+    #[test]
+    fn test_ast_try_catch_preserves_indentation() {
+        let source = "CREATE PROCEDURE p AS\nBEGIN\n    SELECT 1\nEND";
+        let analysis = make_analysis(source);
+        let actions = code_actions_with_analysis(
+            &analysis,
+            Range {
+                start: Position {
+                    line: 1,
+                    character: 0,
+                },
+                end: Position {
+                    line: 1,
+                    character: 5,
+                },
+            },
+            &test_uri(),
+        );
+        let action = find_try_catch_action(&actions);
+        assert!(action.is_some());
+        let ca = action.unwrap();
+        let edit = ca
+            .edit
+            .as_ref()
+            .unwrap()
+            .changes
+            .as_ref()
+            .unwrap()
+            .get(&test_uri())
+            .unwrap()
+            .first()
+            .unwrap();
+        assert!(edit.new_text.contains("BEGIN TRY"));
+        assert!(edit.new_text.contains("SELECT 1"));
+        assert!(edit.new_text.contains("END TRY"));
+        assert!(edit.new_text.contains("BEGIN CATCH"));
+    }
+
+    #[test]
+    fn test_ast_try_catch_outer_block_at_cursor() {
+        let source = "BEGIN\n    BEGIN\n        SELECT 1\n    END\nEND";
+        let analysis = make_analysis(source);
+        let actions = code_actions_with_analysis(
+            &analysis,
+            Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 5,
+                },
+            },
+            &test_uri(),
+        );
+        let ca = find_try_catch_action(&actions).expect("should have TRY action");
+        let edit = ca
+            .edit
+            .as_ref()
+            .unwrap()
+            .changes
+            .as_ref()
+            .unwrap()
+            .get(&test_uri())
+            .unwrap()
+            .first()
+            .unwrap();
+        assert_eq!(edit.range.start.line, 0);
+        assert_eq!(edit.range.end.line, 4);
+    }
+
+    #[test]
+    fn test_ast_try_catch_action_kind_is_refactor() {
+        let source = "BEGIN\n    SELECT 1\nEND";
+        let analysis = make_analysis(source);
+        let actions = code_actions_with_analysis(
+            &analysis,
+            Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 5,
+                },
+            },
+            &test_uri(),
+        );
+        let ca = find_try_catch_action(&actions).expect("should have TRY action");
+        assert_eq!(
+            ca.kind,
+            Some(CodeActionKind::REFACTOR),
+            "TRY...CATCH wrap must be REFACTOR, not QUICKFIX"
         );
     }
 }
