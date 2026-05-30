@@ -43,6 +43,9 @@ fn statement_to_symbol(source: &str, stmt: &Statement) -> Option<DocumentSymbol>
                 tsql_parser::ast::CreateStatement::Index(idx) => {
                     (idx.name.name.clone(), SymbolKind::PROPERTY, idx.span)
                 }
+                tsql_parser::ast::CreateStatement::Trigger(td) => {
+                    (td.name.name.clone(), SymbolKind::EVENT, td.span)
+                }
             };
             let range = span_to_lsp_range(source, span.start, span.end);
             Some(make_symbol(name, kind, range))

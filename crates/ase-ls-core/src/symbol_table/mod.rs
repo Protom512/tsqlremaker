@@ -309,6 +309,9 @@ impl SymbolTableBuilder {
                         },
                     );
                 }
+                CreateStatement::Trigger(_) => {
+                    // Triggers are not tracked in the symbol table (no column/param info)
+                }
             },
             Statement::Declare(decl) => {
                 Self::collect_declare_variables(line_index, decl, &mut table.variables);

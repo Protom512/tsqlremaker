@@ -903,6 +903,10 @@ impl<'src> Parser<'src> {
                 self.buffer.consume()?;
                 self.parse_create_procedure(start)
             }
+            TokenKind::Trigger => {
+                self.buffer.consume()?;
+                self.parse_create_trigger(start)
+            }
             _ => Err(ParseError::unexpected_token(
                 vec![
                     TokenKind::Table,
@@ -910,6 +914,7 @@ impl<'src> Parser<'src> {
                     TokenKind::Index,
                     TokenKind::View,
                     TokenKind::Procedure,
+                    TokenKind::Trigger,
                 ],
                 self.buffer.current()?.kind,
                 self.buffer.current()?.position,
@@ -1735,6 +1740,106 @@ impl<'src> Parser<'src> {
                 body,
             },
         ))))
+    }
+
+    /// CREATE TRIGGER文を解析
+    ///
+    /// T-SQL構文: CREATE TRIGGER name ON table FOR {INSERT|UPDATE|DELETE [, ...]} AS body
+    fn parse_create_trigger(&mut self, start: u32) -> ParseResult<Statement> {
+        let name = self.parse_identifier()?;
+
+        // ON
+        if !self.buffer.check(TokenKind::On) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::On],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.position,
+            ));
+        }
+        self.buffer.consume()?;
+
+        let table = self.parse_identifier()?;
+
+        // FOR (not a registered keyword — comes as Ident)
+        let cur = self.buffer.current()?;
+        if cur.kind != TokenKind::Ident || !cur.text.eq_ignore_ascii_case("FOR") {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::Ident],
+                cur.kind,
+                cur.position,
+            ));
+        }
+        self.buffer.consume()?;
+
+        // Trigger events: INSERT, UPDATE, DELETE (comma-separated)
+        let mut events = Vec::new();
+        loop {
+            let event = self.parse_trigger_event()?;
+            events.push(event);
+            if !self.buffer.consume_if(TokenKind::Comma)? {
+                break;
+            }
+        }
+
+        if events.is_empty() {
+            return Err(ParseError::invalid_syntax(
+                "Expected at least one trigger event (INSERT, UPDATE, or DELETE)".to_string(),
+                self.buffer.current()?.position,
+            ));
+        }
+
+        // AS
+        if !self.buffer.check(TokenKind::As) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::As],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.position,
+            ));
+        }
+        self.buffer.consume()?;
+
+        // Trigger body (BEGIN...END or single statement)
+        let body = if self.buffer.check(TokenKind::Begin) {
+            let block = self.parse_block()?;
+            vec![block]
+        } else {
+            vec![self.parse_statement()?]
+        };
+
+        let end_span = self.buffer.current()?.span;
+        Ok(Statement::Create(Box::new(CreateStatement::Trigger(
+            TriggerDefinition {
+                span: Span {
+                    start,
+                    end: end_span.end,
+                },
+                name,
+                table,
+                events,
+                body,
+            },
+        ))))
+    }
+
+    /// トリガーイベント種別を解析 (INSERT, UPDATE, DELETE)
+    fn parse_trigger_event(&mut self) -> ParseResult<TriggerEvent> {
+        let current = self.buffer.current()?;
+        if current.kind == TokenKind::Insert {
+            self.buffer.consume()?;
+            Ok(TriggerEvent::Insert)
+        } else if current.kind == TokenKind::Update {
+            self.buffer.consume()?;
+            Ok(TriggerEvent::Update)
+        } else if current.kind == TokenKind::Delete {
+            self.buffer.consume()?;
+            Ok(TriggerEvent::Delete)
+        } else {
+            Err(ParseError::unexpected_token(
+                vec![TokenKind::Insert, TokenKind::Update, TokenKind::Delete],
+                current.kind,
+                current.position,
+            ))
+        }
     }
 
     /// パラメータ定義を解析
@@ -5152,7 +5257,6 @@ mod tests {
 
     #[test]
     fn test_exec_no_args() {
-        // EXEC proc_name — 引数なし
         let result = parse_sql("EXEC my_proc").unwrap();
         assert_eq!(result.len(), 1);
         match &result[0] {
@@ -5166,7 +5270,6 @@ mod tests {
 
     #[test]
     fn test_execute_keyword() {
-        // EXECUTE proc_name — EXECUTE キーワード
         let result = parse_sql("EXECUTE my_proc").unwrap();
         assert_eq!(result.len(), 1);
         match &result[0] {
@@ -5180,14 +5283,12 @@ mod tests {
 
     #[test]
     fn test_exec_positional_args() {
-        // EXEC proc_name 1, 2, 3 — 位置パラメータ
         let result = parse_sql("EXEC my_proc 1, 2, 3").unwrap();
         assert_eq!(result.len(), 1);
         match &result[0] {
             Statement::Exec(exec) => {
                 assert_eq!(exec.procedure.name, "my_proc");
                 assert_eq!(exec.arguments.len(), 3);
-                // All arguments should be positional
                 for arg in &exec.arguments {
                     assert!(
                         matches!(arg, ExecArgument::Positional(_)),
@@ -5201,7 +5302,6 @@ mod tests {
 
     #[test]
     fn test_exec_named_param() {
-        // EXEC proc_name @p1 = 1 — 名前付きパラメータ
         let result = parse_sql("EXEC my_proc @p1 = 1").unwrap();
         assert_eq!(result.len(), 1);
         match &result[0] {
@@ -5225,7 +5325,6 @@ mod tests {
 
     #[test]
     fn test_exec_multiple_named_params() {
-        // EXEC proc_name @p1 = 1, @p2 = 2 — 複数名前付きパラメータ
         let result = parse_sql("EXEC my_proc @p1 = 1, @p2 = 2").unwrap();
         assert_eq!(result.len(), 1);
         match &result[0] {
@@ -5251,7 +5350,6 @@ mod tests {
 
     #[test]
     fn test_exec_string_literal_arg() {
-        // EXEC proc_name 'hello' — 文字列リテラル引数
         let result = parse_sql("EXEC my_proc 'hello'").unwrap();
         assert_eq!(result.len(), 1);
         match &result[0] {
@@ -5274,19 +5372,16 @@ mod tests {
 
     #[test]
     fn test_exec_mixed_named_and_positional_args() {
-        // EXEC proc_name @p1 = 1, 'hello' — 名前付きと位置の混在
         let result = parse_sql("EXEC my_proc @p1 = 1, 'hello'").unwrap();
         assert_eq!(result.len(), 1);
         match &result[0] {
             Statement::Exec(exec) => {
                 assert_eq!(exec.procedure.name, "my_proc");
                 assert_eq!(exec.arguments.len(), 2);
-                // First argument: named
                 assert!(
                     matches!(&exec.arguments[0], ExecArgument::Named { name, .. } if name.name == "@p1"),
                     "Expected Named(@p1) as first argument"
                 );
-                // Second argument: positional string literal
                 assert!(
                     matches!(
                         &exec.arguments[1],
@@ -5301,7 +5396,6 @@ mod tests {
 
     #[test]
     fn test_exec_variable_positional_arg() {
-        // EXEC proc_name @var — 変数のみ（代入なし）の位置引数
         let result = parse_sql("EXEC my_proc @var").unwrap();
         assert_eq!(result.len(), 1);
         match &result[0] {
@@ -5324,7 +5418,6 @@ mod tests {
 
     #[test]
     fn test_exec_with_semicolon() {
-        // EXEC proc_name; の後にセミコロン → セミコロンは引数として扱われない
         let result = parse_sql("EXEC my_proc;").unwrap();
         assert_eq!(result.len(), 1);
         match &result[0] {
@@ -5341,7 +5434,6 @@ mod tests {
 
     #[test]
     fn test_exec_null_arg() {
-        // EXEC proc_name NULL — NULL引数
         let result = parse_sql("EXEC my_proc NULL").unwrap();
         assert_eq!(result.len(), 1);
         match &result[0] {
@@ -5364,7 +5456,6 @@ mod tests {
 
     #[test]
     fn test_exec_missing_procedure_name() {
-        // EXEC の後にプロシージャ名がない → エラー
         let result = parse_sql("EXEC");
         assert!(
             result.is_err(),
@@ -5374,7 +5465,6 @@ mod tests {
 
     #[test]
     fn test_exec_followed_by_next_statement() {
-        // EXEC文の後に別の文が続く場合
         let result = parse_sql("EXEC my_proc 1\nSELECT 1").unwrap();
         assert_eq!(result.len(), 2);
         match &result[0] {
@@ -5392,14 +5482,12 @@ mod tests {
 
     #[test]
     fn test_exec_named_params_mixed_with_positional() {
-        // EXEC proc_name 'hello', @p2 = 2, 3 — 位置、名前付き、位置の混在
         let result = parse_sql("EXEC my_proc 'hello', @p2 = 2, 3").unwrap();
         assert_eq!(result.len(), 1);
         match &result[0] {
             Statement::Exec(exec) => {
                 assert_eq!(exec.procedure.name, "my_proc");
                 assert_eq!(exec.arguments.len(), 3);
-                // First: positional string
                 assert!(
                     matches!(
                         &exec.arguments[0],
@@ -5407,12 +5495,10 @@ mod tests {
                     ),
                     "First arg should be Positional(String)"
                 );
-                // Second: named
                 assert!(
                     matches!(&exec.arguments[1], ExecArgument::Named { name, .. } if name.name == "@p2"),
                     "Second arg should be Named(@p2)"
                 );
-                // Third: positional number
                 assert!(
                     matches!(
                         &exec.arguments[2],
@@ -5427,15 +5513,139 @@ mod tests {
 
     #[test]
     fn test_exec_span_includes_procedure_and_args() {
-        // EXEC文のspanがプロシージャ名と引数を含む
         let result = parse_sql("EXEC my_proc 1, 2").unwrap();
         match &result[0] {
             Statement::Exec(exec) => {
-                // span should start at the beginning of EXEC
                 assert!(exec.span.start < exec.span.end, "Span should be non-empty");
                 assert_ne!(exec.span.end, 0, "Span end should not be zero");
             }
             _ => panic!("Expected Exec statement"),
+        }
+    }
+
+    // === CREATE TRIGGER tests ===
+
+    #[test]
+    fn test_create_trigger_insert() {
+        let result =
+            parse_sql("CREATE TRIGGER trg_ins ON users FOR INSERT AS BEGIN SELECT 1 END").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::Create(create) => match create.as_ref() {
+                CreateStatement::Trigger(td) => {
+                    assert_eq!(td.name.name, "trg_ins");
+                    assert_eq!(td.table.name, "users");
+                    assert_eq!(td.events.len(), 1);
+                    assert_eq!(td.events[0], TriggerEvent::Insert);
+                    assert_eq!(td.body.len(), 1);
+                }
+                _ => panic!("Expected Trigger"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_create_trigger_update() {
+        let result =
+            parse_sql("CREATE TRIGGER trg_upd ON orders FOR UPDATE AS BEGIN SELECT 1 END").unwrap();
+        match &result[0] {
+            Statement::Create(create) => match create.as_ref() {
+                CreateStatement::Trigger(td) => {
+                    assert_eq!(td.name.name, "trg_upd");
+                    assert_eq!(td.table.name, "orders");
+                    assert_eq!(td.events[0], TriggerEvent::Update);
+                }
+                _ => panic!("Expected Trigger"),
+            },
+            _ => panic!("Expected Create"),
+        }
+    }
+
+    #[test]
+    fn test_create_trigger_delete() {
+        let result =
+            parse_sql("CREATE TRIGGER trg_del ON users FOR DELETE AS BEGIN SELECT 1 END").unwrap();
+        match &result[0] {
+            Statement::Create(create) => match create.as_ref() {
+                CreateStatement::Trigger(td) => {
+                    assert_eq!(td.events[0], TriggerEvent::Delete);
+                }
+                _ => panic!("Expected Trigger"),
+            },
+            _ => panic!("Expected Create"),
+        }
+    }
+
+    #[test]
+    fn test_create_trigger_multiple_events() {
+        let result = parse_sql(
+            "CREATE TRIGGER trg_multi ON users FOR INSERT, UPDATE, DELETE AS BEGIN SELECT 1 END",
+        )
+        .unwrap();
+        match &result[0] {
+            Statement::Create(create) => match create.as_ref() {
+                CreateStatement::Trigger(td) => {
+                    assert_eq!(td.events.len(), 3);
+                    assert_eq!(td.events[0], TriggerEvent::Insert);
+                    assert_eq!(td.events[1], TriggerEvent::Update);
+                    assert_eq!(td.events[2], TriggerEvent::Delete);
+                }
+                _ => panic!("Expected Trigger"),
+            },
+            _ => panic!("Expected Create"),
+        }
+    }
+
+    #[test]
+    fn test_create_trigger_single_statement_body() {
+        let result = parse_sql(
+            "CREATE TRIGGER trg_simple ON users FOR INSERT AS INSERT INTO log VALUES (1)",
+        )
+        .unwrap();
+        match &result[0] {
+            Statement::Create(create) => match create.as_ref() {
+                CreateStatement::Trigger(td) => {
+                    assert_eq!(td.body.len(), 1);
+                }
+                _ => panic!("Expected Trigger"),
+            },
+            _ => panic!("Expected Create"),
+        }
+    }
+
+    #[test]
+    fn test_create_trigger_missing_on() {
+        let result = parse_sql("CREATE TRIGGER trg");
+        assert!(result.is_err(), "Should fail without ON keyword");
+    }
+
+    #[test]
+    fn test_create_trigger_missing_for() {
+        let result = parse_sql("CREATE TRIGGER trg ON users");
+        assert!(result.is_err(), "Should fail without FOR keyword");
+    }
+
+    #[test]
+    fn test_create_trigger_missing_as() {
+        let result = parse_sql("CREATE TRIGGER trg ON users FOR INSERT");
+        assert!(result.is_err(), "Should fail without AS keyword");
+    }
+
+    #[test]
+    fn test_create_trigger_span() {
+        let result =
+            parse_sql("CREATE TRIGGER trg ON users FOR INSERT AS BEGIN SELECT 1 END").unwrap();
+        match &result[0] {
+            Statement::Create(create) => match create.as_ref() {
+                CreateStatement::Trigger(td) => {
+                    assert_eq!(td.name.name, "trg");
+                    assert_eq!(td.table.name, "users");
+                    assert_eq!(td.events.len(), 1);
+                }
+                _ => panic!("Expected Trigger"),
+            },
+            _ => panic!("Expected Create"),
         }
     }
 }
