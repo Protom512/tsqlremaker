@@ -168,6 +168,8 @@ impl<'src> Parser<'src> {
             TokenKind::Delete => self.parse_delete_statement(),
             // CREATE文
             TokenKind::Create => self.parse_create_statement(),
+            // ALTER TABLE文
+            TokenKind::Alter => self.parse_alter_statement(),
             // DECLARE文
             TokenKind::Declare => self.parse_declare_statement(),
             // SET文
@@ -911,6 +913,125 @@ impl<'src> Parser<'src> {
                 self.buffer.current()?.position,
             )),
         }
+    }
+
+    /// ALTER TABLE文を解析
+    fn parse_alter_statement(&mut self) -> ParseResult<Statement> {
+        let start = self.buffer.current()?.span.start;
+        self.buffer.consume()?; // ALTER
+
+        if !self.buffer.check(TokenKind::Table) {
+            return Err(ParseError::unexpected_token(
+                vec![TokenKind::Table],
+                self.buffer.current()?.kind,
+                self.buffer.current()?.position,
+            ));
+        }
+        self.buffer.consume()?; // TABLE
+
+        let table = self.parse_identifier()?;
+
+        let operation = {
+            let cur = self.buffer.current()?;
+            let is_add = cur.kind == TokenKind::Ident && cur.text.eq_ignore_ascii_case("ADD");
+            let is_drop = cur.kind == TokenKind::Drop;
+            let is_alter = cur.kind == TokenKind::Alter;
+            let is_column = cur.kind == TokenKind::Ident && cur.text.eq_ignore_ascii_case("COLUMN");
+
+            if is_add {
+                self.buffer.consume()?; // ADD
+                let name = self.parse_identifier()?;
+                let data_type = self.parse_data_type()?;
+
+                let nullability = if self.buffer.check(TokenKind::Null) {
+                    self.buffer.consume()?;
+                    Some(true)
+                } else if self.buffer.check(TokenKind::Not) {
+                    self.buffer.consume()?;
+                    if !self.buffer.check(TokenKind::Null) {
+                        return Err(ParseError::unexpected_token(
+                            vec![TokenKind::Null],
+                            self.buffer.current()?.kind,
+                            self.buffer.current()?.position,
+                        ));
+                    }
+                    self.buffer.consume()?;
+                    Some(false)
+                } else {
+                    None
+                };
+
+                let identity = self.buffer.check(TokenKind::Identity);
+                if identity {
+                    self.buffer.consume()?;
+                }
+
+                AlterTableOperation::AddColumn(AddColumnDefinition {
+                    name,
+                    data_type,
+                    nullability,
+                    identity,
+                })
+            } else if is_drop {
+                self.buffer.consume()?; // DROP
+                                        // Optional COLUMN keyword (identifier "COLUMN")
+                if self.buffer.current()?.kind == TokenKind::Ident
+                    && self.buffer.current()?.text.eq_ignore_ascii_case("COLUMN")
+                {
+                    self.buffer.consume()?;
+                }
+                let name = self.parse_identifier()?;
+                AlterTableOperation::DropColumn(name)
+            } else if is_alter || is_column {
+                // ALTER COLUMN or just COLUMN (ALTER is a keyword, COLUMN is an ident)
+                if is_alter {
+                    self.buffer.consume()?; // ALTER
+                }
+                self.buffer.consume()?; // COLUMN
+                let name = self.parse_identifier()?;
+                let data_type = self.parse_data_type()?;
+
+                let nullability = if self.buffer.check(TokenKind::Null) {
+                    self.buffer.consume()?;
+                    Some(true)
+                } else if self.buffer.check(TokenKind::Not) {
+                    self.buffer.consume()?;
+                    if !self.buffer.check(TokenKind::Null) {
+                        return Err(ParseError::unexpected_token(
+                            vec![TokenKind::Null],
+                            self.buffer.current()?.kind,
+                            self.buffer.current()?.position,
+                        ));
+                    }
+                    self.buffer.consume()?;
+                    Some(false)
+                } else {
+                    None
+                };
+
+                AlterTableOperation::AlterColumn(AlterColumnDefinition {
+                    name,
+                    data_type,
+                    nullability,
+                })
+            } else {
+                return Err(ParseError::unexpected_token(
+                    vec![TokenKind::Ident, TokenKind::Drop],
+                    self.buffer.current()?.kind,
+                    self.buffer.current()?.position,
+                ));
+            }
+        };
+
+        let end_span = self.buffer.current()?.span;
+        Ok(Statement::AlterTable(Box::new(AlterTableStatement {
+            span: Span {
+                start,
+                end: end_span.end,
+            },
+            table,
+            operation,
+        })))
     }
 
     /// CREATE TABLEを解析
@@ -4777,6 +4898,167 @@ mod tests {
         match &result[0] {
             Statement::Raiserror(_) => {}
             _ => panic!("Expected Raiserror statement"),
+        }
+    }
+
+    // === ALTER TABLE tests ===
+
+    #[test]
+    fn test_alter_table_add_column() {
+        let result = parse_sql("ALTER TABLE users ADD email VARCHAR(100)").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::AlterTable(alter) => {
+                assert_eq!(alter.table.name, "users");
+                match &alter.operation {
+                    AlterTableOperation::AddColumn(add) => {
+                        assert_eq!(add.name.name, "email");
+                        assert!(matches!(add.data_type, DataType::Varchar(Some(100))));
+                        assert_eq!(add.nullability, None);
+                        assert!(!add.identity);
+                    }
+                    _ => panic!("Expected AddColumn operation"),
+                }
+            }
+            _ => panic!("Expected AlterTable statement"),
+        }
+    }
+
+    #[test]
+    fn test_alter_table_add_column_not_null() {
+        let result = parse_sql("ALTER TABLE users ADD email VARCHAR(100) NOT NULL").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::AlterTable(alter) => match &alter.operation {
+                AlterTableOperation::AddColumn(add) => {
+                    assert_eq!(add.nullability, Some(false));
+                }
+                _ => panic!("Expected AddColumn"),
+            },
+            _ => panic!("Expected AlterTable"),
+        }
+    }
+
+    #[test]
+    fn test_alter_table_add_column_null() {
+        let result = parse_sql("ALTER TABLE users ADD email VARCHAR(100) NULL").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::AlterTable(alter) => match &alter.operation {
+                AlterTableOperation::AddColumn(add) => {
+                    assert_eq!(add.nullability, Some(true));
+                }
+                _ => panic!("Expected AddColumn"),
+            },
+            _ => panic!("Expected AlterTable"),
+        }
+    }
+
+    #[test]
+    fn test_alter_table_add_column_identity() {
+        let result = parse_sql("ALTER TABLE users ADD row_id INT IDENTITY").unwrap();
+        match &result[0] {
+            Statement::AlterTable(alter) => match &alter.operation {
+                AlterTableOperation::AddColumn(add) => {
+                    assert!(add.identity);
+                }
+                _ => panic!("Expected AddColumn"),
+            },
+            _ => panic!("Expected AlterTable"),
+        }
+    }
+
+    #[test]
+    fn test_alter_table_drop_column() {
+        let result = parse_sql("ALTER TABLE users DROP COLUMN email").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::AlterTable(alter) => {
+                assert_eq!(alter.table.name, "users");
+                match &alter.operation {
+                    AlterTableOperation::DropColumn(name) => {
+                        assert_eq!(name.name, "email");
+                    }
+                    _ => panic!("Expected DropColumn operation"),
+                }
+            }
+            _ => panic!("Expected AlterTable statement"),
+        }
+    }
+
+    #[test]
+    fn test_alter_table_drop_column_without_keyword() {
+        // DROP without explicit COLUMN keyword
+        let result = parse_sql("ALTER TABLE users DROP email").unwrap();
+        match &result[0] {
+            Statement::AlterTable(alter) => match &alter.operation {
+                AlterTableOperation::DropColumn(name) => {
+                    assert_eq!(name.name, "email");
+                }
+                _ => panic!("Expected DropColumn"),
+            },
+            _ => panic!("Expected AlterTable"),
+        }
+    }
+
+    #[test]
+    fn test_alter_table_alter_column() {
+        let result = parse_sql("ALTER TABLE users ALTER COLUMN email VARCHAR(200)").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::AlterTable(alter) => {
+                assert_eq!(alter.table.name, "users");
+                match &alter.operation {
+                    AlterTableOperation::AlterColumn(modify) => {
+                        assert_eq!(modify.name.name, "email");
+                        assert!(matches!(modify.data_type, DataType::Varchar(Some(200))));
+                    }
+                    _ => panic!("Expected AlterColumn operation"),
+                }
+            }
+            _ => panic!("Expected AlterTable statement"),
+        }
+    }
+
+    #[test]
+    fn test_alter_table_alter_column_not_null() {
+        let result =
+            parse_sql("ALTER TABLE users ALTER COLUMN email VARCHAR(200) NOT NULL").unwrap();
+        match &result[0] {
+            Statement::AlterTable(alter) => match &alter.operation {
+                AlterTableOperation::AlterColumn(modify) => {
+                    assert_eq!(modify.nullability, Some(false));
+                }
+                _ => panic!("Expected AlterColumn"),
+            },
+            _ => panic!("Expected AlterTable"),
+        }
+    }
+
+    #[test]
+    fn test_alter_table_invalid_operation() {
+        let result = parse_sql("ALTER TABLE users UNKNOWN_OP");
+        assert!(
+            result.is_err(),
+            "ALTER TABLE with invalid operation should fail"
+        );
+    }
+
+    #[test]
+    fn test_alter_table_not_table() {
+        let result = parse_sql("ALTER INDEX idx REBUILD");
+        assert!(result.is_err(), "ALTER without TABLE should fail");
+    }
+
+    #[test]
+    fn test_alter_table_span() {
+        let result = parse_sql("ALTER TABLE users ADD email INT").unwrap();
+        match &result[0] {
+            Statement::AlterTable(alter) => {
+                // Verify the span was captured (start comes from ALTER token)
+                assert_eq!(alter.table.name, "users");
+            }
+            _ => panic!("Expected AlterTable"),
         }
     }
 }
