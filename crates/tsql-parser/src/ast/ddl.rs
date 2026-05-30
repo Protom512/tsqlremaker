@@ -243,3 +243,55 @@ pub struct ParameterDefinition {
     /// OUTPUT指定
     pub is_output: bool,
 }
+
+/// ALTER TABLE文
+#[derive(Debug, Clone)]
+pub struct AlterTableStatement {
+    /// 位置情報
+    pub span: Span,
+    /// 対象テーブル名
+    pub table: Identifier,
+    /// ALTER操作
+    pub operation: AlterTableOperation,
+}
+
+impl AstNode for AlterTableStatement {
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// ALTER TABLE操作
+#[derive(Debug, Clone)]
+pub enum AlterTableOperation {
+    /// ADD COLUMN column_name data_type [constraints]
+    AddColumn(AddColumnDefinition),
+    /// DROP COLUMN column_name
+    DropColumn(Identifier),
+    /// ALTER COLUMN column_name data_type [NULL|NOT NULL]
+    AlterColumn(AlterColumnDefinition),
+}
+
+/// ADD COLUMN定義
+#[derive(Debug, Clone)]
+pub struct AddColumnDefinition {
+    /// カラム名
+    pub name: Identifier,
+    /// データ型
+    pub data_type: DataType,
+    /// NULL許容
+    pub nullability: Option<bool>,
+    /// IDENTITY指定
+    pub identity: bool,
+}
+
+/// ALTER COLUMN定義
+#[derive(Debug, Clone)]
+pub struct AlterColumnDefinition {
+    /// カラム名
+    pub name: Identifier,
+    /// データ型
+    pub data_type: DataType,
+    /// NULL許容
+    pub nullability: Option<bool>,
+}

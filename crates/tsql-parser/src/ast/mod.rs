@@ -28,6 +28,7 @@ pub use data_modification::{
     Assignment as ColumnAssignment, DeleteStatement, InsertSource, InsertStatement, UpdateStatement,
 };
 pub use ddl::{
+    AddColumnDefinition, AlterColumnDefinition, AlterTableOperation, AlterTableStatement,
     ColumnConstraint, ColumnDefinition, CreateStatement, DataType, IndexDefinition,
     ParameterDefinition, ProcedureDefinition, TableConstraint, TableDefinition, ViewDefinition,
 };
@@ -60,6 +61,8 @@ pub enum Statement {
     Delete(Box<DeleteStatement>),
     /// CREATE文
     Create(Box<CreateStatement>),
+    /// ALTER TABLE文
+    AlterTable(Box<AlterTableStatement>),
     /// DECLARE文
     Declare(Box<DeclareStatement>),
     /// SET文
@@ -98,6 +101,7 @@ impl AstNode for Statement {
             Statement::Update(s) => s.span,
             Statement::Delete(s) => s.span,
             Statement::Create(s) => s.span(),
+            Statement::AlterTable(s) => s.span,
             Statement::Declare(s) => s.span,
             Statement::Set(s) => s.span,
             Statement::VariableAssignment(s) => s.span,

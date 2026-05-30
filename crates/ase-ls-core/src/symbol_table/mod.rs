@@ -348,6 +348,7 @@ impl SymbolTableBuilder {
             | Statement::Transaction(_)
             | Statement::Throw(_)
             | Statement::Raiserror(_)
+            | Statement::AlterTable(_)
             | Statement::BatchSeparator(_) => {}
         }
     }
@@ -415,6 +416,7 @@ impl SymbolTableBuilder {
             | Statement::Update(_)
             | Statement::Delete(_)
             | Statement::Create(_)
+            | Statement::AlterTable(_)
             | Statement::Set(_)
             | Statement::VariableAssignment(_)
             | Statement::Break(_)
