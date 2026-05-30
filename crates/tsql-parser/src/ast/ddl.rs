@@ -17,6 +17,8 @@ pub enum CreateStatement {
     View(ViewDefinition),
     /// CREATE PROCEDURE
     Procedure(ProcedureDefinition),
+    /// CREATE TRIGGER
+    Trigger(TriggerDefinition),
 }
 
 impl AstNode for CreateStatement {
@@ -26,6 +28,7 @@ impl AstNode for CreateStatement {
             CreateStatement::Index(d) => d.span,
             CreateStatement::View(d) => d.span,
             CreateStatement::Procedure(d) => d.span,
+            CreateStatement::Trigger(d) => d.span,
         }
     }
 }
@@ -325,4 +328,36 @@ pub enum ExecArgument {
         /// パラメータ値
         value: Expression,
     },
+}
+
+/// CREATE TRIGGER 定義
+#[derive(Debug, Clone)]
+pub struct TriggerDefinition {
+    /// 位置情報
+    pub span: Span,
+    /// トリガー名
+    pub name: Identifier,
+    /// 対象テーブル名
+    pub table: Identifier,
+    /// トリガーイベント
+    pub events: Vec<TriggerEvent>,
+    /// トリガー本体
+    pub body: Vec<crate::Statement>,
+}
+
+impl AstNode for TriggerDefinition {
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// トリガーイベント種別
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TriggerEvent {
+    /// INSERT トリガー
+    Insert,
+    /// UPDATE トリガー
+    Update,
+    /// DELETE トリガー
+    Delete,
 }

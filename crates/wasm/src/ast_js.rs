@@ -129,6 +129,8 @@ pub enum JsStatement {
     Exec,
     /// ALTER TABLE statement
     AlterTable,
+    /// CREATE TRIGGER statement
+    Trigger,
 }
 
 #[cfg(feature = "wasm")]
@@ -161,6 +163,7 @@ impl TryFrom<Statement> for JsStatement {
                     object_type: Some("PROCEDURE".to_string()),
                     name: None,
                 }),
+                tsql_parser::CreateStatement::Trigger(_) => Ok(Self::Trigger),
             },
             Statement::Block(_) => Ok(Self::Block),
             Statement::If(_) => Ok(Self::IfStatement),

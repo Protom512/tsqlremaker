@@ -31,7 +31,7 @@ pub use ddl::{
     AddColumnDefinition, AlterColumnDefinition, AlterTableOperation, AlterTableStatement,
     ColumnConstraint, ColumnDefinition, CreateStatement, DataType, ExecArgument, ExecStatement,
     IndexDefinition, ParameterDefinition, ProcedureDefinition, TableConstraint, TableDefinition,
-    ViewDefinition,
+    TriggerDefinition, TriggerEvent, ViewDefinition,
 };
 pub use select::{
     FromClause, Join, JoinType, LimitClause, OrderByItem, SelectItem, SelectStatement,
