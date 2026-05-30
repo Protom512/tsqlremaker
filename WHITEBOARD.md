@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-05-30 / Session (Issue triage & PR consolidation)
+**最終更新:** 2026-05-31 / Session (EXEC parser #115)
 
 ---
 
@@ -10,11 +10,11 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 942 passed, 2 skipped |
+| **テスト** | 988 passed, 2 skipped |
 | **Clippy** | clean (`-D warnings`) |
-| **Open Issues** | 20 (内6件は今セッションで作成したサブIssue) |
-| **Open PRs** | 1 (#106 INSERT column list — rebase必要) |
-| **ブランチ** | master + feat/code-action-insert-column-list のみ |
+| **Open Issues** | 19 |
+| **Open PRs** | 2 (#106, #121) |
+| **ブランチ** | master + feat/code-action-insert-column-list + feat/115-exec-execute-parser |
 
 ---
 
@@ -46,8 +46,9 @@
 ## 🔀 申し送り（次セッションへ）
 
 ### 優先度高
-1. **PR #106** (INSERT column list): masterにリベースが必要。CI未完了。マージ後にconflict解消。
-2. **#114 ALTER TABLE parser**: ASE開発で頻出。中規模タスク。
+1. **PR #121** (EXEC parser): レビュー待ち。マージ後 #115 Close。
+2. **PR #106** (INSERT column list): masterにリベースが必要。CI未完了。マージ後にconflict解消。
+3. **#116 CREATE TRIGGER parser**: #58サブIssueの残り。
 
 ### 優先度中
 3. **#71 db_docs.rs**: 1305行モノリス。データとロジックの分離。
