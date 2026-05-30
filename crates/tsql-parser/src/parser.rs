@@ -202,6 +202,8 @@ impl<'src> Parser<'src> {
             TokenKind::Throw => self.parse_throw_statement(),
             // RAISERROR 文
             TokenKind::Raiserror => self.parse_raiserror_statement(),
+            // EXEC/EXECUTE 文
+            TokenKind::Exec | TokenKind::Execute => self.parse_exec_statement(),
             // GOバッチ区切り（BatchModeのみ）
             TokenKind::Go => {
                 if matches!(self.mode, ParserMode::BatchMode) {
@@ -2439,6 +2441,90 @@ impl<'src> Parser<'src> {
             message,
             severity,
             state,
+        })))
+    }
+
+    /// EXEC/EXECUTE文を解析
+    fn parse_exec_statement(&mut self) -> ParseResult<Statement> {
+        let start = self.buffer.current()?.span.start;
+        self.buffer.consume()?; // EXEC or EXECUTE
+
+        let procedure = self.parse_identifier()?;
+
+        let mut arguments = Vec::new();
+
+        // Parse arguments: first arg has no comma, subsequent args require comma
+        // Supports: EXEC proc value1, @p1 = val, @p2
+        let mut first_arg = true;
+        loop {
+            if !first_arg {
+                // Subsequent arguments must be preceded by comma
+                if !self.buffer.check(TokenKind::Comma) {
+                    break;
+                }
+                self.buffer.consume()?; // consume comma
+            }
+            first_arg = false;
+
+            // Check if this is a named parameter: @param = value
+            if self.buffer.check(TokenKind::LocalVar) {
+                let param_name = self.parse_identifier()?;
+                if self.buffer.check(TokenKind::Eq) || self.buffer.check(TokenKind::Assign) {
+                    self.buffer.consume()?; // =
+                    let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+                    let value = expr_parser.parse()?;
+                    arguments.push(ExecArgument::Named {
+                        name: param_name,
+                        value,
+                    });
+                } else {
+                    // Variable without assignment — treat as positional
+                    arguments.push(ExecArgument::Positional(Expression::Identifier(param_name)));
+                }
+            } else {
+                // Try to parse a positional expression; if we can't, we're done
+                let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+                match expr_parser.parse() {
+                    Ok(value) => arguments.push(ExecArgument::Positional(value)),
+                    Err(_) => break,
+                }
+            }
+        }
+
+        // Compute span end from the last meaningful token
+        let end = if let Some(last_arg) = arguments.last() {
+            match last_arg {
+                ExecArgument::Positional(expr) => {
+                    let s = expr.span();
+                    if s.end > 0 {
+                        s.end
+                    } else {
+                        s.start
+                    }
+                }
+                ExecArgument::Named { value, .. } => {
+                    let s = value.span();
+                    if s.end > 0 {
+                        s.end
+                    } else {
+                        s.start
+                    }
+                }
+            }
+        } else {
+            // No arguments — span ends at procedure name
+            let s = procedure.span;
+            if s.end > 0 {
+                s.end
+            } else {
+                s.start
+            }
+        };
+
+        Ok(Statement::Exec(Box::new(ExecStatement {
+            span: Span { start, end },
+            procedure,
+            arguments,
         })))
     }
 
@@ -5059,6 +5145,297 @@ mod tests {
                 assert_eq!(alter.table.name, "users");
             }
             _ => panic!("Expected AlterTable"),
+        }
+    }
+
+    // === EXEC / EXECUTE tests ===
+
+    #[test]
+    fn test_exec_no_args() {
+        // EXEC proc_name — 引数なし
+        let result = parse_sql("EXEC my_proc").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::Exec(exec) => {
+                assert_eq!(exec.procedure.name, "my_proc");
+                assert!(exec.arguments.is_empty());
+            }
+            _ => panic!("Expected Exec statement"),
+        }
+    }
+
+    #[test]
+    fn test_execute_keyword() {
+        // EXECUTE proc_name — EXECUTE キーワード
+        let result = parse_sql("EXECUTE my_proc").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::Exec(exec) => {
+                assert_eq!(exec.procedure.name, "my_proc");
+                assert!(exec.arguments.is_empty());
+            }
+            _ => panic!("Expected Exec statement"),
+        }
+    }
+
+    #[test]
+    fn test_exec_positional_args() {
+        // EXEC proc_name 1, 2, 3 — 位置パラメータ
+        let result = parse_sql("EXEC my_proc 1, 2, 3").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::Exec(exec) => {
+                assert_eq!(exec.procedure.name, "my_proc");
+                assert_eq!(exec.arguments.len(), 3);
+                // All arguments should be positional
+                for arg in &exec.arguments {
+                    assert!(
+                        matches!(arg, ExecArgument::Positional(_)),
+                        "Expected Positional argument"
+                    );
+                }
+            }
+            _ => panic!("Expected Exec statement"),
+        }
+    }
+
+    #[test]
+    fn test_exec_named_param() {
+        // EXEC proc_name @p1 = 1 — 名前付きパラメータ
+        let result = parse_sql("EXEC my_proc @p1 = 1").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::Exec(exec) => {
+                assert_eq!(exec.procedure.name, "my_proc");
+                assert_eq!(exec.arguments.len(), 1);
+                match &exec.arguments[0] {
+                    ExecArgument::Named { name, value } => {
+                        assert_eq!(name.name, "@p1");
+                        assert!(
+                            matches!(value, Expression::Literal(Literal::Number(_, _))),
+                            "Expected Number literal for named param value"
+                        );
+                    }
+                    _ => panic!("Expected Named argument"),
+                }
+            }
+            _ => panic!("Expected Exec statement"),
+        }
+    }
+
+    #[test]
+    fn test_exec_multiple_named_params() {
+        // EXEC proc_name @p1 = 1, @p2 = 2 — 複数名前付きパラメータ
+        let result = parse_sql("EXEC my_proc @p1 = 1, @p2 = 2").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::Exec(exec) => {
+                assert_eq!(exec.procedure.name, "my_proc");
+                assert_eq!(exec.arguments.len(), 2);
+                match &exec.arguments[0] {
+                    ExecArgument::Named { name, .. } => {
+                        assert_eq!(name.name, "@p1");
+                    }
+                    _ => panic!("Expected Named argument for @p1"),
+                }
+                match &exec.arguments[1] {
+                    ExecArgument::Named { name, .. } => {
+                        assert_eq!(name.name, "@p2");
+                    }
+                    _ => panic!("Expected Named argument for @p2"),
+                }
+            }
+            _ => panic!("Expected Exec statement"),
+        }
+    }
+
+    #[test]
+    fn test_exec_string_literal_arg() {
+        // EXEC proc_name 'hello' — 文字列リテラル引数
+        let result = parse_sql("EXEC my_proc 'hello'").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::Exec(exec) => {
+                assert_eq!(exec.procedure.name, "my_proc");
+                assert_eq!(exec.arguments.len(), 1);
+                match &exec.arguments[0] {
+                    ExecArgument::Positional(expr) => {
+                        assert!(
+                            matches!(expr, Expression::Literal(Literal::String(_, _))),
+                            "Expected String literal argument"
+                        );
+                    }
+                    _ => panic!("Expected Positional argument"),
+                }
+            }
+            _ => panic!("Expected Exec statement"),
+        }
+    }
+
+    #[test]
+    fn test_exec_mixed_named_and_positional_args() {
+        // EXEC proc_name @p1 = 1, 'hello' — 名前付きと位置の混在
+        let result = parse_sql("EXEC my_proc @p1 = 1, 'hello'").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::Exec(exec) => {
+                assert_eq!(exec.procedure.name, "my_proc");
+                assert_eq!(exec.arguments.len(), 2);
+                // First argument: named
+                assert!(
+                    matches!(&exec.arguments[0], ExecArgument::Named { name, .. } if name.name == "@p1"),
+                    "Expected Named(@p1) as first argument"
+                );
+                // Second argument: positional string literal
+                assert!(
+                    matches!(
+                        &exec.arguments[1],
+                        ExecArgument::Positional(Expression::Literal(Literal::String(_, _)))
+                    ),
+                    "Expected Positional(String) as second argument"
+                );
+            }
+            _ => panic!("Expected Exec statement"),
+        }
+    }
+
+    #[test]
+    fn test_exec_variable_positional_arg() {
+        // EXEC proc_name @var — 変数のみ（代入なし）の位置引数
+        let result = parse_sql("EXEC my_proc @var").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::Exec(exec) => {
+                assert_eq!(exec.procedure.name, "my_proc");
+                assert_eq!(exec.arguments.len(), 1);
+                match &exec.arguments[0] {
+                    ExecArgument::Positional(expr) => {
+                        assert!(
+                            matches!(expr, Expression::Identifier(id) if id.name == "@var"),
+                            "Expected Identifier(@var) as positional argument"
+                        );
+                    }
+                    _ => panic!("Expected Positional argument"),
+                }
+            }
+            _ => panic!("Expected Exec statement"),
+        }
+    }
+
+    #[test]
+    fn test_exec_with_semicolon() {
+        // EXEC proc_name; の後にセミコロン → セミコロンは引数として扱われない
+        let result = parse_sql("EXEC my_proc;").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::Exec(exec) => {
+                assert_eq!(exec.procedure.name, "my_proc");
+                assert!(
+                    exec.arguments.is_empty(),
+                    "Semicolon should not be treated as an argument"
+                );
+            }
+            _ => panic!("Expected Exec statement"),
+        }
+    }
+
+    #[test]
+    fn test_exec_null_arg() {
+        // EXEC proc_name NULL — NULL引数
+        let result = parse_sql("EXEC my_proc NULL").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::Exec(exec) => {
+                assert_eq!(exec.procedure.name, "my_proc");
+                assert_eq!(exec.arguments.len(), 1);
+                match &exec.arguments[0] {
+                    ExecArgument::Positional(expr) => {
+                        assert!(
+                            matches!(expr, Expression::Literal(Literal::Null(_))),
+                            "Expected Null literal argument"
+                        );
+                    }
+                    _ => panic!("Expected Positional argument"),
+                }
+            }
+            _ => panic!("Expected Exec statement"),
+        }
+    }
+
+    #[test]
+    fn test_exec_missing_procedure_name() {
+        // EXEC の後にプロシージャ名がない → エラー
+        let result = parse_sql("EXEC");
+        assert!(
+            result.is_err(),
+            "EXEC without procedure name should be a parse error"
+        );
+    }
+
+    #[test]
+    fn test_exec_followed_by_next_statement() {
+        // EXEC文の後に別の文が続く場合
+        let result = parse_sql("EXEC my_proc 1\nSELECT 1").unwrap();
+        assert_eq!(result.len(), 2);
+        match &result[0] {
+            Statement::Exec(exec) => {
+                assert_eq!(exec.procedure.name, "my_proc");
+                assert_eq!(exec.arguments.len(), 1);
+            }
+            _ => panic!("Expected Exec as first statement"),
+        }
+        match &result[1] {
+            Statement::Select(_) => {}
+            _ => panic!("Expected Select as second statement"),
+        }
+    }
+
+    #[test]
+    fn test_exec_named_params_mixed_with_positional() {
+        // EXEC proc_name 'hello', @p2 = 2, 3 — 位置、名前付き、位置の混在
+        let result = parse_sql("EXEC my_proc 'hello', @p2 = 2, 3").unwrap();
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Statement::Exec(exec) => {
+                assert_eq!(exec.procedure.name, "my_proc");
+                assert_eq!(exec.arguments.len(), 3);
+                // First: positional string
+                assert!(
+                    matches!(
+                        &exec.arguments[0],
+                        ExecArgument::Positional(Expression::Literal(Literal::String(_, _)))
+                    ),
+                    "First arg should be Positional(String)"
+                );
+                // Second: named
+                assert!(
+                    matches!(&exec.arguments[1], ExecArgument::Named { name, .. } if name.name == "@p2"),
+                    "Second arg should be Named(@p2)"
+                );
+                // Third: positional number
+                assert!(
+                    matches!(
+                        &exec.arguments[2],
+                        ExecArgument::Positional(Expression::Literal(Literal::Number(_, _)))
+                    ),
+                    "Third arg should be Positional(Number)"
+                );
+            }
+            _ => panic!("Expected Exec statement"),
+        }
+    }
+
+    #[test]
+    fn test_exec_span_includes_procedure_and_args() {
+        // EXEC文のspanがプロシージャ名と引数を含む
+        let result = parse_sql("EXEC my_proc 1, 2").unwrap();
+        match &result[0] {
+            Statement::Exec(exec) => {
+                // span should start at the beginning of EXEC
+                assert!(exec.span.start < exec.span.end, "Span should be non-empty");
+                assert_ne!(exec.span.end, 0, "Span end should not be zero");
+            }
+            _ => panic!("Expected Exec statement"),
         }
     }
 }

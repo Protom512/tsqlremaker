@@ -29,8 +29,9 @@ pub use data_modification::{
 };
 pub use ddl::{
     AddColumnDefinition, AlterColumnDefinition, AlterTableOperation, AlterTableStatement,
-    ColumnConstraint, ColumnDefinition, CreateStatement, DataType, IndexDefinition,
-    ParameterDefinition, ProcedureDefinition, TableConstraint, TableDefinition, ViewDefinition,
+    ColumnConstraint, ColumnDefinition, CreateStatement, DataType, ExecArgument, ExecStatement,
+    IndexDefinition, ParameterDefinition, ProcedureDefinition, TableConstraint, TableDefinition,
+    ViewDefinition,
 };
 pub use select::{
     FromClause, Join, JoinType, LimitClause, OrderByItem, SelectItem, SelectStatement,
@@ -89,6 +90,8 @@ pub enum Statement {
     Throw(Box<ThrowStatement>),
     /// RAISERROR 文
     Raiserror(Box<RaiserrorStatement>),
+    /// EXEC/EXECUTE 文（プロシージャ呼び出し）
+    Exec(Box<ExecStatement>),
     /// バッチ区切り（GO）
     BatchSeparator(BatchSeparator),
 }
@@ -115,6 +118,7 @@ impl AstNode for Statement {
             Statement::Transaction(s) => s.span(),
             Statement::Throw(s) => s.span,
             Statement::Raiserror(s) => s.span,
+            Statement::Exec(s) => s.span,
             Statement::BatchSeparator(s) => s.span,
         }
     }

@@ -349,6 +349,7 @@ impl SymbolTableBuilder {
             | Statement::Throw(_)
             | Statement::Raiserror(_)
             | Statement::AlterTable(_)
+            | Statement::Exec(_)
             | Statement::BatchSeparator(_) => {}
         }
     }
@@ -425,6 +426,7 @@ impl SymbolTableBuilder {
             | Statement::Transaction(_)
             | Statement::Throw(_)
             | Statement::Raiserror(_)
+            | Statement::Exec(_)
             | Statement::BatchSeparator(_) => {}
         }
     }

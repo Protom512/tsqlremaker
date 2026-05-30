@@ -295,3 +295,34 @@ pub struct AlterColumnDefinition {
     /// NULL許容
     pub nullability: Option<bool>,
 }
+
+/// EXEC/EXECUTE文（プロシージャ呼び出し）
+#[derive(Debug, Clone)]
+pub struct ExecStatement {
+    /// 位置情報
+    pub span: Span,
+    /// プロシージャ名
+    pub procedure: Identifier,
+    /// パラメータ引数リスト
+    pub arguments: Vec<ExecArgument>,
+}
+
+impl AstNode for ExecStatement {
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// EXEC引数（位置パラメータまたは名前付きパラメータ）
+#[derive(Debug, Clone)]
+pub enum ExecArgument {
+    /// 位置パラメータ: EXEC proc value1, value2
+    Positional(Expression),
+    /// 名前付きパラメータ: EXEC proc @param1 = value1
+    Named {
+        /// パラメータ名（@で始まる）
+        name: Identifier,
+        /// パラメータ値
+        value: Expression,
+    },
+}

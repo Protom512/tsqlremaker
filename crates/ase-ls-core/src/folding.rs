@@ -110,6 +110,7 @@ fn collect_ast_folds(
         | Statement::Throw(_)
         | Statement::Raiserror(_)
         | Statement::AlterTable(_)
+        | Statement::Exec(_)
         | Statement::BatchSeparator(_) => {}
     }
 }
