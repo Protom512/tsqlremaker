@@ -125,6 +125,10 @@ pub enum JsStatement {
     Throw,
     /// RAISERROR statement
     Raiserror,
+    /// EXEC/EXECUTE statement
+    Exec,
+    /// ALTER TABLE statement
+    AlterTable,
 }
 
 #[cfg(feature = "wasm")]
@@ -172,6 +176,8 @@ impl TryFrom<Statement> for JsStatement {
             Statement::Transaction(_) => Ok(Self::Transaction),
             Statement::Throw(_) => Ok(Self::Throw),
             Statement::Raiserror(_) => Ok(Self::Raiserror),
+            Statement::Exec(_) => Ok(Self::Exec),
+            Statement::AlterTable(_) => Ok(Self::AlterTable),
         }
     }
 }

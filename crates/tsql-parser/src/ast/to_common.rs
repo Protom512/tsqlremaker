@@ -40,6 +40,11 @@ impl ToCommonAst for Statement {
                 description: format!("ALTER TABLE statement: {:?}", self),
                 span: self.span(),
             }),
+            // EXEC/EXECUTE文も方言固有
+            Statement::Exec(_) => Some(CommonStatement::DialectSpecific {
+                description: format!("EXEC statement: {:?}", self),
+                span: self.span(),
+            }),
             // 変数代入文も方言固有
             Statement::VariableAssignment(_) => Some(CommonStatement::DialectSpecific {
                 description: format!("Variable assignment: {:?}", self),
