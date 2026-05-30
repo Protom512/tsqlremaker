@@ -9,25 +9,55 @@
 #![allow(missing_docs)]
 
 use lsp_types::{Position, Range};
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use tsql_parser::ast::{CreateStatement, DataType, DeclareStatement, Statement};
 use tsql_token::Span;
 
 use crate::line_index::LineIndex;
 
+/// Case-insensitive key for HashMap lookups.
+///
+/// Stores the uppercase form; hashes/compares case-insensitively.
+/// Implements `Borrow<str>` so `HashMap::get("foo")` works directly.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CaseInsensitiveKey {
+    upper: String,
+}
+
+impl CaseInsensitiveKey {
+    pub fn new(name: &str) -> Self {
+        Self {
+            upper: name.to_uppercase(),
+        }
+    }
+}
+
+impl Borrow<str> for CaseInsensitiveKey {
+    fn borrow(&self) -> &str {
+        &self.upper
+    }
+}
+
+impl Borrow<String> for CaseInsensitiveKey {
+    fn borrow(&self) -> &String {
+        &self.upper
+    }
+}
+
 /// シンボルテーブル
 #[derive(Debug, Clone, Default)]
 pub struct SymbolTable {
-    /// テーブル定義 (名前uppercase → TableSymbol)
-    pub tables: HashMap<String, TableSymbol>,
-    /// プロシージャ定義 (名前uppercase → ProcedureSymbol)
-    pub procedures: HashMap<String, ProcedureSymbol>,
-    /// ビュー定義 (名前uppercase → ViewSymbol)
-    pub views: HashMap<String, ViewSymbol>,
-    /// インデックス定義 (名前uppercase → IndexSymbol)
-    pub indexes: HashMap<String, IndexSymbol>,
-    /// 変数定義 (名前uppercase → VariableSymbol)
-    pub variables: HashMap<String, VariableSymbol>,
+    /// テーブル定義 (case-insensitive key → TableSymbol)
+    pub tables: HashMap<CaseInsensitiveKey, TableSymbol>,
+    /// プロシージャ定義 (case-insensitive key → ProcedureSymbol)
+    pub procedures: HashMap<CaseInsensitiveKey, ProcedureSymbol>,
+    /// ビュー定義 (case-insensitive key → ViewSymbol)
+    pub views: HashMap<CaseInsensitiveKey, ViewSymbol>,
+    /// インデックス定義 (case-insensitive key → IndexSymbol)
+    pub indexes: HashMap<CaseInsensitiveKey, IndexSymbol>,
+    /// 変数定義 (case-insensitive key → VariableSymbol)
+    pub variables: HashMap<CaseInsensitiveKey, VariableSymbol>,
 }
 
 /// テーブルシンボル
@@ -160,7 +190,7 @@ impl SymbolTableBuilder {
         match stmt {
             Statement::Create(create) => match create.as_ref() {
                 CreateStatement::Table(td) => {
-                    let name_upper = td.name.name.to_uppercase();
+                    let name_upper = CaseInsensitiveKey::new(&td.name.name);
                     let columns: Vec<ColumnSymbol> = td
                         .columns
                         .iter()
@@ -170,7 +200,7 @@ impl SymbolTableBuilder {
                             data_type: col.data_type.clone(),
                             nullable: col.nullability,
                             is_identity: col.identity,
-                            table_name: name_upper.clone(),
+                            table_name: td.name.name.clone(),
                         })
                         .collect();
 
@@ -228,7 +258,7 @@ impl SymbolTableBuilder {
                     );
                 }
                 CreateStatement::Procedure(pd) => {
-                    let name_upper = pd.name.name.to_uppercase();
+                    let name_upper = CaseInsensitiveKey::new(&pd.name.name);
                     let parameters: Vec<ParameterSymbol> = pd
                         .parameters
                         .iter()
@@ -257,7 +287,7 @@ impl SymbolTableBuilder {
                     );
                 }
                 CreateStatement::View(vd) => {
-                    let name_upper = vd.name.name.to_uppercase();
+                    let name_upper = CaseInsensitiveKey::new(&vd.name.name);
                     table.views.insert(
                         name_upper,
                         ViewSymbol {
@@ -267,7 +297,7 @@ impl SymbolTableBuilder {
                     );
                 }
                 CreateStatement::Index(idx) => {
-                    let name_upper = idx.name.name.to_uppercase();
+                    let name_upper = CaseInsensitiveKey::new(&idx.name.name);
                     table.indexes.insert(
                         name_upper,
                         IndexSymbol {
@@ -326,10 +356,10 @@ impl SymbolTableBuilder {
     fn collect_declare_variables(
         line_index: &LineIndex,
         decl: &DeclareStatement,
-        variables: &mut HashMap<String, VariableSymbol>,
+        variables: &mut HashMap<CaseInsensitiveKey, VariableSymbol>,
     ) {
         for var in &decl.variables {
-            let name_upper = var.name.name.to_uppercase();
+            let name_upper = CaseInsensitiveKey::new(&var.name.name);
             variables.insert(
                 name_upper,
                 VariableSymbol {
@@ -397,25 +427,26 @@ impl SymbolTableBuilder {
         }
     }
 
-    /// テーブル名でテーブルを検索
+    /// テーブル名でテーブルを検索 (case-insensitive)
     pub fn find_table<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a TableSymbol> {
-        table.tables.get(&name.to_uppercase())
+        let key = CaseInsensitiveKey::new(name);
+        table.tables.get::<str>(key.borrow())
     }
 
-    /// プロシージャ名でプロシージャを検索
+    /// プロシージャ名でプロシージャを検索 (case-insensitive)
     pub fn find_procedure<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a ProcedureSymbol> {
-        table.procedures.get(&name.to_uppercase())
+        let key = CaseInsensitiveKey::new(name);
+        table.procedures.get::<str>(key.borrow())
     }
 
-    /// 変数名で変数を検索
+    /// 変数名で変数を検索 (case-insensitive, @prefix auto-added)
     pub fn find_variable<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a VariableSymbol> {
-        // 変数名は@付きで格納されている
         let search_name = if name.starts_with('@') {
-            name.to_uppercase()
+            CaseInsensitiveKey::new(name)
         } else {
-            format!("@{}", name.to_uppercase())
+            CaseInsensitiveKey::new(&format!("@{}", name))
         };
-        table.variables.get(&search_name)
+        table.variables.get::<str>(search_name.borrow())
     }
 
     /// カーソル位置の識別子を特定
@@ -475,6 +506,35 @@ fn span_to_range(line_index: &LineIndex, span: Span) -> Range {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_case_insensitive_key_equality() {
+        let a = CaseInsensitiveKey::new("Users");
+        let b = CaseInsensitiveKey::new("users");
+        let c = CaseInsensitiveKey::new("USERS");
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+    }
+
+    #[test]
+    fn test_case_insensitive_key_hash_match() {
+        let mut map: HashMap<CaseInsensitiveKey, i32> = HashMap::new();
+        map.insert(CaseInsensitiveKey::new("Users"), 1);
+        // Lookup works with uppercase str (same as stored form)
+        assert_eq!(map.get("USERS"), Some(&1));
+        assert_eq!(map.get("unknown"), None);
+        // Lookup with pre-computed uppercase String via Borrow<String>
+        let upper = "USERS".to_string();
+        assert_eq!(map.get(&upper), Some(&1));
+    }
+
+    #[test]
+    fn test_case_insensitive_key_borrow_string() {
+        let mut map: HashMap<CaseInsensitiveKey, i32> = HashMap::new();
+        map.insert(CaseInsensitiveKey::new("Tbl"), 42);
+        let upper = "TBL".to_string();
+        assert_eq!(map.get(&upper), Some(&42));
+    }
 
     #[test]
     fn test_build_table_symbol() {
