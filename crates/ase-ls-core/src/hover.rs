@@ -7,6 +7,7 @@ use crate::analysis::DocumentAnalysis;
 use crate::line_index::LineIndex;
 use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Range};
 use tsql_lexer::Lexer;
+use tsql_parser::ast::{Statement, TableReference};
 use tsql_token::TokenKind;
 
 /// Hover情報を生成する（DocumentAnalysis利用）
@@ -22,6 +23,7 @@ pub fn hover_with_analysis(analysis: &DocumentAnalysis, position: Position) -> O
     let end = token.span.end as usize;
 
     let content = build_schema_hover(&analysis.symbol_table, &kind, &text)
+        .or_else(|| build_column_hover(analysis, offset, &text))
         .or_else(|| build_hover_content(&kind, &text))?;
 
     let (start_line, start_char) = analysis.line_index.offset_to_position(start as u32);
@@ -96,6 +98,209 @@ pub fn hover(source: &str, position: Position) -> Option<Hover> {
             },
         }),
     })
+}
+
+/// Resolve identifier to column info by walking the AST to find the enclosing
+/// SELECT's FROM clause tables, then looking up the column in the symbol table.
+fn build_column_hover(
+    analysis: &DocumentAnalysis,
+    offset: usize,
+    ident_text: &str,
+) -> Option<String> {
+    let upper_ident = ident_text.to_uppercase();
+
+    for stmt in &analysis.statements {
+        if let Some(result) =
+            resolve_column_in_statement(stmt, &analysis.symbol_table, offset, &upper_ident)
+        {
+            return Some(result);
+        }
+    }
+    None
+}
+
+/// Collect table names from a list of TableReference, including JOINed tables.
+fn collect_table_names(tables: &[TableReference]) -> Vec<String> {
+    let mut names = Vec::new();
+    for tr in tables {
+        match tr {
+            TableReference::Table { name, .. } => {
+                names.push(name.name.to_uppercase());
+            }
+            TableReference::Joined { joins, .. } => {
+                for join in joins {
+                    names.extend(collect_table_names(std::slice::from_ref(&join.table)));
+                }
+            }
+            TableReference::Subquery { .. } => {}
+        }
+    }
+    names
+}
+
+fn resolve_column_in_statement(
+    stmt: &Statement,
+    symbol_table: &crate::symbol_table::SymbolTable,
+    offset: usize,
+    upper_ident: &str,
+) -> Option<String> {
+    match stmt {
+        Statement::Select(sel) => {
+            let span_start = sel.span.start as usize;
+            let span_end = if sel.span.end > sel.span.start {
+                sel.span.end as usize
+            } else {
+                offset.saturating_add(2000)
+            };
+
+            if offset < span_start || offset > span_end {
+                return None;
+            }
+
+            // Collect table names from FROM clause (including JOINs)
+            let from = sel.from.as_ref()?;
+            let table_names = collect_table_names(&from.tables);
+
+            // Search each table for the column
+            for table_name in &table_names {
+                if let Some(tbl) =
+                    crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, table_name)
+                {
+                    for col in &tbl.columns {
+                        if col.name.to_uppercase() == upper_ident {
+                            let nullable = match col.nullable {
+                                Some(true) => " NULL",
+                                Some(false) => " NOT NULL",
+                                None => "",
+                            };
+                            let identity = if col.is_identity { " IDENTITY" } else { "" };
+                            return Some(format!(
+                                "```tsql\n{} {:?}{}{}\n```\n\n**Column** of `{}`",
+                                col.name, col.data_type, nullable, identity, tbl.name
+                            ));
+                        }
+                    }
+                }
+            }
+            None
+        }
+        Statement::Insert(insert) => {
+            let span_start = insert.span.start as usize;
+            let span_end = if insert.span.end > insert.span.start {
+                insert.span.end as usize
+            } else {
+                offset.saturating_add(2000)
+            };
+            if offset < span_start || offset > span_end {
+                return None;
+            }
+
+            // Check inserted columns
+            let table_name = insert.table.name.to_uppercase();
+            if let Some(tbl) =
+                crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, &table_name)
+            {
+                for col in &tbl.columns {
+                    if col.name.to_uppercase() == upper_ident {
+                        let nullable = match col.nullable {
+                            Some(true) => " NULL",
+                            Some(false) => " NOT NULL",
+                            None => "",
+                        };
+                        let identity = if col.is_identity { " IDENTITY" } else { "" };
+                        return Some(format!(
+                            "```tsql\n{} {:?}{}{}\n```\n\n**Column** of `{}`",
+                            col.name, col.data_type, nullable, identity, tbl.name
+                        ));
+                    }
+                }
+            }
+            None
+        }
+        Statement::Update(update) => {
+            let span_start = update.span.start as usize;
+            let span_end = if update.span.end > update.span.start {
+                update.span.end as usize
+            } else {
+                offset.saturating_add(2000)
+            };
+            if offset < span_start || offset > span_end {
+                return None;
+            }
+
+            let table_name = match &update.table {
+                TableReference::Table { name, .. } => name.name.to_uppercase(),
+                _ => return None,
+            };
+            // Collect tables from both the UPDATE target and FROM clause
+            let mut all_tables = vec![table_name.clone()];
+            if let Some(from_clause) = &update.from_clause {
+                all_tables.extend(collect_table_names(&from_clause.tables));
+            }
+            for tbl_name in &all_tables {
+                if let Some(tbl) =
+                    crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, tbl_name)
+                {
+                    for col in &tbl.columns {
+                        if col.name.to_uppercase() == upper_ident {
+                            let nullable = match col.nullable {
+                                Some(true) => " NULL",
+                                Some(false) => " NOT NULL",
+                                None => "",
+                            };
+                            let identity = if col.is_identity { " IDENTITY" } else { "" };
+                            return Some(format!(
+                                "```tsql\n{} {:?}{}{}\n```\n\n**Column** of `{}`",
+                                col.name, col.data_type, nullable, identity, tbl.name
+                            ));
+                        }
+                    }
+                }
+            }
+            None
+        }
+        Statement::Block(block) => block.statements.iter().find_map(|child| {
+            resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+        }),
+        Statement::If(if_stmt) => {
+            resolve_column_in_statement(&if_stmt.then_branch, symbol_table, offset, upper_ident)
+                .or_else(|| {
+                    if_stmt.else_branch.as_ref().and_then(|else_b| {
+                        resolve_column_in_statement(else_b, symbol_table, offset, upper_ident)
+                    })
+                })
+        }
+        Statement::While(while_stmt) => {
+            resolve_column_in_statement(&while_stmt.body, symbol_table, offset, upper_ident)
+        }
+        Statement::TryCatch(tc) => {
+            for child in &tc.try_block.statements {
+                if let Some(r) =
+                    resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+                {
+                    return Some(r);
+                }
+            }
+            for child in &tc.catch_block.statements {
+                if let Some(r) =
+                    resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+                {
+                    return Some(r);
+                }
+            }
+            None
+        }
+        Statement::Create(create) => {
+            if let tsql_parser::ast::CreateStatement::Procedure(proc) = &**create {
+                proc.body.iter().find_map(|child| {
+                    resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+                })
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 /// シンボルテーブルからスキーマ情報のHoverを構築する
@@ -622,6 +827,148 @@ mod tests {
                 );
             }
             _ => panic!("Expected Markup content"),
+        }
+    }
+
+    #[test]
+    fn test_hover_column_from_select() {
+        let source = "CREATE TABLE users (id INT, name VARCHAR(50))\nSELECT id, name FROM users";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // Hover over "id" in SELECT (line 1, char 7)
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 7,
+            },
+        );
+        assert!(result.is_some(), "Should resolve column 'id'");
+        let h = result.unwrap();
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(
+                    mc.value.contains("Column"),
+                    "Should be a column hover: {}",
+                    mc.value
+                );
+                assert!(
+                    mc.value.contains("Int"),
+                    "Should show data type: {}",
+                    mc.value
+                );
+                assert!(
+                    mc.value.contains("users"),
+                    "Should mention table: {}",
+                    mc.value
+                );
+            }
+            _ => panic!("Expected Markup content"),
+        }
+    }
+
+    #[test]
+    fn test_hover_column_from_where() {
+        let source = "CREATE TABLE orders (id INT, total DECIMAL(10,2) NOT NULL)\nSELECT * FROM orders WHERE total > 100";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // Hover over "total" in WHERE (line 1, char 30)
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 30,
+            },
+        );
+        assert!(result.is_some(), "Should resolve column 'total'");
+        let h = result.unwrap();
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(
+                    mc.value.contains("Column"),
+                    "Should be a column hover: {}",
+                    mc.value
+                );
+                assert!(
+                    mc.value.contains("NOT NULL"),
+                    "Should show nullable: {}",
+                    mc.value
+                );
+            }
+            _ => panic!("Expected Markup content"),
+        }
+    }
+
+    #[test]
+    fn test_hover_column_identity() {
+        let source = "CREATE TABLE t (id INT IDENTITY, val INT)\nSELECT id FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 7,
+            },
+        );
+        assert!(result.is_some(), "Should resolve identity column");
+        let h = result.unwrap();
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(
+                    mc.value.contains("IDENTITY"),
+                    "Should show IDENTITY: {}",
+                    mc.value
+                );
+            }
+            _ => panic!("Expected Markup content"),
+        }
+    }
+
+    #[test]
+    fn test_hover_column_in_insert() {
+        let source = "CREATE TABLE t (a INT, b INT)\nINSERT INTO t (a) VALUES (1)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // Hover over "a" in INSERT column list (line 1, char 15)
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 15,
+            },
+        );
+        assert!(result.is_some(), "Should resolve column in INSERT");
+        let h = result.unwrap();
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(
+                    mc.value.contains("Column"),
+                    "Should be a column hover: {}",
+                    mc.value
+                );
+            }
+            _ => panic!("Expected Markup content"),
+        }
+    }
+
+    #[test]
+    fn test_hover_nonexistent_column_returns_none() {
+        let source = "CREATE TABLE t (id INT)\nSELECT nonexistent FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 7,
+            },
+        );
+        // "nonexistent" is not a column of t — should not resolve as column
+        // (might still show static keyword hover if it matches something)
+        if let Some(h) = result {
+            if let HoverContents::Markup(mc) = &h.contents {
+                assert!(
+                    !mc.value.contains("Column"),
+                    "Nonexistent column should not resolve as column: {}",
+                    mc.value
+                );
+            }
         }
     }
 }
