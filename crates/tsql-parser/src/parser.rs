@@ -868,6 +868,20 @@ impl<'src> Parser<'src> {
         let start = self.buffer.current()?.span.start;
         self.buffer.consume()?; // CREATE
 
+        // CREATE UNIQUE INDEX
+        if self.buffer.check(TokenKind::Unique) {
+            self.buffer.consume()?;
+            if !self.buffer.check(TokenKind::Index) {
+                return Err(ParseError::unexpected_token(
+                    vec![TokenKind::Index],
+                    self.buffer.current()?.kind,
+                    self.buffer.current()?.position,
+                ));
+            }
+            self.buffer.consume()?;
+            return self.parse_create_index(start, true);
+        }
+
         match self.buffer.current()?.kind {
             TokenKind::Table => {
                 self.buffer.consume()?;
@@ -875,7 +889,7 @@ impl<'src> Parser<'src> {
             }
             TokenKind::Index => {
                 self.buffer.consume()?;
-                self.parse_create_index(start)
+                self.parse_create_index(start, false)
             }
             TokenKind::View => {
                 self.buffer.consume()?;
@@ -888,6 +902,7 @@ impl<'src> Parser<'src> {
             _ => Err(ParseError::unexpected_token(
                 vec![
                     TokenKind::Table,
+                    TokenKind::Unique,
                     TokenKind::Index,
                     TokenKind::View,
                     TokenKind::Procedure,
@@ -1454,7 +1469,7 @@ impl<'src> Parser<'src> {
     }
 
     /// CREATE INDEXを解析
-    fn parse_create_index(&mut self, start: u32) -> ParseResult<Statement> {
+    fn parse_create_index(&mut self, start: u32, unique: bool) -> ParseResult<Statement> {
         let name = self.parse_identifier()?;
 
         if !self.buffer.check(TokenKind::On) {
@@ -1495,7 +1510,7 @@ impl<'src> Parser<'src> {
                 name,
                 table,
                 columns,
-                unique: false,
+                unique,
             },
         ))))
     }
@@ -3489,6 +3504,66 @@ mod tests {
             },
             _ => panic!("Expected Create statement"),
         }
+    }
+
+    #[test]
+    fn test_create_unique_index() {
+        let result = parse_sql("CREATE UNIQUE INDEX idx_users_email ON users(email)").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Index(idx) => {
+                    assert!(idx.unique, "unique flag should be true");
+                    assert_eq!(idx.name.name, "idx_users_email");
+                    assert_eq!(idx.table.name, "users");
+                    assert_eq!(idx.columns.len(), 1);
+                    assert_eq!(idx.columns[0].name, "email");
+                }
+                _ => panic!("Expected Create Index statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_create_unique_index_multiple_columns() {
+        let result =
+            parse_sql("CREATE UNIQUE INDEX idx_uniq_pair ON orders(customer_id, order_date)")
+                .unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Index(idx) => {
+                    assert!(idx.unique, "unique flag should be true");
+                    assert_eq!(idx.name.name, "idx_uniq_pair");
+                    assert_eq!(idx.table.name, "orders");
+                    assert_eq!(idx.columns.len(), 2);
+                }
+                _ => panic!("Expected Create Index statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_create_index_not_unique() {
+        let result = parse_sql("CREATE INDEX idx_name ON products(name)").unwrap();
+        match &result[0] {
+            Statement::Create(stmt) => match stmt.as_ref() {
+                CreateStatement::Index(idx) => {
+                    assert!(!idx.unique, "unique flag should be false for CREATE INDEX");
+                }
+                _ => panic!("Expected Create Index statement"),
+            },
+            _ => panic!("Expected Create statement"),
+        }
+    }
+
+    #[test]
+    fn test_create_unique_without_index_errors() {
+        let result = parse_sql("CREATE UNIQUE TABLE foo (id INT)");
+        assert!(
+            result.is_err(),
+            "CREATE UNIQUE TABLE should be a parse error"
+        );
     }
 
     #[test]
