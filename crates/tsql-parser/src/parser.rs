@@ -2560,71 +2560,77 @@ impl<'src> Parser<'src> {
 
         // Parse arguments: first arg has no comma, subsequent args require comma
         // Supports: EXEC proc value1, @p1 = val, @p2
-        let mut first_arg = true;
+        let mut expect_arg = false;
         loop {
-            if !first_arg {
-                // Subsequent arguments must be preceded by comma
-                if !self.buffer.check(TokenKind::Comma) {
-                    break;
-                }
-                self.buffer.consume()?; // consume comma
-            }
-            first_arg = false;
-
-            // Check if this is a named parameter: @param = value
-            if self.buffer.check(TokenKind::LocalVar) {
-                let param_name = self.parse_identifier()?;
-                if self.buffer.check(TokenKind::Eq) || self.buffer.check(TokenKind::Assign) {
-                    self.buffer.consume()?; // =
+            if expect_arg {
+                // After comma, next argument is required — propagate parse errors
+                if self.buffer.check(TokenKind::LocalVar) {
+                    let param_name = self.parse_identifier()?;
+                    if self.buffer.check(TokenKind::Eq) || self.buffer.check(TokenKind::Assign) {
+                        self.buffer.consume()?; // =
+                        let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+                        let value = expr_parser.parse()?;
+                        arguments.push(ExecArgument::Named {
+                            name: param_name,
+                            value,
+                        });
+                    } else {
+                        arguments
+                            .push(ExecArgument::Positional(Expression::Identifier(param_name)));
+                    }
+                } else {
                     let mut expr_parser = ExpressionParser::new(&mut self.buffer);
                     let value = expr_parser.parse()?;
-                    arguments.push(ExecArgument::Named {
-                        name: param_name,
-                        value,
-                    });
-                } else {
-                    // Variable without assignment — treat as positional
-                    arguments.push(ExecArgument::Positional(Expression::Identifier(param_name)));
+                    arguments.push(ExecArgument::Positional(value));
                 }
             } else {
-                // Try to parse a positional expression; if we can't, we're done
-                let mut expr_parser = ExpressionParser::new(&mut self.buffer);
-                match expr_parser.parse() {
-                    Ok(value) => arguments.push(ExecArgument::Positional(value)),
-                    Err(_) => break,
+                // First arg (no preceding comma) — optional, break if not parseable
+                if self.buffer.check(TokenKind::Comma) {
+                    self.buffer.consume()?;
+                    expect_arg = true;
+                    continue;
                 }
+                if self.buffer.check(TokenKind::LocalVar) {
+                    let param_name = self.parse_identifier()?;
+                    if self.buffer.check(TokenKind::Eq) || self.buffer.check(TokenKind::Assign) {
+                        self.buffer.consume()?; // =
+                        let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+                        let value = expr_parser.parse()?;
+                        arguments.push(ExecArgument::Named {
+                            name: param_name,
+                            value,
+                        });
+                    } else {
+                        arguments
+                            .push(ExecArgument::Positional(Expression::Identifier(param_name)));
+                    }
+                } else {
+                    let mut expr_parser = ExpressionParser::new(&mut self.buffer);
+                    match expr_parser.parse() {
+                        Ok(value) => arguments.push(ExecArgument::Positional(value)),
+                        Err(_) => break, // No first arg — that's fine (e.g., EXEC sp_who)
+                    }
+                }
+            }
+
+            // Check for comma before next argument
+            if self.buffer.check(TokenKind::Comma) {
+                self.buffer.consume()?;
+                expect_arg = true;
+            } else {
+                break;
             }
         }
 
         // Compute span end from the last meaningful token
-        let end = if let Some(last_arg) = arguments.last() {
-            match last_arg {
-                ExecArgument::Positional(expr) => {
-                    let s = expr.span();
-                    if s.end > 0 {
-                        s.end
-                    } else {
-                        s.start
-                    }
-                }
-                ExecArgument::Named { value, .. } => {
-                    let s = value.span();
-                    if s.end > 0 {
-                        s.end
-                    } else {
-                        s.start
-                    }
-                }
-            }
-        } else {
-            // No arguments — span ends at procedure name
-            let s = procedure.span;
-            if s.end > 0 {
-                s.end
-            } else {
-                s.start
-            }
-        };
+        let resolve_end = |s: &Span| if s.end > 0 { s.end } else { s.start };
+        let end = arguments
+            .last()
+            .map(|arg| match arg {
+                ExecArgument::Positional(expr) => resolve_end(&expr.span()),
+                ExecArgument::Named { value, .. } => resolve_end(&value.span()),
+            })
+            .unwrap_or_else(|| resolve_end(&procedure.span));
 
         Ok(Statement::Exec(Box::new(ExecStatement {
             span: Span { start, end },
@@ -5478,6 +5484,28 @@ mod tests {
             Statement::Select(_) => {}
             _ => panic!("Expected Select as second statement"),
         }
+    }
+
+    /// カンマの後に引数がない場合、パースエラーが伝播されることを確認
+    /// （レビュー指摘: Err(_) => break で黙って無視していたのを修正）
+    #[test]
+    fn test_exec_comma_without_arg_is_error() {
+        let result = parse_sql("EXEC my_proc 1,");
+        assert!(
+            result.is_err(),
+            "EXEC with trailing comma (missing argument) should be a parse error"
+        );
+    }
+
+    /// カンマの後に不正なトークンがある場合もエラー伝播
+    #[test]
+    fn test_exec_comma_then_invalid_is_error() {
+        let result = parse_sql("EXEC my_proc 1, )");
+        // カンマの後)は有効なexpressionとしてパースできない→エラー
+        assert!(
+            result.is_err(),
+            "EXEC with comma then invalid token should be a parse error"
+        );
     }
 
     #[test]
