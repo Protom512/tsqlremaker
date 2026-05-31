@@ -1006,7 +1006,6 @@ mod tests {
         )
     }
 
-    #[allow(dead_code)]
     fn find_insert_skeleton_action(actions: &[CodeActionOrCommand]) -> bool {
         actions.iter().any(|a| {
             matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT skeleton"))
