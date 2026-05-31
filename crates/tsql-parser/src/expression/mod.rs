@@ -53,14 +53,20 @@ impl<'a, 'src> ExpressionParser<'a, 'src> {
         self.parse_bp(BindingPower::Lowest)
     }
 
-    /// 単純式を解析（前置演算子のみ、中置演算子を含まない）
+    /// 原子式を解析（前置演算子のみ、中置演算子を含まない）
     ///
-    /// TOP句など、中置演算子を含まない単純な式を解析する場合に使用します。
+    /// 中置演算子（+, -, *, /, AND, OR等）を含まない単一項の式を解析する。
+    /// プリミティブなリテラル、識別子、関数呼び出し、カッコ式などが該当する。
+    ///
+    /// # 使用場面
+    ///
+    /// - `SELECT TOP N` の N 部分（T-SQL仕様で単純式のみ許可）
+    /// - 演算子の優先順位を適用すべきでない文脈
     ///
     /// # Returns
     ///
     /// 解析された式、またはエラー
-    pub fn parse_simple(&mut self) -> ParseResult<Expression> {
+    pub fn parse_atomic(&mut self) -> ParseResult<Expression> {
         self.check_depth()?;
         self.parse_prefix()
     }

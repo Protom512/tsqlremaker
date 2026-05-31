@@ -256,8 +256,8 @@ impl<'src> Parser<'src> {
         if self.buffer.check(TokenKind::Top) {
             self.buffer.consume()?;
             let mut expr_parser = ExpressionParser::new(&mut self.buffer);
-            // TOP句は単純式のみを許可（中置演算子を含まない）
-            top = Some(expr_parser.parse_simple()?);
+            // TOP句は原子式のみを許可（中置演算子を含まない）
+            top = Some(expr_parser.parse_atomic()?);
         }
 
         // 変数代入パターンの検出: SELECT @var = expr
