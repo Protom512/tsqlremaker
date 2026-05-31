@@ -310,9 +310,10 @@ fn test_emit_declare_statement_with_warning() {
     eprintln!("Generated SQL: {}", postgres_sql);
 
     // 警告コメントが出力されていることを確認
-    assert!(postgres_sql.contains("-- TODO: T-SQL 変数宣言"));
-    assert!(postgres_sql.contains("DECLARE @var"));
-    assert!(postgres_sql.contains("PostgreSQL は DO ブロック内で変数宣言が必要です"));
+    assert!(postgres_sql.contains("変数宣言"));
+    assert!(postgres_sql.contains("DECLARE"));
+    assert!(postgres_sql.contains("DO $$"));
+    assert!(!postgres_sql.contains("TODO"));
 }
 
 /// T-SQL 変数代入（SET文）の警告コメント出力テスト
@@ -332,9 +333,9 @@ fn test_emit_set_statement_with_warning() {
     eprintln!("Generated SQL: {}", postgres_sql);
 
     // 警告コメントが出力されていることを確認
-    assert!(postgres_sql.contains("-- TODO: T-SQL 変数代入"));
-    assert!(postgres_sql.contains("SET @var"));
-    assert!(postgres_sql.contains("SELECT INTO"));
+    assert!(postgres_sql.contains("変数代入"));
+    assert!(postgres_sql.contains(":="));
+    assert!(!postgres_sql.contains("TODO"));
 }
 
 /// 警告なしモードのテスト
@@ -352,6 +353,5 @@ fn test_emit_declare_statement_without_warning() {
     let postgres_sql = emitter.emit(&common_stmt).unwrap();
 
     // 警告コメントが出力されていないことを確認
-    assert!(!postgres_sql.contains("-- TODO:"));
     assert!(postgres_sql.is_empty());
 }

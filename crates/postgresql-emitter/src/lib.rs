@@ -215,37 +215,9 @@ impl PostgreSqlEmitter {
                 self.visit_delete_statement(delete)
             }
             tsql_parser::common::CommonStatement::DialectSpecific { description, .. } => {
-                // 方言固有構文は警告コメントを出力して続行
+                // T-SQL方言固有構文をPostgreSQL (PL/pgSQL) 変換ヒント付きで出力
                 if self.config.warn_unsupported {
-                    // descriptionの内容を解析して適切な警告メッセージを出力
-                    if description.contains("Declare(") {
-                        self.write("-- TODO: T-SQL 変数宣言 (DECLARE @var)\n");
-                        self.write("-- PostgreSQL は DO ブロック内で変数宣言が必要です\n");
-                    } else if description.contains("VariableAssignment(")
-                        || description.contains("Set(")
-                    {
-                        self.write("-- TODO: T-SQL 変数代入 (SET @var = value または SELECT @var = expr)\n");
-                        self.write("-- PostgreSQL では変数代入は SELECT INTO または := で代替してください\n");
-                    } else if description.contains("If(") {
-                        self.write("-- TODO: T-SQL IF...ELSE 文\n");
-                        self.write(
-                            "-- PostgreSQL では IF...THEN...ELSE...END IF を使用してください\n",
-                        );
-                    } else if description.contains("While(") {
-                        self.write("-- TODO: T-SQL WHILE ループ\n");
-                        self.write(
-                            "-- PostgreSQL では WHILE...LOOP...END LOOP を使用してください\n",
-                        );
-                    } else if description.contains("CREATE") {
-                        self.write("-- TODO: T-SQL CREATE 文\n");
-                        self.write("-- PostgreSQL の構文に合わせて手動で変換してください\n");
-                    } else {
-                        // その他の方言固有構文
-                        self.write("-- TODO: ");
-                        self.write(description);
-                        self.writeln();
-                        self.write("-- PostgreSQL では同等の機能に手動で変換してください\n");
-                    }
+                    self.visit_dialect_specific(description)?;
                 }
                 Ok(())
             }
@@ -499,6 +471,84 @@ impl PostgreSqlEmitter {
             self.write(name);
         }
     }
+
+    /// T-SQL方言固有構文をPostgreSQL (PL/pgSQL) 変換ヒント付きで出力する
+    ///
+    /// CommonStatement::DialectSpecific は元のT-SQL ASTのDebug文字列をdescriptionとして
+    /// 保持しているため、完全な変換は不可能。代わりに構文カテゴリに基づいて
+    /// PostgreSQLでの代替構文をガイドするコメントを生成する。
+    fn visit_dialect_specific(&mut self, description: &str) -> Result<(), EmitError> {
+        if description.starts_with("Declare(") || description.contains("Declare(") {
+            self.write("-- [T-SQL → PostgreSQL] 変数宣言\n");
+            self.write("-- T-SQL: DECLARE @var datatype [= default]\n");
+            self.write("-- PostgreSQL: DO $$ DECLARE var datatype; BEGIN ... END $$;\n");
+            self.write("-- 例: DECLARE @count INT → DECLARE count INTEGER;\n");
+            self.write("-- 注意: @ プレフィクスは不要。DOブロック内で宣言が必要。\n");
+        } else if description.starts_with("Set(")
+            || description.contains("VariableAssignment(")
+            || description.starts_with("Variable assignment:")
+        {
+            self.write("-- [T-SQL → PostgreSQL] 変数代入\n");
+            self.write("-- T-SQL: SET @var = expr または SELECT @var = expr\n");
+            self.write("-- PostgreSQL: var := expr; または SELECT expr INTO var;\n");
+            self.write("-- 注意: PostgreSQLの代入は := 演算子を使用。\n");
+        } else if description.starts_with("If(") || description.contains("If(") {
+            self.write("-- [T-SQL → PostgreSQL] IF条件分岐\n");
+            self.write("-- T-SQL: IF ... BEGIN ... END ELSE BEGIN ... END\n");
+            self.write("-- PostgreSQL: IF ... THEN ... ELSE ... END IF;\n");
+            self.write("-- 注意: PostgreSQLではTHEN/END IFが必須。BEGIN/ENDは不要。\n");
+        } else if description.starts_with("While(") || description.contains("While(") {
+            self.write("-- [T-SQL → PostgreSQL] WHILEループ\n");
+            self.write("-- T-SQL: WHILE ... BEGIN ... END\n");
+            self.write("-- PostgreSQL: WHILE ... LOOP ... END LOOP;\n");
+            self.write("-- 注意: PostgreSQLではLOOP/END LOOPが必須。\n");
+        } else if description.starts_with("Block(") || description.contains("Block(") {
+            self.write("-- [T-SQL → PostgreSQL] BEGIN...ENDブロック\n");
+            self.write("-- PostgreSQLでは複合文は不要。各文をセミコロンで区切る。\n");
+        } else if description.contains("TryCatch(") {
+            self.write("-- [T-SQL → PostgreSQL] TRY...CATCH例外処理\n");
+            self.write("-- T-SQL: BEGIN TRY ... END TRY BEGIN CATCH ... END CATCH\n");
+            self.write("-- PostgreSQL: BEGIN ... EXCEPTION WHEN ... THEN ... END;\n");
+            self.write("-- 注意: PostgreSQLの例外処理はPL/pgSQLブロック内でのみ使用可能。\n");
+        } else if description.contains("Transaction(") {
+            self.write("-- [T-SQL → PostgreSQL] トランザクション制御\n");
+            self.write("-- T-SQL: BEGIN TRAN / COMMIT / ROLLBACK\n");
+            self.write("-- PostgreSQL: BEGIN / COMMIT / ROLLBACK (構文は同等)\n");
+        } else if description.contains("Return(") {
+            self.write("-- [T-SQL → PostgreSQL] RETURN文\n");
+            self.write("-- T-SQL: RETURN [value]\n");
+            self.write("-- PostgreSQL: RETURN expression; (PL/pgSQL関数内)\n");
+        } else if description.contains("Throw(") || description.contains("Raiserror(") {
+            self.write("-- [T-SQL → PostgreSQL] エラー発生\n");
+            self.write("-- T-SQL: THROW / RAISERROR\n");
+            self.write("-- PostgreSQL: RAISE EXCEPTION 'message';\n");
+        } else if description.contains("CREATE statement:") {
+            self.write("-- [T-SQL → PostgreSQL] CREATE文\n");
+            self.write("-- DDLは方言間の差が大きいため手動変換が必要。\n");
+            self.write("-- 主な違い:\n");
+            self.write("--   IDENTITY → SERIAL または GENERATED ALWAYS AS IDENTITY\n");
+            self.write("--   NVARCHAR → VARCHAR (PostgreSQLはUnicodeネイティブ)\n");
+            self.write("--   DATETIME → TIMESTAMP\n");
+            self.write("--   GETDATE() → CURRENT_TIMESTAMP / NOW()\n");
+        } else if description.contains("ALTER TABLE") {
+            self.write("-- [T-SQL → PostgreSQL] ALTER TABLE文\n");
+            self.write("-- 基本構文は同等だが、データ型の変換が必要。\n");
+        } else if description.contains("EXEC statement:") {
+            self.write("-- [T-SQL → PostgreSQL] ストアドプロシージャ呼び出し\n");
+            self.write("-- T-SQL: EXEC proc_name arg1, @param = val\n");
+            self.write("-- PostgreSQL: SELECT proc_name(arg1, param => val);\n");
+            self.write("-- または PERFORM proc_name(...); (結果を破棄する場合)\n");
+        } else if description.contains("UPDATE with FROM") {
+            self.write("-- [T-SQL → PostgreSQL] UPDATE ... FROM構文\n");
+            self.write("-- PostgreSQLもUPDATE...FROMをサポートするが構文が異なる。\n");
+        } else {
+            self.write("-- [T-SQL → PostgreSQL] サポート対象外の構文\n");
+            self.write("-- 元のT-SQL: ");
+            self.write(description);
+            self.writeln();
+        }
+        Ok(())
+    }
 }
 
 impl Default for PostgreSqlEmitter {
@@ -508,6 +558,9 @@ impl Default for PostgreSqlEmitter {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
+#[allow(clippy::panic)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -524,6 +577,104 @@ mod tests {
         let emitter = PostgreSqlEmitter::default();
         assert!(emitter.config().quote_identifiers);
         assert_eq!(emitter.config().indent_size, 4);
+    }
+
+    #[test]
+    fn test_dialect_specific_declare() {
+        use tsql_parser::Span;
+        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
+            description:
+                "Declare(DeclareStatement { variables: [VariableDecl { name: \"@count\" }] })"
+                    .to_string(),
+            span: Span { start: 0, end: 20 },
+        };
+        let mut emitter = PostgreSqlEmitter::default();
+        let result = emitter.emit(&stmt);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(
+            output.contains("変数宣言"),
+            "Should contain variable declaration hint"
+        );
+        assert!(
+            output.contains("DO $$ DECLARE"),
+            "Should contain PostgreSQL DO block syntax"
+        );
+        assert!(!output.contains("TODO"), "Should not contain TODO markers");
+    }
+
+    #[test]
+    fn test_dialect_specific_if() {
+        use tsql_parser::Span;
+        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
+            description: "If(IfStatement { condition: .. })".to_string(),
+            span: Span { start: 0, end: 20 },
+        };
+        let mut emitter = PostgreSqlEmitter::default();
+        let result = emitter.emit(&stmt);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains("IF条件分岐"));
+        assert!(output.contains("IF ... THEN"));
+    }
+
+    #[test]
+    fn test_dialect_specific_while() {
+        use tsql_parser::Span;
+        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
+            description: "While(WhileStatement { .. })".to_string(),
+            span: Span { start: 0, end: 20 },
+        };
+        let mut emitter = PostgreSqlEmitter::default();
+        let result = emitter.emit(&stmt);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains("WHILEループ"));
+        assert!(output.contains("LOOP ... END LOOP"));
+    }
+
+    #[test]
+    fn test_dialect_specific_create() {
+        use tsql_parser::Span;
+        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
+            description: "CREATE statement: Create(CreateStatement::Table(...))".to_string(),
+            span: Span { start: 0, end: 50 },
+        };
+        let mut emitter = PostgreSqlEmitter::default();
+        let result = emitter.emit(&stmt);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains("CREATE文"));
+        assert!(output.contains("IDENTITY → SERIAL"));
+    }
+
+    #[test]
+    fn test_dialect_specific_try_catch() {
+        use tsql_parser::Span;
+        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
+            description: "TryCatch(TryCatchStatement { .. })".to_string(),
+            span: Span { start: 0, end: 30 },
+        };
+        let mut emitter = PostgreSqlEmitter::default();
+        let result = emitter.emit(&stmt);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains("TRY...CATCH"));
+        assert!(output.contains("EXCEPTION WHEN"));
+    }
+
+    #[test]
+    fn test_dialect_specific_unknown() {
+        use tsql_parser::Span;
+        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
+            description: "SomeUnknown(construct)".to_string(),
+            span: Span { start: 0, end: 10 },
+        };
+        let mut emitter = PostgreSqlEmitter::default();
+        let result = emitter.emit(&stmt);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains("サポート対象外"));
     }
 
     #[test]
