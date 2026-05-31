@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-05-31 / Session 2 (Code Review Fixes + Emitter Improvements)
+**最終更新:** 2026-05-31 / Session 4 (parser rename + tracing)
 
 ---
 
@@ -15,6 +15,19 @@
 | **Open Issues** | 19 |
 | **Open PRs** | 1 (#123) |
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) |
+
+---
+
+## 🔄 Session 3 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `63bac60` | refactor(db_docs): split 1305-line monolith into focused modules (#71) |
+
+### 追加実績
+- 24 stale remote branches pruned
+- dependabot alert resolved (rand 0.9.2 → 0.9.4)
 
 ---
 
@@ -48,13 +61,13 @@
 ### 残りのOpen Issues (14件)
 | Issue | 分類 | 難易度 |
 |-------|------|--------|
-| #86 | Parser precedence | Medium |
+| #86 | ~~Parser precedence~~ → **完了** (d65a149) | ~~Medium~~ |
 | #82 | Parser error recovery | Large |
 | #81 | LSP configuration | Large |
-| #79 | LSP error handling | Medium |
+| #79 | ~~LSP error handling~~ → **完了** (df81785) | ~~Medium~~ |
 | #77 | Signature help nested | Medium |
 | #75 | SQLite converter | Medium |
-| #71 | db_docs.rs monolith | Medium |
+| #71 | ~~db_docs.rs monolith~~ → **完了** (63bac60) | ~~Medium~~ |
 | #70 | Cross-file definition | Large |
 | #65 | Multi-file workspace | Large |
 | #61 | WASM AST conversion | Large |
