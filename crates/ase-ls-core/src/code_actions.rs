@@ -402,25 +402,25 @@ fn try_add_insert_columns_in_stmt(
             }
 
             let col_list = columns.join(", ");
-            let values_start = find_values_token_start(&analysis.tokens, insert.span.start)?;
+            let values_start =
+                find_values_token_start(&analysis.tokens, insert.span.start, span_end)?;
 
-            let table_end = insert.table.span.end;
-            let t_end = analysis.line_index.offset_to_position(table_end);
             let v_start = analysis.line_index.offset_to_position(values_start);
 
+            // VALUES直前に非破壊挿入: テーブル名〜VALUES間のコメントやフォーマットを保持
             let edit = make_text_edit(
                 uri,
                 Range {
                     start: Position {
-                        line: t_end.0,
-                        character: t_end.1,
+                        line: v_start.0,
+                        character: v_start.1,
                     },
                     end: Position {
                         line: v_start.0,
                         character: v_start.1,
                     },
                 },
-                format!(" ({col_list}) "),
+                format!("({col_list}) "),
             );
 
             Some(CodeAction {
@@ -501,12 +501,20 @@ fn resolve_insert_stmt_end(span: &tsql_token::Span, tokens: &[crate::analysis::O
 }
 
 /// VALUESトークンの開始位置を見つける
+///
+/// `insert_start`〜`insert_end`の範囲内でVALUESトークンを検索する。
+/// ステートメント境界を越えたスキャンを防止し、後続ステートメントの
+/// VALUESトークンとの誤マッチを防ぐ。
 fn find_values_token_start(
     tokens: &[crate::analysis::OwnedToken],
     insert_start: u32,
+    insert_end: u32,
 ) -> Option<u32> {
     let start_idx = tokens.partition_point(|t| t.span.end <= insert_start);
     for tok in &tokens[start_idx..] {
+        if tok.span.start > insert_end {
+            break;
+        }
         if tok.kind == TokenKind::Values {
             return Some(tok.span.start);
         }
@@ -1560,6 +1568,125 @@ mod tests {
             let new = &text_edit.new_text;
             assert!(new.contains("a, b, c"), "Should contain column list");
             assert!(!new.contains("VALUES"), "Should not duplicate VALUES");
+        }
+    }
+
+    /// レビュー指摘: 後続ステートメントのVALUESとの誤マッチ防止
+    /// INSERT INTO t SELECT * FROM other  -- VALUESなし
+    /// INSERT INTO t2 VALUES (...)        -- 後続のVALUES
+    /// カーソルが1つ目のINSERTにある場合、2つ目のVALUESにマッチしてはならない
+    #[test]
+    fn test_insert_column_list_no_cross_statement_values_match() {
+        let source = concat!(
+            "CREATE TABLE t (id INT, name VARCHAR(100))\n",
+            "CREATE TABLE t2 (id INT, name VARCHAR(100))\n",
+            "INSERT INTO t SELECT * FROM t2\n",
+            "INSERT INTO t2 VALUES (1, 'test')\n",
+        );
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // カーソルを3行目(INSERT INTO t...)に置く
+        let range = Range {
+            start: Position {
+                line: 2,
+                character: 0,
+            },
+            end: Position {
+                line: 2,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        // INSERT INTO t SELECT は VALUES ではないので、action は出ない
+        // また、後続ステートメントのVALUESに誤マッチしてactionが出てもNG
+        assert!(
+            add_cols.is_none(),
+            "Should not offer column list for INSERT...SELECT or cross-statement VALUES"
+        );
+    }
+
+    /// レビュー指摘: 非破壊挿入 - テーブル名とVALUES間のコメントを保持する
+    #[test]
+    fn test_insert_column_list_preserves_comments_between_table_and_values() {
+        let source = concat!(
+            "CREATE TABLE t (id INT, name VARCHAR(100))\n",
+            "INSERT INTO t -- important comment\n",
+            "VALUES (1, 'test')\n",
+        );
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(add_cols.is_some(), "Should offer column list");
+        if let CodeActionOrCommand::CodeAction(ca) = add_cols.unwrap() {
+            let edit = ca.edit.as_ref().unwrap();
+            let changes = edit.changes.as_ref().unwrap();
+            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
+            // 編集範囲がVALUESキーワードの直前であることを確認
+            // (テーブル名直後〜VALUES間のコメントは置換対象ではない)
+            assert!(
+                text_edit.range.start.line >= 2,
+                "Edit should be at or near VALUES line, got line {}",
+                text_edit.range.start.line
+            );
+            assert!(
+                text_edit.new_text.contains("id, name"),
+                "new_text should contain column list"
+            );
+            // 非破壊: start == end (ゼロ幅挿入)
+            assert_eq!(
+                text_edit.range.start, text_edit.range.end,
+                "Edit should be a zero-width insertion"
+            );
+        }
+    }
+
+    /// INSERT INTO t VALUES (...) の正常系でゼロ幅挿入を確認
+    #[test]
+    fn test_insert_column_list_is_zero_width_insertion() {
+        let source = "CREATE TABLE t (a INT, b INT)\nINSERT INTO t VALUES (1, 2)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(add_cols.is_some());
+        if let CodeActionOrCommand::CodeAction(ca) = add_cols.unwrap() {
+            let edit = ca.edit.as_ref().unwrap();
+            let changes = edit.changes.as_ref().unwrap();
+            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
+            // ゼロ幅挿入: start == end
+            assert_eq!(
+                text_edit.range.start, text_edit.range.end,
+                "Should be a non-destructive zero-width insertion at VALUES position"
+            );
+            assert!(
+                text_edit.new_text.starts_with('('),
+                "new_text should start with '('"
+            );
         }
     }
 }
