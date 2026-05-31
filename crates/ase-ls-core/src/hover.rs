@@ -16,7 +16,13 @@ pub fn hover_with_analysis(analysis: &DocumentAnalysis, position: Position) -> O
         .line_index
         .position_to_offset(&analysis.source, position);
 
-    let (token, _idx) = analysis.find_token_at(offset)?;
+    let (token, _idx) = match analysis.find_token_at(offset) {
+        Some(t) => t,
+        None => {
+            tracing::debug!("hover: no token found at offset {offset}");
+            return None;
+        }
+    };
     let kind = token.kind;
     let text = token.text.clone();
     let start = token.span.start as usize;
@@ -24,7 +30,14 @@ pub fn hover_with_analysis(analysis: &DocumentAnalysis, position: Position) -> O
 
     let content = build_schema_hover(&analysis.symbol_table, &kind, &text)
         .or_else(|| build_column_hover(analysis, offset, &text))
-        .or_else(|| build_hover_content(&kind, &text))?;
+        .or_else(|| build_hover_content(&kind, &text));
+    let content = match content {
+        Some(c) => c,
+        None => {
+            tracing::debug!("hover: no documentation found for '{text}' ({kind:?})");
+            return None;
+        }
+    };
 
     let (start_line, start_char) = analysis.line_index.offset_to_position(start as u32);
     let (end_line, end_char) = analysis.line_index.offset_to_position(end as u32);

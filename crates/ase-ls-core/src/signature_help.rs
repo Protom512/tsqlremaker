@@ -65,12 +65,26 @@ pub fn signature_help_with_analysis(
     }
 
     if !found_open_paren {
+        tracing::debug!("signature_help: cursor not inside function call");
         return None;
     }
-    let name = func_name?;
-    let entry = crate::db_docs::lookup_function(name.as_str())?;
+    let name = match func_name {
+        Some(n) => n,
+        None => {
+            tracing::debug!("signature_help: no function name found before open paren");
+            return None;
+        }
+    };
+    let entry = match crate::db_docs::lookup_function(name.as_str()) {
+        Some(e) => e,
+        None => {
+            tracing::debug!("signature_help: unknown function '{name}'");
+            return None;
+        }
+    };
 
     if entry.category != crate::db_docs::DocCategory::Function {
+        tracing::debug!("signature_help: '{name}' is not a function ({:?})", entry.category);
         return None;
     }
 
