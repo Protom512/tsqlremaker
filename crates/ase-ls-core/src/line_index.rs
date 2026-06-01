@@ -238,4 +238,33 @@ mod tests {
         }
         offset
     }
+
+    #[test]
+    fn test_line_offset_method() {
+        let source = "abc\ndef\nghi";
+        let idx = LineIndex::new(source);
+        assert_eq!(idx.line_offset(0), 0);
+        assert_eq!(idx.line_offset(1), 4); // after "abc\n"
+        assert_eq!(idx.line_offset(2), 8); // after "def\n"
+        assert_eq!(idx.line_offset(99), 0); // out of range → 0
+    }
+
+    #[test]
+    fn test_multibyte_position_to_offset() {
+        // Japanese characters (3 bytes each in UTF-8)
+        let source = "SELECT あ";
+        let idx = LineIndex::new(source);
+        // "SELECT " = 7 bytes, "あ" starts at byte 7
+        assert_eq!(idx.position_to_offset(source, Position::new(0, 7)), 7);
+        assert_eq!(idx.position_to_offset(source, Position::new(0, 8)), 10); // past "あ" (3 bytes)
+    }
+
+    #[test]
+    fn test_position_to_offset_crlf_source() {
+        let source = "abc\r\ndef";
+        let idx = LineIndex::new(source);
+        // Line 0: "abc\r\n" (5 bytes), Line 1: "def" starts at byte 5
+        assert_eq!(idx.position_to_offset(source, Position::new(1, 0)), 5);
+        assert_eq!(idx.position_to_offset(source, Position::new(1, 3)), 8);
+    }
 }
