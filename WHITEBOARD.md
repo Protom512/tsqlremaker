@@ -10,7 +10,7 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1073 passed, 2 skipped (+24 from Session 6) |
+| **テスト** | 1085 passed, 2 skipped (+36 from Session 6) |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Open Issues** | 11 |
@@ -26,6 +26,8 @@
 |---------|------|
 | `8d08592` | perf(analysis): remove unused tokens_with_comments computation |
 | `6daa25d` | test(lsp): add 24 tests for folding, rename, definition, references coverage |
+| `7eddb9b` | test(lsp): add 4 diagnostics tests for empty source and multi-statement coverage |
+| `8705faa` | test(lsp): add 12 tests for diagnostics, formatting, and hover coverage |
 
 ### 変更内容
 - **analysis.rs**: `tokens_with_comments` の不要なLexer二重実行を削除（1パス節約）
@@ -33,6 +35,9 @@
 - **rename.rs**: +7テスト（Analysis版 variable/table/empty/beyond-end/reject, placeholder）
 - **definition.rs**: +5テスト（Analysis版 variable/table/empty/no-token/procedure）
 - **references.rs**: +5テスト（Analysis版 variable/table/empty/no-token/exclude-declaration）
+- **diagnostics.rs**: +4テスト（空ソース, 複数SELECT *, 位置インデックス）
+- **formatting.rs**: +5テスト（空ソース, ドット表記, 括弧, HexString, 変更なし）
+- **hover.rs**: +3テスト（空ソース, GETDATE関数, 範囲外位置）
 
 ### 発見した既存バグ
 - `DocumentAnalysis::new("BEGIN TRY\n    SELECT 1\n    SELECT 2\nEND TRY\n...")` がスタックオーバーフローを起こす（10GBメモリ割当でクラッシュ）。`SymbolTableBuilder::build_tolerant` またはパーサーが無限再帰する可能性。根本原因は未特定。
@@ -90,4 +95,4 @@ ase-ls (tower-lsp 0.20, lsp-types 0.94.1)
 | 3 | 1 | — | db_docs monolith split (#71) |
 | 5 | 4 | 1018 | signature help fix (#77), dead code removal |
 | 6 | 4 | 1049 | 4 issues closed, coverage +2.38% |
-| 7 | 2 | 1073 | dead code removal, +24 tests |
+| 7 | 4 | 1085 | dead code removal, +36 tests across 8 modules |
