@@ -302,4 +302,72 @@ mod tests {
         assert!(!matches_query("orders", "user"));
         assert!(matches_query("anything", ""));
     }
+
+    // === workspace_symbols_with_analysis tests ===
+
+    #[test]
+    fn test_analysis_based_table_symbol() {
+        let source = "CREATE TABLE users (id INT, name VARCHAR(100))";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let results = workspace_symbols_with_analysis(&analysis, "user", &test_uri());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "users");
+        assert_eq!(results[0].kind, SymbolKind::CLASS);
+    }
+
+    #[test]
+    fn test_analysis_based_procedure_symbol() {
+        let source = "CREATE PROCEDURE get_users AS BEGIN SELECT 1 END";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let results = workspace_symbols_with_analysis(&analysis, "get", &test_uri());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "get_users");
+        assert_eq!(results[0].kind, SymbolKind::FUNCTION);
+    }
+
+    #[test]
+    fn test_analysis_based_view_symbol() {
+        let source = "CREATE VIEW active_users AS SELECT * FROM users";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let results = workspace_symbols_with_analysis(&analysis, "active", &test_uri());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "active_users");
+        assert_eq!(results[0].kind, SymbolKind::INTERFACE);
+    }
+
+    #[test]
+    fn test_analysis_based_index_symbol() {
+        let source = "CREATE TABLE t (id INT)\nCREATE INDEX idx_t ON t (id)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let results = workspace_symbols_with_analysis(&analysis, "idx", &test_uri());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "idx_t");
+        assert_eq!(results[0].kind, SymbolKind::PROPERTY);
+    }
+
+    #[test]
+    fn test_analysis_based_variable_symbol() {
+        let source = "DECLARE @total_count INT";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let results = workspace_symbols_with_analysis(&analysis, "total", &test_uri());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "@total_count");
+        assert_eq!(results[0].kind, SymbolKind::VARIABLE);
+    }
+
+    #[test]
+    fn test_analysis_based_empty_query() {
+        let source = "CREATE TABLE users (id INT)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let results = workspace_symbols_with_analysis(&analysis, "", &test_uri());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_analysis_based_no_match() {
+        let source = "CREATE TABLE users (id INT)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let results = workspace_symbols_with_analysis(&analysis, "orders", &test_uri());
+        assert!(results.is_empty());
+    }
 }
