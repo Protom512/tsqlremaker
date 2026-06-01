@@ -582,4 +582,45 @@ mod tests {
             "SELECT * in CREATE VIEW should produce warning"
         );
     }
+
+    #[test]
+    fn test_diagnose_empty_source() {
+        let analysis = crate::analysis::DocumentAnalysis::new("");
+        let diags = diagnose(&analysis);
+        assert!(
+            diags.is_empty(),
+            "Empty source should produce no diagnostics"
+        );
+    }
+
+    #[test]
+    fn test_diagnose_source_only_parse_errors() {
+        let diags = diagnose_source("");
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_select_star_multiple_warnings() {
+        let source = "SELECT * FROM users\nSELECT * FROM orders";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let diags = diagnose(&analysis);
+        let star_warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.message.contains("SELECT *"))
+            .collect();
+        assert_eq!(
+            star_warnings.len(),
+            2,
+            "Two SELECT * statements should produce 2 warnings"
+        );
+    }
+
+    #[test]
+    fn test_parse_error_position_adjusted_to_zero_indexed() {
+        // ParseError uses 1-indexed position; diagnostics should convert to 0-indexed
+        let diags = diagnose_source("SELCT * FROM");
+        assert!(!diags.is_empty());
+        // Position should be 0-indexed (not 1-indexed)
+        assert_eq!(diags[0].range.start.line, 0);
+    }
 }
