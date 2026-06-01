@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-05-31 / Session 4 (parser rename + tracing)
+**最終更新:** 2026-06-01 / Session 5 (dead code cleanup + emitter pattern refactor)
 
 ---
 
@@ -10,9 +10,9 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1005 passed, 2 skipped |
+| **テスト** | 1015 passed, 2 skipped |
 | **Clippy** | clean (`-D warnings`) |
-| **Open Issues** | 19 |
+| **Open Issues** | 15 |
 | **Open PRs** | 1 (#123) |
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) |
 
@@ -31,7 +31,19 @@
 
 ---
 
-## 🔄 今セッションの成果
+## 🔄 Session 5 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `9ca9d8a` | refactor: extract helpers, remove dead code, improve emitter patterns |
+
+### 変更内容
+- **hover.rs**: `format_column_hover()` + `in_span()` ヘルパー抽出（3箇所の重複コード解消）
+- **sqlite-emitter**: `function_mapper` モジュール抽出（テーブル駆動の関数マッピング、datepart変換）
+- **dead code削除**: postgresql/sqlite emitter の未使用 `Result<T>` 型エイリアス削除
+- **unused imports解消**: mysql/sqlite emitter の不要な `#[allow(unused_imports)]` と未使用インポート削除
+- テスト 1015 passed (+10 from previous session)
 
 ### コミット（master直接）
 | コミット | 内容 |
