@@ -84,7 +84,10 @@ pub fn signature_help_with_analysis(
     };
 
     if entry.category != crate::db_docs::DocCategory::Function {
-        tracing::debug!("signature_help: '{name}' is not a function ({:?})", entry.category);
+        tracing::debug!(
+            "signature_help: '{name}' is not a function ({:?})",
+            entry.category
+        );
         return None;
     }
 

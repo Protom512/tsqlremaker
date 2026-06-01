@@ -724,10 +724,9 @@ impl Default for MySqlEmitter {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    #[allow(unused_imports)]
     use tsql_parser::common::{
-        CommonBinaryOperator, CommonCaseExpression, CommonColumnReference, CommonExpression,
-        CommonFunctionCall, CommonIdentifier, CommonInList, CommonLiteral, CommonUnaryOperator,
+        CommonBinaryOperator, CommonColumnReference, CommonExpression, CommonIdentifier,
+        CommonInList, CommonLiteral, CommonUnaryOperator,
     };
 
     #[test]

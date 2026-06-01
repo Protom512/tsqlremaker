@@ -132,6 +132,31 @@ fn build_column_hover(
     None
 }
 
+/// Format a column's hover content as markdown with T-SQL code block.
+fn format_column_hover(col: &crate::symbol_table::ColumnSymbol, table_name: &str) -> String {
+    let nullable = match col.nullable {
+        Some(true) => " NULL",
+        Some(false) => " NOT NULL",
+        None => "",
+    };
+    let identity = if col.is_identity { " IDENTITY" } else { "" };
+    format!(
+        "```tsql\n{} {:?}{}{}\n```\n\n**Column** of `{}`",
+        col.name, col.data_type, nullable, identity, table_name
+    )
+}
+
+/// Check whether `offset` falls within `[span_start, span_end]`.
+/// When `span_end <= span_start` (broken span), uses a fallback window.
+fn in_span(offset: usize, span_start: usize, span_end: u32) -> bool {
+    let span_end = if span_end as usize > span_start {
+        span_end as usize
+    } else {
+        offset.saturating_add(2000)
+    };
+    offset >= span_start && offset <= span_end
+}
+
 /// Collect table names from a list of TableReference, including JOINed tables.
 fn collect_table_names(tables: &[TableReference]) -> Vec<String> {
     let mut names = Vec::new();
@@ -159,14 +184,7 @@ fn resolve_column_in_statement(
 ) -> Option<String> {
     match stmt {
         Statement::Select(sel) => {
-            let span_start = sel.span.start as usize;
-            let span_end = if sel.span.end > sel.span.start {
-                sel.span.end as usize
-            } else {
-                offset.saturating_add(2000)
-            };
-
-            if offset < span_start || offset > span_end {
+            if !in_span(offset, sel.span.start as usize, sel.span.end) {
                 return None;
             }
 
@@ -181,16 +199,7 @@ fn resolve_column_in_statement(
                 {
                     for col in &tbl.columns {
                         if col.name.to_uppercase() == upper_ident {
-                            let nullable = match col.nullable {
-                                Some(true) => " NULL",
-                                Some(false) => " NOT NULL",
-                                None => "",
-                            };
-                            let identity = if col.is_identity { " IDENTITY" } else { "" };
-                            return Some(format!(
-                                "```tsql\n{} {:?}{}{}\n```\n\n**Column** of `{}`",
-                                col.name, col.data_type, nullable, identity, tbl.name
-                            ));
+                            return Some(format_column_hover(col, &tbl.name));
                         }
                     }
                 }
@@ -198,13 +207,7 @@ fn resolve_column_in_statement(
             None
         }
         Statement::Insert(insert) => {
-            let span_start = insert.span.start as usize;
-            let span_end = if insert.span.end > insert.span.start {
-                insert.span.end as usize
-            } else {
-                offset.saturating_add(2000)
-            };
-            if offset < span_start || offset > span_end {
+            if !in_span(offset, insert.span.start as usize, insert.span.end) {
                 return None;
             }
 
@@ -215,29 +218,14 @@ fn resolve_column_in_statement(
             {
                 for col in &tbl.columns {
                     if col.name.to_uppercase() == upper_ident {
-                        let nullable = match col.nullable {
-                            Some(true) => " NULL",
-                            Some(false) => " NOT NULL",
-                            None => "",
-                        };
-                        let identity = if col.is_identity { " IDENTITY" } else { "" };
-                        return Some(format!(
-                            "```tsql\n{} {:?}{}{}\n```\n\n**Column** of `{}`",
-                            col.name, col.data_type, nullable, identity, tbl.name
-                        ));
+                        return Some(format_column_hover(col, &tbl.name));
                     }
                 }
             }
             None
         }
         Statement::Update(update) => {
-            let span_start = update.span.start as usize;
-            let span_end = if update.span.end > update.span.start {
-                update.span.end as usize
-            } else {
-                offset.saturating_add(2000)
-            };
-            if offset < span_start || offset > span_end {
+            if !in_span(offset, update.span.start as usize, update.span.end) {
                 return None;
             }
 
@@ -256,16 +244,7 @@ fn resolve_column_in_statement(
                 {
                     for col in &tbl.columns {
                         if col.name.to_uppercase() == upper_ident {
-                            let nullable = match col.nullable {
-                                Some(true) => " NULL",
-                                Some(false) => " NOT NULL",
-                                None => "",
-                            };
-                            let identity = if col.is_identity { " IDENTITY" } else { "" };
-                            return Some(format!(
-                                "```tsql\n{} {:?}{}{}\n```\n\n**Column** of `{}`",
-                                col.name, col.data_type, nullable, identity, tbl.name
-                            ));
+                            return Some(format_column_hover(col, &tbl.name));
                         }
                     }
                 }

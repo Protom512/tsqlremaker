@@ -25,10 +25,6 @@ pub enum EmitError {
     },
 }
 
-/// PostgreSQL Emitter の Result 型エイリアス
-#[allow(dead_code)]
-pub type Result<T> = std::result::Result<T, EmitError>;
-
 #[cfg(test)]
 mod tests {
     use super::*;

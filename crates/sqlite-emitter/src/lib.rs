@@ -35,6 +35,7 @@
 
 mod config;
 mod error;
+mod function_mapper;
 
 pub use config::EmitterConfig;
 pub use error::EmitError;
@@ -593,7 +594,9 @@ impl SqliteEmitter {
         }
 
         // 関数名を変換（T-SQL → SQLite）
-        let sqlite_name = self.convert_function_name(&func.name);
+        let sqlite_name = function_mapper::map_function_name(&func.name.to_uppercase())
+            .map(str::to_string)
+            .unwrap_or_else(|| func.name.clone());
         self.write(&sqlite_name);
         self.write("(");
 
@@ -648,35 +651,21 @@ impl SqliteEmitter {
         };
 
         // datepartをSQLite修飾子に変換
-        let modifier_unit = match datepart.as_str() {
-            "year" | "yyyy" | "yy" => "years",
-            "quarter" | "qq" | "q" => "months", // SQLiteにquarterはない、3ヶ月として扱う
-            "month" | "mm" | "m" => "months",
-            "dayofyear" | "dy" | "y" => "days",
-            "day" | "dd" | "d" => "days",
-            "week" | "ww" | "wk" => "days", // SQLiteにweekはない、7日として扱う
-            "hour" | "hh" => "hours",
-            "minute" | "mi" | "n" => "minutes",
-            "second" | "ss" | "s" => "seconds",
-            "millisecond" | "ms" => {
-                return Err(EmitError::UnsupportedFunction(
-                    "DATEADD: SQLite does not support millisecond precision".to_string(),
-                ));
-            }
-            _ => {
-                return Err(EmitError::UnsupportedFunction(format!(
-                    "DATEADD: unsupported datepart: {}",
-                    datepart
-                )));
-            }
-        };
+        let (modifier_unit, multiplier) = function_mapper::map_datepart_to_modifier(&datepart)
+            .ok_or_else(|| {
+                if datepart == "millisecond" || datepart == "ms" {
+                    EmitError::UnsupportedFunction(
+                        "DATEADD: SQLite does not support millisecond precision".to_string(),
+                    )
+                } else {
+                    EmitError::UnsupportedFunction(format!(
+                        "DATEADD: unsupported datepart: {datepart}"
+                    ))
+                }
+            })?;
 
-        // quarter/weekの場合は数値を調整
-        let adjusted_number = match datepart.as_str() {
-            "quarter" | "qq" | "q" => number * 3, // quarter → 3ヶ月
-            "week" | "ww" | "wk" => number * 7,   // week → 7日
-            _ => number,
-        };
+        // multiplier で数値を調整 (例: quarter → *3, week → *7)
+        let adjusted_number = number * multiplier;
 
         // SQLiteの修飾子を生成
         let modifier = if adjusted_number >= 0 {
@@ -687,10 +676,7 @@ impl SqliteEmitter {
 
         // 第3引数: date (式)
         // 時刻を含む関数の場合はdatetime、それ以外はdateを使用
-        let use_datetime = matches!(
-            datepart.as_str(),
-            "hour" | "hh" | "minute" | "mi" | "n" | "second" | "ss" | "s"
-        );
+        let use_datetime = function_mapper::is_time_datepart(&datepart);
 
         // 第3引数がGETDATE/GETUTCDATEの場合は特別処理
         // GETDATE/GETUTCDATEは常にdatetime('now')を使い、修飾子を直接適用
@@ -764,18 +750,11 @@ impl SqliteEmitter {
         };
 
         // SQLiteのjuliandayは日数を返すので、日付関連のみサポート
-        match datepart.as_str() {
-            "year" | "yyyy" | "yy" | "quarter" | "qq" | "q" | "month" | "mm" | "m"
-            | "dayofyear" | "dy" | "y" | "day" | "dd" | "d" | "week" | "ww" | "wk" => {
-                // サポート: juliandayで計算
-            }
-            _ => {
-                return Err(EmitError::UnsupportedFunction(format!(
-                    "DATEDIFF: unsupported datepart: {} (only date-based dateparts are supported)",
-                    datepart
-                )));
-            }
-        };
+        if !function_mapper::is_date_datepart(&datepart) {
+            return Err(EmitError::UnsupportedFunction(format!(
+                "DATEDIFF: unsupported datepart: {datepart} (only date-based dateparts are supported)"
+            )));
+        }
 
         // 第2引数: startdate
         let start_date = self.extract_date_expression(&func.args[1])?;
@@ -819,49 +798,6 @@ impl SqliteEmitter {
     }
 
     /// T-SQL 関数名を SQLite 関数名に変換
-    fn convert_function_name(&self, name: &str) -> String {
-        // 大文字小文字を区別せずにマッチング
-        let name_upper = name.to_uppercase();
-        match name_upper.as_str() {
-            // 日付時刻関数
-            "GETDATE" | "GETUTCDATE" => "datetime('now')".to_string(),
-            // DATEADD/DATEDIFFはvisit_functionで特殊処理
-            "DATENAME" => "strftime".to_string(),
-            "DATEPART" => "strftime".to_string(),
-
-            // 文字列関数
-            "LEN" => "length".to_string(),
-            "CHARINDEX" => "instr".to_string(),
-            "LEFT" => "substr".to_string(),
-            "RIGHT" => "substr".to_string(),
-            "REPLACE" => "replace".to_string(),
-            "SUBSTRING" => "substr".to_string(),
-            "LTRIM" => "ltrim".to_string(),
-            "RTRIM" => "rtrim".to_string(),
-            "TRIM" => "trim".to_string(),
-            "UPPER" => "upper".to_string(),
-            "LOWER" => "lower".to_string(),
-
-            // 数学関数
-            "ABS" => "abs".to_string(),
-            "CEILING" => "ceil".to_string(),
-            "FLOOR" => "floor".to_string(),
-            "POWER" => "pow".to_string(),
-            "ROUND" => "round".to_string(),
-            "SQRT" => "sqrt".to_string(),
-
-            // 集計関数（SQLiteでも同じ）
-            "COUNT" | "SUM" | "AVG" | "MIN" | "MAX" => name.to_lowercase(),
-
-            // その他
-            "ISNULL" => "ifnull".to_string(),
-            "COALESCE" => "coalesce".to_string(),
-
-            // 変換できない関数はそのまま返す（エラーにはしない）
-            _ => name.to_string(),
-        }
-    }
-
     /// CASE式を訪問
     fn visit_case(&mut self, case: &CommonCaseExpression) -> Result<(), EmitError> {
         self.write("CASE");
@@ -989,10 +925,9 @@ impl Default for SqliteEmitter {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    #[allow(unused_imports)]
     use tsql_parser::common::{
-        CommonBinaryOperator, CommonCaseExpression, CommonColumnReference, CommonExpression,
-        CommonFunctionCall, CommonIdentifier, CommonInList, CommonLiteral, CommonUnaryOperator,
+        CommonBinaryOperator, CommonColumnReference, CommonExpression, CommonIdentifier,
+        CommonInList, CommonLiteral, CommonUnaryOperator,
     };
 
     #[test]
@@ -1297,18 +1232,19 @@ mod tests {
 
     #[test]
     fn test_function_name_conversion() {
-        let emitter = SqliteEmitter::default();
-
         // T-SQL → SQLite 関数名変換
-        assert_eq!(emitter.convert_function_name("LEN"), "length");
-        assert_eq!(emitter.convert_function_name("GETDATE"), "datetime('now')");
-        assert_eq!(emitter.convert_function_name("ISNULL"), "ifnull");
-        assert_eq!(emitter.convert_function_name("COUNT"), "count");
-        assert_eq!(emitter.convert_function_name("CEILING"), "ceil");
+        assert_eq!(function_mapper::map_function_name("LEN"), Some("length"));
+        assert_eq!(
+            function_mapper::map_function_name("GETDATE"),
+            Some("datetime('now')")
+        );
+        assert_eq!(function_mapper::map_function_name("ISNULL"), Some("ifnull"));
+        assert_eq!(function_mapper::map_function_name("COUNT"), Some("count"));
+        assert_eq!(function_mapper::map_function_name("CEILING"), Some("ceil"));
 
-        // 変換不要な関数はそのまま
-        assert_eq!(emitter.convert_function_name("SUM"), "sum");
-        assert_eq!(emitter.convert_function_name("AVG"), "avg");
+        // 変換不要な関数
+        assert_eq!(function_mapper::map_function_name("SUM"), Some("sum"));
+        assert_eq!(function_mapper::map_function_name("AVG"), Some("avg"));
     }
 
     #[test]
