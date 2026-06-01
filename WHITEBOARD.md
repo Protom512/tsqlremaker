@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-02 / Session 8 (parser infinite loop fix + test coverage)
+**最終更新:** 2026-06-02 / Session 9 (test coverage improvements)
 
 ---
 
@@ -10,7 +10,7 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1085 passed, 2 skipped |
+| **テスト** | 1097 passed, 2 skipped (+48 from Session 6) |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Open Issues** | 11 |
@@ -111,3 +111,4 @@ ase-ls (tower-lsp 0.20, lsp-types 0.94.1)
 | 6 | 4 | 1049 | 4 issues closed, coverage +2.38% |
 | 7 | 4 | 1085 | dead code removal, +36 tests across 8 modules |
 | 8 | 1 | 1085 | fix parser infinite loop in error recovery |
+| 9 | 2 | 1097 | +12 tests for lib.rs, symbol_table, line_index |
