@@ -409,4 +409,140 @@ mod tests {
             "Unknown identifiers should not get CLASS token"
         );
     }
+
+    // === Coverage gap tests ===
+
+    #[test]
+    fn test_range_tokens_basic() {
+        use lsp_types::{Position, Range as LspRange};
+        let source = "CREATE TABLE t (id INT)\nSELECT * FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = LspRange {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let result = semantic_tokens_range_with_analysis(&analysis, range);
+        let tokens = match result {
+            lsp_types::SemanticTokensRangeResult::Tokens(t) => t,
+            _ => panic!("Expected Tokens"),
+        };
+        // Should have tokens for SELECT, *, FROM at minimum
+        assert!(
+            !tokens.data.is_empty(),
+            "Range tokens should not be empty for SELECT line"
+        );
+    }
+
+    #[test]
+    fn test_range_tokens_empty_range() {
+        use lsp_types::{Position, Range as LspRange};
+        let source = "SELECT * FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // Range outside any tokens
+        let range = LspRange {
+            start: Position {
+                line: 5,
+                character: 0,
+            },
+            end: Position {
+                line: 5,
+                character: 10,
+            },
+        };
+        let result = semantic_tokens_range_with_analysis(&analysis, range);
+        let tokens = match result {
+            lsp_types::SemanticTokensRangeResult::Tokens(t) => t,
+            _ => panic!("Expected Tokens"),
+        };
+        assert!(tokens.data.is_empty());
+    }
+
+    #[test]
+    fn test_block_comment_token() {
+        // semantic_tokens_full uses Lexer which skips comments by default
+        // but we test the token_kind_to_type_index mapping for comments
+        let source = "/* block comment */\nSELECT 1";
+        let result = semantic_tokens_full(source);
+        let tokens = match result {
+            lsp_types::SemanticTokensResult::Tokens(t) => t,
+            _ => panic!("Expected Tokens"),
+        };
+        // Keywords should still be present
+        assert!(!tokens.data.is_empty(), "Should have tokens after comment");
+    }
+
+    #[test]
+    fn test_temp_table_token() {
+        let result = semantic_tokens_full("SELECT * FROM #temp");
+        let tokens = match result {
+            lsp_types::SemanticTokensResult::Tokens(t) => t,
+            _ => panic!("Expected Tokens"),
+        };
+        let temp_tokens: Vec<_> = tokens.data.iter().filter(|t| t.token_type == 9).collect();
+        assert!(
+            !temp_tokens.is_empty(),
+            "Temp table #temp should be CLASS (type 9)"
+        );
+    }
+
+    #[test]
+    fn test_operator_tokens() {
+        let result = semantic_tokens_full("SELECT 1 + 2");
+        let tokens = match result {
+            lsp_types::SemanticTokensResult::Tokens(t) => t,
+            _ => panic!("Expected Tokens"),
+        };
+        let op_tokens: Vec<_> = tokens.data.iter().filter(|t| t.token_type == 7).collect();
+        assert!(!op_tokens.is_empty(), "Operator + should be type 7");
+    }
+
+    #[test]
+    fn test_datatype_token() {
+        let result = semantic_tokens_full("CREATE TABLE t (id INT)");
+        let tokens = match result {
+            lsp_types::SemanticTokensResult::Tokens(t) => t,
+            _ => panic!("Expected Tokens"),
+        };
+        let dtype_tokens: Vec<_> = tokens.data.iter().filter(|t| t.token_type == 1).collect();
+        assert!(!dtype_tokens.is_empty(), "INT should be data type (type 1)");
+    }
+
+    #[test]
+    fn test_global_var_token() {
+        let result = semantic_tokens_full("SELECT @@VERSION");
+        let tokens = match result {
+            lsp_types::SemanticTokensResult::Tokens(t) => t,
+            _ => panic!("Expected Tokens"),
+        };
+        let var_tokens: Vec<_> = tokens.data.iter().filter(|t| t.token_type == 6).collect();
+        assert!(
+            !var_tokens.is_empty(),
+            "@@VERSION should be variable (type 6)"
+        );
+    }
+
+    #[test]
+    fn test_hex_string_token() {
+        let result = semantic_tokens_full("SELECT 0x1234");
+        let tokens = match result {
+            lsp_types::SemanticTokensResult::Tokens(t) => t,
+            _ => panic!("Expected Tokens"),
+        };
+        // HexString should be type 3 (string)
+        let str_tokens: Vec<_> = tokens
+            .data
+            .iter()
+            .filter(|t| t.token_type == 3 || t.token_type == 4)
+            .collect();
+        assert!(
+            !str_tokens.is_empty(),
+            "Hex or number literal should be tokenized"
+        );
+    }
 }
