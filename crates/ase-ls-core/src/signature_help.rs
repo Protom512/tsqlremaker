@@ -1,6 +1,9 @@
 //! Signature Help
 //!
 //! 組み込み関数のパラメータシグネチャを提供する。
+//!
+//! ネストした関数呼び出し（例: `SUBSTRING(CONVERT(...))`）では、
+//! カーソル位置の最も内側の関数シグネチャを返す。
 
 use crate::analysis::DocumentAnalysis;
 use crate::line_index::LineIndex;
@@ -9,6 +12,95 @@ use lsp_types::{
 };
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
+
+/// スタックベースの関数呼び出しフレーム。
+///
+/// 各 `( ` でプッシュされ、対応する `)` でポップされる。
+#[derive(Debug)]
+struct CallFrame {
+    /// 関数名（大文字）
+    func_name: String,
+    /// 現在のパラメータインデックス（0-based）
+    active_param: u32,
+    /// このフレームの `(` が開いた時の paren_depth
+    open_depth: i32,
+}
+
+/// トークンストリームをスキャンしてカーソル位置の CallFrame を特定する。
+///
+/// ネストした呼び出し（例: `ISNULL(SUBSTRING(col, 1, 3), 'def')`）では、
+/// カーソル位置の最も内側の関数フレームを返す。
+fn scan_for_call_frame<'a>(
+    tokens: impl Iterator<Item = (TokenKind, &'a str, usize)>,
+    offset: usize,
+) -> Option<CallFrame> {
+    let mut stack: Vec<CallFrame> = Vec::new();
+    let mut paren_depth = 0i32;
+    // LParen の前に Ident/Keyword があった場合、その名前を保留する
+    let mut pending_name: Option<String> = None;
+
+    for (kind, text, span_start) in tokens {
+        if span_start > offset {
+            break;
+        }
+
+        match kind {
+            TokenKind::Ident => {
+                pending_name = Some(text.to_uppercase());
+            }
+            TokenKind::LParen => {
+                paren_depth += 1;
+                if let Some(name) = pending_name.take() {
+                    stack.push(CallFrame {
+                        func_name: name,
+                        active_param: 0,
+                        open_depth: paren_depth,
+                    });
+                } else {
+                    // 関数名なしの '(' — 純粋なグループ化
+                    pending_name = None;
+                }
+            }
+            TokenKind::RParen => {
+                paren_depth -= 1;
+                // 閉じ括弧に対応するフレームをポップ
+                while stack.last().is_some_and(|f| f.open_depth > paren_depth) {
+                    stack.pop();
+                }
+                // ちょうどこの深さのフレームもポップ（呼び出し完了）
+                if stack
+                    .last()
+                    .is_some_and(|f| f.open_depth == paren_depth + 1)
+                {
+                    stack.pop();
+                }
+                pending_name = None;
+            }
+            TokenKind::Comma => {
+                // スタックのトップフレームの直下にあるカンマのみカウント
+                // （トップフレームの open_depth + 1 の深さ = その関数の引数レベル）
+                if let Some(top) = stack.last_mut() {
+                    if paren_depth == top.open_depth {
+                        top.active_param += 1;
+                    }
+                }
+            }
+            _ => {
+                // キーワードトークンも関数名候補として扱う
+                if kind.is_keyword() {
+                    pending_name = Some(text.to_uppercase());
+                }
+            }
+        }
+    }
+
+    // カーソル位置が関数呼び出しの中にある場合、スタックのトップを返す
+    if paren_depth > 0 && !stack.is_empty() {
+        stack.pop()
+    } else {
+        None
+    }
+}
 
 /// SignatureHelp情報を生成する（DocumentAnalysis利用）
 pub fn signature_help_with_analysis(
@@ -19,105 +111,15 @@ pub fn signature_help_with_analysis(
         .line_index
         .position_to_offset(&analysis.source, position);
 
-    let mut func_name: Option<String> = None;
-    let mut paren_depth = 0i32;
-    let mut active_param = 0u32;
-    let mut found_open_paren = false;
+    let frame = scan_for_call_frame(
+        analysis
+            .tokens
+            .iter()
+            .map(|t| (t.kind, t.text.as_str(), t.span.start as usize)),
+        offset,
+    )?;
 
-    for token in &analysis.tokens {
-        if token.span.start as usize > offset {
-            break;
-        }
-
-        match token.kind {
-            TokenKind::Ident => {
-                if !found_open_paren {
-                    func_name = Some(token.text.to_uppercase());
-                }
-            }
-            TokenKind::LParen => {
-                if !found_open_paren {
-                    found_open_paren = true;
-                    paren_depth = 1;
-                } else {
-                    paren_depth += 1;
-                }
-            }
-            TokenKind::RParen => {
-                paren_depth -= 1;
-                if paren_depth == 0 {
-                    found_open_paren = false;
-                    func_name = None;
-                    active_param = 0;
-                }
-            }
-            TokenKind::Comma => {
-                if paren_depth == 1 {
-                    active_param += 1;
-                }
-            }
-            _ => {
-                if !found_open_paren && token.kind.is_keyword() {
-                    func_name = Some(token.text.to_uppercase());
-                }
-            }
-        }
-    }
-
-    if !found_open_paren {
-        tracing::debug!("signature_help: cursor not inside function call");
-        return None;
-    }
-    let name = match func_name {
-        Some(n) => n,
-        None => {
-            tracing::debug!("signature_help: no function name found before open paren");
-            return None;
-        }
-    };
-    let entry = match crate::db_docs::lookup_function(name.as_str()) {
-        Some(e) => e,
-        None => {
-            tracing::debug!("signature_help: unknown function '{name}'");
-            return None;
-        }
-    };
-
-    if entry.category != crate::db_docs::DocCategory::Function {
-        tracing::debug!(
-            "signature_help: '{name}' is not a function ({:?})",
-            entry.category
-        );
-        return None;
-    }
-
-    let parameters: Vec<ParameterInformation> = entry
-        .params
-        .iter()
-        .map(|p| ParameterInformation {
-            label: ParameterLabel::Simple(p.to_string()),
-            documentation: None,
-        })
-        .collect();
-
-    let active_parameter = if active_param < parameters.len() as u32 {
-        Some(active_param)
-    } else {
-        Some((parameters.len() as u32).saturating_sub(1))
-    };
-
-    Some(SignatureHelp {
-        signatures: vec![SignatureInformation {
-            label: entry.syntax.to_string(),
-            documentation: Some(lsp_types::Documentation::String(
-                entry.description.to_string(),
-            )),
-            parameters: Some(parameters),
-            active_parameter,
-        }],
-        active_signature: Some(0),
-        active_parameter,
-    })
+    build_signature_help(&frame.func_name, frame.active_param)
 }
 
 /// SignatureHelp情報を生成する
@@ -127,64 +129,27 @@ pub fn signature_help(source: &str, position: Position) -> Option<SignatureHelp>
     let line_index = LineIndex::new(source);
     let offset = line_index.position_to_offset(source, position);
 
-    let lexer = Lexer::new(source);
-    let tokens: Vec<_> = lexer.filter_map(Result::ok).collect();
+    let tokens: Vec<_> = Lexer::new(source).filter_map(Result::ok).collect();
 
-    // カーソル位置より前のトークンを解析して関数呼び出しを探す
-    let mut func_name: Option<String> = None;
-    let mut paren_depth = 0i32;
-    let mut active_param = 0u32;
-    let mut found_open_paren = false;
+    let frame = scan_for_call_frame(
+        tokens
+            .iter()
+            .map(|t| (t.kind, t.text, t.span.start as usize)),
+        offset,
+    )?;
 
-    for token in &tokens {
-        if token.span.start as usize > offset {
-            break;
-        }
+    build_signature_help(&frame.func_name, frame.active_param)
+}
 
-        match token.kind {
-            TokenKind::Ident => {
-                if !found_open_paren {
-                    func_name = Some(token.text.to_uppercase());
-                }
-            }
-            TokenKind::LParen => {
-                if !found_open_paren {
-                    found_open_paren = true;
-                    paren_depth = 1;
-                } else {
-                    paren_depth += 1;
-                }
-            }
-            TokenKind::RParen => {
-                paren_depth -= 1;
-                if paren_depth == 0 {
-                    found_open_paren = false;
-                    func_name = None;
-                    active_param = 0;
-                }
-            }
-            TokenKind::Comma => {
-                if paren_depth == 1 {
-                    active_param += 1;
-                }
-            }
-            _ => {
-                // キーワードが関数名の場合
-                if !found_open_paren && token.kind.is_keyword() {
-                    func_name = Some(token.text.to_uppercase());
-                }
-            }
-        }
-    }
+/// 関数名とパラメータインデックスから SignatureHelp を構築する。
+fn build_signature_help(func_name: &str, active_param: u32) -> Option<SignatureHelp> {
+    let entry = crate::db_docs::lookup_function(func_name)?;
 
-    if !found_open_paren {
-        return None;
-    }
-    let name = func_name?;
-    let entry = crate::db_docs::lookup_function(name.as_str())?;
-
-    // シグネチャヘルプは関数カテゴリのみを対象とする
     if entry.category != crate::db_docs::DocCategory::Function {
+        tracing::debug!(
+            "signature_help: '{func_name}' is not a function ({:?})",
+            entry.category
+        );
         return None;
     }
 
@@ -220,6 +185,7 @@ pub fn signature_help(source: &str, position: Position) -> Option<SignatureHelp>
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::panic)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -337,7 +303,6 @@ mod tests {
     #[test]
     fn test_signature_help_sibling_calls_resets_param() {
         // After ISNULL(a, b), the next call SUBSTRING(x should be at param 0
-        // Without the fix, active_param would accumulate from the previous call
         let source = "SELECT ISNULL(a, b), SUBSTRING(x";
         let result = signature_help(
             source,
@@ -349,7 +314,6 @@ mod tests {
         assert!(result.is_some());
         let help = result.unwrap();
         assert!(help.signatures[0].label.contains("SUBSTRING"));
-        // Should be param 0 (first arg), NOT accumulated from ISNULL
         assert_eq!(help.active_parameter, Some(0));
     }
 
@@ -369,6 +333,7 @@ mod tests {
 
     #[test]
     fn test_signature_help_nested_parens() {
+        // SUBSTRING(CONVERT( — cursor inside CONVERT, should show CONVERT
         let result = signature_help(
             "SELECT SUBSTRING(CONVERT(",
             Position {
@@ -378,12 +343,61 @@ mod tests {
         );
         assert!(result.is_some());
         let help = result.unwrap();
-        // The innermost function at cursor position is CONVERT
         assert!(
-            help.signatures[0].label.contains("CONVERT")
-                || help.signatures[0].label.contains("SUBSTRING")
+            help.signatures[0].label.contains("CONVERT"),
+            "Should show innermost function CONVERT, got: {}",
+            help.signatures[0].label
         );
         assert_eq!(help.active_parameter, Some(0));
+    }
+
+    #[test]
+    fn test_signature_help_nested_with_comma_in_outer() {
+        // SUBSTRING(x, CONVERT( — cursor inside CONVERT at param 0
+        // SUBSTRING is at param 1 (after comma)
+        let result = signature_help(
+            "SELECT SUBSTRING(x, CONVERT(",
+            Position {
+                line: 0,
+                character: 28,
+            },
+        );
+        assert!(result.is_some());
+        let help = result.unwrap();
+        assert!(
+            help.signatures[0].label.contains("CONVERT"),
+            "Should show innermost function CONVERT, got: {}",
+            help.signatures[0].label
+        );
+        assert_eq!(
+            help.active_parameter,
+            Some(0),
+            "CONVERT should be at param 0"
+        );
+    }
+
+    #[test]
+    fn test_signature_help_after_closing_nested() {
+        // SUBSTRING(CONVERT(a, b), ← cursor here, back to SUBSTRING at param 1
+        let result = signature_help(
+            "SELECT SUBSTRING(CONVERT(a, b), ",
+            Position {
+                line: 0,
+                character: 31,
+            },
+        );
+        assert!(result.is_some());
+        let help = result.unwrap();
+        assert!(
+            help.signatures[0].label.contains("SUBSTRING"),
+            "Should show outer function SUBSTRING, got: {}",
+            help.signatures[0].label
+        );
+        assert_eq!(
+            help.active_parameter,
+            Some(1),
+            "SUBSTRING should be at param 1 (after comma)"
+        );
     }
 
     #[test]
@@ -399,5 +413,25 @@ mod tests {
         let help = result.unwrap();
         let params = help.signatures[0].parameters.as_ref().unwrap();
         assert_eq!(params.len(), 3);
+    }
+
+    #[test]
+    fn test_signature_help_deeply_nested() {
+        // ISNULL(SUBSTRING(CONVERT(a, — cursor inside CONVERT
+        let result = signature_help(
+            "SELECT ISNULL(SUBSTRING(CONVERT(a, ",
+            Position {
+                line: 0,
+                character: 33,
+            },
+        );
+        assert!(result.is_some());
+        let help = result.unwrap();
+        assert!(
+            help.signatures[0].label.contains("CONVERT"),
+            "Should show innermost function CONVERT, got: {}",
+            help.signatures[0].label
+        );
+        assert_eq!(help.active_parameter, Some(1), "CONVERT at param 1");
     }
 }
