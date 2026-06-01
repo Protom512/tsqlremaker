@@ -10,7 +10,7 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1015 passed, 2 skipped |
+| **テスト** | 1018 passed, 2 skipped |
 | **Clippy** | clean (`-D warnings`) |
 | **Open Issues** | 15 |
 | **Open PRs** | 1 (#123) |
@@ -37,13 +37,15 @@
 | コミット | 内容 |
 |---------|------|
 | `9ca9d8a` | refactor: extract helpers, remove dead code, improve emitter patterns |
+| `6bf6e0d` | fix(lsp): stack-based signature help for nested function calls (#77) |
 
 ### 変更内容
 - **hover.rs**: `format_column_hover()` + `in_span()` ヘルパー抽出（3箇所の重複コード解消）
 - **sqlite-emitter**: `function_mapper` モジュール抽出（テーブル駆動の関数マッピング、datepart変換）
 - **dead code削除**: postgresql/sqlite emitter の未使用 `Result<T>` 型エイリアス削除
 - **unused imports解消**: mysql/sqlite emitter の不要な `#[allow(unused_imports)]` と未使用インポート削除
-- テスト 1015 passed (+10 from previous session)
+- テスト 1018 passed (+13 from previous session)
+- **#77 Signature help nested**: CallFrame スタックベースの追跡に修正。ネストした関数呼び出しで内側の関数を正しく特定
 
 ### コミット（master直接）
 | コミット | 内容 |
@@ -77,7 +79,7 @@
 | #82 | Parser error recovery | Large |
 | #81 | LSP configuration | Large |
 | #79 | ~~LSP error handling~~ → **完了** (df81785) | ~~Medium~~ |
-| #77 | Signature help nested | Medium |
+| #77 | ~~Signature help nested~~ → **完了** (6bf6e0d) | ~~Medium~~ |
 | #75 | SQLite converter | Medium |
 | #71 | ~~db_docs.rs monolith~~ → **完了** (63bac60) | ~~Medium~~ |
 | #70 | Cross-file definition | Large |
