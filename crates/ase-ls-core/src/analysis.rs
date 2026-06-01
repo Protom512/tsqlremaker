@@ -64,16 +64,6 @@ impl DocumentAnalysis {
             })
             .collect();
 
-        let tokens_with_comments: Vec<OwnedToken> = tsql_lexer::Lexer::new(source)
-            .with_comments(true)
-            .filter_map(|r| r.ok())
-            .map(|t| OwnedToken {
-                kind: t.kind,
-                text: t.text.to_string(),
-                span: t.span,
-            })
-            .collect();
-
         let (statements, parse_errors) = match tsql_parser::Parser::new(source).parse_with_errors()
         {
             Ok((stmts, errs)) => (stmts, errs),
@@ -101,7 +91,6 @@ impl DocumentAnalysis {
             symbol_table
         };
 
-        let _ = tokens_with_comments;
         Self {
             source: owned_source,
             line_index,
