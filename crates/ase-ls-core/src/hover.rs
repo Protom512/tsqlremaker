@@ -963,4 +963,55 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_hover_empty_source_returns_none() {
+        let analysis = crate::analysis::DocumentAnalysis::new("");
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        );
+        assert!(result.is_none(), "Empty source should return None");
+    }
+
+    #[test]
+    fn test_hover_builtin_function_getdate() {
+        let analysis = crate::analysis::DocumentAnalysis::new("SELECT GETDATE()");
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 8,
+            },
+        );
+        assert!(result.is_some(), "GETDATE should have hover info");
+        if let Some(h) = result {
+            if let HoverContents::Markup(mc) = &h.contents {
+                assert!(
+                    mc.value.contains("GETDATE"),
+                    "Should contain GETDATE: {}",
+                    mc.value
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_hover_position_beyond_end_returns_none() {
+        let analysis = crate::analysis::DocumentAnalysis::new("SELECT 1");
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 999,
+            },
+        );
+        assert!(
+            result.is_none(),
+            "Position beyond source end should return None"
+        );
+    }
 }

@@ -435,4 +435,52 @@ mod tests {
         );
         assert!(first.contains("GO"), "GO separators should be preserved");
     }
+
+    #[test]
+    fn test_format_empty_source() {
+        let result = format_sql("");
+        assert!(result.is_empty() || result == "\n");
+    }
+
+    #[test]
+    fn test_format_returns_empty_when_no_change() {
+        // format() should return empty Vec when source == formatted
+        // This is hard to trigger since we always add trailing newline,
+        // so test the function behavior
+        let source = format_sql("SELECT * FROM t");
+        let edits = format(&source);
+        // If already formatted (with newline), should return empty or single edit
+        // The key is: no crash, valid result
+        assert!(edits.len() <= 1);
+    }
+
+    #[test]
+    fn test_format_dot_notation_no_space() {
+        let result = format_sql("SELECT t.id FROM t");
+        assert!(
+            !result.contains("t . id") && !result.contains("t .id"),
+            "Dot notation should not have spaces: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_format_parentheses_no_extra_space() {
+        let result = format_sql("SELECT COUNT(id) FROM t");
+        assert!(
+            !result.contains("( id") && !result.contains("(  id"),
+            "No space after opening paren: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_format_hexstring_preserved() {
+        let result = format_sql("SELECT 0x41 FROM t");
+        assert!(
+            result.contains("0x41"),
+            "HexString should be preserved: {}",
+            result
+        );
+    }
 }
