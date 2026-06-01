@@ -203,4 +203,47 @@ mod tests {
             false
         ));
     }
+
+    #[test]
+    fn test_find_token_at_empty_source() {
+        let result = find_token_at("", 0);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_token_matches_symbol_case_insensitive() {
+        assert!(token_matches_symbol(
+            tsql_token::TokenKind::Ident,
+            "Users",
+            "USERS",
+            false
+        ));
+        assert!(token_matches_symbol(
+            tsql_token::TokenKind::LocalVar,
+            "@Count",
+            "@COUNT",
+            true
+        ));
+    }
+
+    #[test]
+    fn test_token_matches_symbol_exec_keyword() {
+        // EXEC is listed explicitly as a keyword that can be an object name
+        assert!(token_matches_symbol(
+            tsql_token::TokenKind::Exec,
+            "exec",
+            "EXEC",
+            false
+        ));
+    }
+
+    #[test]
+    fn test_token_matches_symbol_string_not_matched() {
+        assert!(!token_matches_symbol(
+            tsql_token::TokenKind::String,
+            "users",
+            "USERS",
+            false
+        ));
+    }
 }

@@ -743,4 +743,56 @@ mod tests {
             "Procedure after GO should be tracked"
         );
     }
+
+    #[test]
+    fn test_empty_source_returns_empty_table() {
+        let table = SymbolTableBuilder::build_tolerant("");
+        assert!(table.tables.is_empty());
+        assert!(table.procedures.is_empty());
+        assert!(table.variables.is_empty());
+        assert!(table.views.is_empty());
+        assert!(table.indexes.is_empty());
+    }
+
+    #[test]
+    fn test_invalid_sql_returns_empty_table() {
+        let table = SymbolTableBuilder::build_tolerant("NOT VALID SQL AT ALL");
+        assert!(
+            table.tables.is_empty(),
+            "Invalid SQL should produce empty symbol table"
+        );
+    }
+
+    #[test]
+    fn test_variable_in_if_block() {
+        let source = "IF 1 = 1\nBEGIN\n    DECLARE @x INT\n    SET @x = 1\nEND";
+        let table = SymbolTableBuilder::build_tolerant(source);
+        assert!(
+            table.variables.contains_key("@X"),
+            "Variable inside IF/BEGIN block should be tracked"
+        );
+    }
+
+    #[test]
+    fn test_case_insensitive_table_lookup() {
+        let source = "CREATE TABLE MyTable (id INT)";
+        let table = SymbolTableBuilder::build_tolerant(source);
+        // CaseInsensitiveKey stores uppercase; contains_key borrows &str
+        // and the HashMap uses Eq on the borrowed str
+        assert!(
+            table.tables.contains_key("MYTABLE"),
+            "Should find table via uppercase key"
+        );
+    }
+
+    #[test]
+    fn test_index_extraction() {
+        let source = "CREATE INDEX idx_name ON users (id)";
+        let table = SymbolTableBuilder::build_tolerant(source);
+        assert!(
+            table.indexes.contains_key("IDX_NAME"),
+            "Index should be tracked: {:?}",
+            table.indexes.keys().collect::<Vec<_>>()
+        );
+    }
 }
