@@ -434,4 +434,105 @@ mod tests {
         );
         assert_eq!(help.active_parameter, Some(1), "CONVERT at param 1");
     }
+
+    // === signature_help_with_analysis tests ===
+
+    #[test]
+    fn test_analysis_signature_help_substring() {
+        let source = "SELECT SUBSTRING(col, 1, 3) FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 18,
+            },
+        );
+        assert!(result.is_some());
+        let help = result.unwrap();
+        assert!(help.signatures[0].label.contains("SUBSTRING"));
+    }
+
+    #[test]
+    fn test_analysis_signature_help_nested() {
+        let source = "SELECT SUBSTRING(CONVERT(a, b), 1, 3) FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 25,
+            },
+        );
+        assert!(result.is_some());
+        let help = result.unwrap();
+        assert!(
+            help.signatures[0].label.contains("CONVERT"),
+            "Should show innermost CONVERT"
+        );
+    }
+
+    #[test]
+    fn test_analysis_signature_help_no_function() {
+        let source = "SELECT col FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 10,
+            },
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_analysis_signature_help_unknown_function() {
+        let source = "SELECT MYFUNC(";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 14,
+            },
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_signature_help_active_param_clamped() {
+        // SUBSTRING with too many params — active_param should be clamped to last
+        let result = signature_help(
+            "SELECT SUBSTRING(a, b, c, d, e, ",
+            Position {
+                line: 0,
+                character: 31,
+            },
+        );
+        assert!(result.is_some());
+        let help = result.unwrap();
+        // SUBSTRING has 3 params, active_param clamped to 2
+        assert_eq!(
+            help.active_parameter,
+            Some(2),
+            "active_parameter should be clamped to last param index"
+        );
+    }
+
+    #[test]
+    fn test_signature_help_grouping_parens() {
+        // SELECT (1 + 2) — no function, just grouping
+        let result = signature_help(
+            "SELECT (1 + 2)",
+            Position {
+                line: 0,
+                character: 7,
+            },
+        );
+        assert!(
+            result.is_none(),
+            "Grouping parens should not trigger signature help"
+        );
+    }
 }
