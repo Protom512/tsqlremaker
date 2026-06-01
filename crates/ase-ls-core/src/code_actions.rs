@@ -462,23 +462,12 @@ fn try_add_insert_columns_in_stmt(
                 None
             }
         }
-        Statement::TryCatch(try_catch) => {
-            for child in &try_catch.try_block.statements {
-                if let Some(action) =
-                    try_add_insert_columns_in_stmt(child, analysis, cursor_offset, uri)
-                {
-                    return Some(action);
-                }
-            }
-            for child in &try_catch.catch_block.statements {
-                if let Some(action) =
-                    try_add_insert_columns_in_stmt(child, analysis, cursor_offset, uri)
-                {
-                    return Some(action);
-                }
-            }
-            None
-        }
+        Statement::TryCatch(try_catch) => try_catch
+            .try_block
+            .statements
+            .iter()
+            .chain(try_catch.catch_block.statements.iter())
+            .find_map(|child| try_add_insert_columns_in_stmt(child, analysis, cursor_offset, uri)),
         _ => None,
     }
 }
@@ -694,31 +683,20 @@ fn find_block_at_offset<'a>(
             None
         }
         Statement::While(while_stmt) => find_block_at_offset(&while_stmt.body, offset, analysis),
-        Statement::TryCatch(try_catch) => {
-            for child in &try_catch.try_block.statements {
-                if let Some(b) = find_block_at_offset(child, offset, analysis) {
-                    return Some(b);
-                }
-            }
-            for child in &try_catch.catch_block.statements {
-                if let Some(b) = find_block_at_offset(child, offset, analysis) {
-                    return Some(b);
-                }
-            }
-            None
-        }
+        Statement::TryCatch(try_catch) => try_catch
+            .try_block
+            .statements
+            .iter()
+            .chain(try_catch.catch_block.statements.iter())
+            .find_map(|child| find_block_at_offset(child, offset, analysis)),
         Statement::Create(create) => {
             let body: &[Statement] = match create.as_ref() {
                 tsql_parser::ast::CreateStatement::Procedure(proc) => &proc.body,
                 tsql_parser::ast::CreateStatement::Trigger(trigger) => &trigger.body,
                 _ => return None,
             };
-            for child in body {
-                if let Some(b) = find_block_at_offset(child, offset, analysis) {
-                    return Some(b);
-                }
-            }
-            None
+            body.iter()
+                .find_map(|child| find_block_at_offset(child, offset, analysis))
         }
         _ => None,
     }
@@ -1688,5 +1666,267 @@ mod tests {
                 "new_text should start with '('"
             );
         }
+    }
+
+    // === INSERT column list inside compound statements ===
+
+    /// INSERT inside a WHILE loop should trigger column list action
+    #[test]
+    fn test_insert_column_list_inside_while() {
+        let source = concat!(
+            "CREATE TABLE t (id INT, name VARCHAR(100))\n",
+            "WHILE 1 = 1\n",
+            "BEGIN\n",
+            "    INSERT INTO t VALUES (1, 'test')\n",
+            "END\n",
+        );
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 3,
+                character: 4,
+            },
+            end: Position {
+                line: 3,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(
+            add_cols.is_some(),
+            "Should offer column list for INSERT inside WHILE"
+        );
+        if let CodeActionOrCommand::CodeAction(ca) = add_cols.unwrap() {
+            let edit = ca.edit.as_ref().unwrap();
+            let changes = edit.changes.as_ref().unwrap();
+            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
+            assert!(
+                text_edit.new_text.contains("id, name"),
+                "new_text: {}",
+                text_edit.new_text
+            );
+        }
+    }
+
+    /// INSERT inside an IF block should trigger column list action
+    #[test]
+    fn test_insert_column_list_inside_if() {
+        let source = concat!(
+            "CREATE TABLE t (a INT, b INT)\n",
+            "IF 1 = 1\n",
+            "BEGIN\n",
+            "    INSERT INTO t VALUES (1, 2)\n",
+            "END\n",
+        );
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 3,
+                character: 4,
+            },
+            end: Position {
+                line: 3,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(
+            add_cols.is_some(),
+            "Should offer column list for INSERT inside IF"
+        );
+    }
+
+    /// INSERT inside IF's ELSE branch should trigger column list action
+    #[test]
+    fn test_insert_column_list_inside_if_else() {
+        let source = concat!(
+            "CREATE TABLE t (a INT, b INT)\n",
+            "IF 1 = 1\n",
+            "BEGIN\n",
+            "    SELECT 1\n",
+            "END\n",
+            "ELSE\n",
+            "BEGIN\n",
+            "    INSERT INTO t VALUES (1, 2)\n",
+            "END\n",
+        );
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 7,
+                character: 4,
+            },
+            end: Position {
+                line: 7,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(
+            add_cols.is_some(),
+            "Should offer column list for INSERT inside ELSE branch"
+        );
+    }
+
+    /// INSERT inside a CREATE TRIGGER body should trigger column list action
+    #[test]
+    fn test_insert_column_list_inside_trigger() {
+        let source = concat!(
+            "CREATE TABLE t (id INT, name VARCHAR(100))\n",
+            "CREATE TRIGGER trg ON t FOR INSERT AS\n",
+            "BEGIN\n",
+            "    INSERT INTO t VALUES (1, 'test')\n",
+            "END\n",
+        );
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 3,
+                character: 4,
+            },
+            end: Position {
+                line: 3,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(
+            add_cols.is_some(),
+            "Should offer column list for INSERT inside TRIGGER"
+        );
+    }
+
+    /// INSERT inside TRY block should trigger column list action
+    #[test]
+    fn test_insert_column_list_inside_try() {
+        let source = concat!(
+            "CREATE TABLE t (a INT, b INT)\n",
+            "BEGIN TRY\n",
+            "    INSERT INTO t VALUES (1, 2)\n",
+            "END TRY\n",
+            "BEGIN CATCH\n",
+            "    SELECT 'error'\n",
+            "END CATCH\n",
+        );
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 2,
+                character: 4,
+            },
+            end: Position {
+                line: 2,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(
+            add_cols.is_some(),
+            "Should offer column list for INSERT inside TRY"
+        );
+    }
+
+    /// INSERT inside CATCH block should trigger column list action
+    #[test]
+    fn test_insert_column_list_inside_catch() {
+        let source = concat!(
+            "CREATE TABLE log_table (err_msg VARCHAR(255))\n",
+            "BEGIN TRY\n",
+            "    SELECT 1\n",
+            "END TRY\n",
+            "BEGIN CATCH\n",
+            "    INSERT INTO log_table VALUES ('error')\n",
+            "END CATCH\n",
+        );
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 5,
+                character: 4,
+            },
+            end: Position {
+                line: 5,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(
+            add_cols.is_some(),
+            "Should offer column list for INSERT inside CATCH"
+        );
+    }
+
+    /// INSERT inside a stored procedure should trigger column list action
+    #[test]
+    fn test_insert_column_list_inside_procedure() {
+        let source = concat!(
+            "CREATE TABLE t (a INT, b INT)\n",
+            "CREATE PROCEDURE my_proc AS\n",
+            "BEGIN\n",
+            "    INSERT INTO t VALUES (1, 2)\n",
+            "END\n",
+        );
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 3,
+                character: 4,
+            },
+            end: Position {
+                line: 3,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(
+            add_cols.is_some(),
+            "Should offer column list for INSERT inside procedure"
+        );
+    }
+
+    /// When all columns are IDENTITY, column list should not be offered
+    #[test]
+    fn test_insert_column_list_all_identity_no_action() {
+        let source = "CREATE TABLE t (id INT IDENTITY)\nINSERT INTO t VALUES (DEFAULT)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(
+            add_cols.is_none(),
+            "Should not offer column list when all columns are IDENTITY"
+        );
     }
 }
