@@ -292,4 +292,79 @@ mod tests {
         let (def_line, _def_char) = LI::new(source).offset_to_position(def_pos as u32);
         assert_eq!(ranges[0].start.line, def_line);
     }
+
+    // --- definition_ranges_with_analysis tests ---
+
+    #[test]
+    fn test_definition_with_analysis_variable() {
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "DECLARE @count INT\nSET @count = 1\nSELECT @count",
+        );
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 5,
+            },
+        );
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].start.line, 0);
+    }
+
+    #[test]
+    fn test_definition_with_analysis_table() {
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TABLE users (id INT)\nSELECT * FROM users",
+        );
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 15,
+            },
+        );
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].start.line, 0);
+    }
+
+    #[test]
+    fn test_definition_with_analysis_empty_source() {
+        let analysis = crate::analysis::DocumentAnalysis::new("");
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        );
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn test_definition_with_analysis_no_token_at_position() {
+        let analysis = crate::analysis::DocumentAnalysis::new("SELECT  FROM t");
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 7,
+            },
+        );
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn test_definition_with_analysis_procedure() {
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE PROCEDURE my_proc AS BEGIN RETURN 1 END",
+        );
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 18,
+            },
+        );
+        assert_eq!(ranges.len(), 1);
+    }
 }

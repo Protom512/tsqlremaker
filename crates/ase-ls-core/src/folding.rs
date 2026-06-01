@@ -339,4 +339,86 @@ mod tests {
             .collect();
         assert_eq!(comment_folds.len(), 1, "comment folds should be preserved");
     }
+
+    #[test]
+    fn test_ast_fold_try_catch() {
+        // Use token-based folding (not AST) since DocumentAnalysis::new
+        // can trigger expensive fallback parsing on certain inputs.
+        let source =
+            "BEGIN TRY\n    SELECT 1\n    SELECT 2\nEND TRY\nBEGIN CATCH\n    SELECT -1\nEND CATCH";
+        let ranges = folding_ranges(source);
+        let region_folds = count_region_folds(&ranges);
+        assert!(
+            region_folds >= 2,
+            "TRY...CATCH should produce at least 2 region folds (BEGIN TRY + BEGIN CATCH), got {region_folds}"
+        );
+    }
+
+    #[test]
+    fn test_ast_fold_create_procedure() {
+        let source = "CREATE PROCEDURE sp_test\nAS\nBEGIN\n    SELECT 1\n    SELECT 2\nEND";
+        let analysis = make_analysis(source);
+        let ranges = folding_ranges_with_analysis(&analysis);
+        let region_folds = count_region_folds(&ranges);
+        assert!(
+            region_folds >= 1,
+            "CREATE PROCEDURE body should be foldable, got {region_folds}"
+        );
+    }
+
+    #[test]
+    fn test_ast_fold_single_line_if_not_folded() {
+        // Truly single-line IF — same line for start and end, no fold
+        let source = "IF 1 = 1 SELECT 1 ELSE SELECT 2";
+        let analysis = make_analysis(source);
+        let ranges = folding_ranges_with_analysis(&analysis);
+        let region_folds = count_region_folds(&ranges);
+        assert_eq!(
+            region_folds, 0,
+            "Single-line IF should not produce folds, got {region_folds}"
+        );
+    }
+
+    #[test]
+    fn test_unmatched_begin_no_panic() {
+        // BEGIN without END should not panic
+        let source = "BEGIN\n  SELECT 1\n  SELECT 2";
+        let ranges = folding_ranges(source);
+        // No fold produced since END is missing — but should not panic
+        let region_folds = count_region_folds(&ranges);
+        assert_eq!(region_folds, 0, "Unmatched BEGIN should produce no folds");
+    }
+
+    #[test]
+    fn test_multiple_block_comments() {
+        let source = "/* block one\n   line 2\n   line 3 */\nSELECT 1;\n/* block two\n   line 2 */";
+        let ranges = folding_ranges(source);
+        let comment_folds: Vec<_> = ranges
+            .iter()
+            .filter(|r| r.kind == Some(FoldingRangeKind::Comment))
+            .collect();
+        assert_eq!(
+            comment_folds.len(),
+            2,
+            "Should detect 2 multi-line block comments"
+        );
+    }
+
+    #[test]
+    fn test_ast_fold_nested_while_in_if() {
+        let source = "IF 1 = 1\nBEGIN\n    WHILE @x < 10\n    BEGIN\n        SELECT @x\n        SET @x = @x + 1\n    END\nEND";
+        let analysis = make_analysis(source);
+        let ranges = folding_ranges_with_analysis(&analysis);
+        let region_folds = count_region_folds(&ranges);
+        assert!(
+            region_folds >= 2,
+            "Nested WHILE inside IF with BEGIN should produce 2+ folds, got {region_folds}"
+        );
+    }
+
+    #[test]
+    fn test_empty_source_no_folds() {
+        let ranges = folding_ranges("");
+        assert!(ranges.is_empty(), "Empty source should produce no folds");
+    }
 }

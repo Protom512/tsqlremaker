@@ -362,4 +362,85 @@ mod tests {
             );
         }
     }
+
+    // --- reference_ranges_with_analysis tests ---
+
+    #[test]
+    fn test_references_with_analysis_variable() {
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "DECLARE @count INT\nSET @count = 1\nSELECT @count",
+        );
+        let ranges = reference_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 5,
+            },
+            true,
+        );
+        assert_eq!(ranges.len(), 3);
+    }
+
+    #[test]
+    fn test_references_with_analysis_table() {
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TABLE users (id INT)\nSELECT * FROM users",
+        );
+        let ranges = reference_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 14,
+            },
+            true,
+        );
+        assert!(ranges.len() >= 2);
+    }
+
+    #[test]
+    fn test_references_with_analysis_empty_source() {
+        let analysis = crate::analysis::DocumentAnalysis::new("");
+        let ranges = reference_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 0,
+            },
+            true,
+        );
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn test_references_with_analysis_no_token() {
+        let analysis = crate::analysis::DocumentAnalysis::new("SELECT  FROM t");
+        let ranges = reference_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 7,
+            },
+            true,
+        );
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn test_references_with_analysis_exclude_declaration() {
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TABLE users (id INT)\nSELECT * FROM users",
+        );
+        let ranges = reference_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 14,
+            },
+            false,
+        );
+        assert!(!ranges.is_empty());
+        for range in &ranges {
+            assert_ne!(range.start.line, 0, "Definition should be excluded");
+        }
+    }
 }

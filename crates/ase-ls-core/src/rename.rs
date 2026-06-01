@@ -541,4 +541,124 @@ mod tests {
             _ => panic!("Expected RangeWithPlaceholder"),
         }
     }
+
+    // --- rename_with_analysis edge cases ---
+
+    #[test]
+    fn test_rename_with_analysis_variable() {
+        let source = "DECLARE @count INT\nSET @count = 1\nSELECT @count";
+        let analysis = DocumentAnalysis::new(source);
+        let result = rename_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 5,
+            },
+            "@total",
+            &test_uri(),
+        );
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        let changes = edit.changes.unwrap();
+        let text_edits = changes.get(&test_uri()).unwrap();
+        assert_eq!(text_edits.len(), 3);
+        assert!(text_edits.iter().all(|e| e.new_text == "@total"));
+    }
+
+    #[test]
+    fn test_rename_with_analysis_table() {
+        let source = "CREATE TABLE users (id INT)\nSELECT * FROM users";
+        let analysis = DocumentAnalysis::new(source);
+        let result = rename_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 14,
+            },
+            "customers",
+            &test_uri(),
+        );
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        let changes = edit.changes.unwrap();
+        let text_edits = changes.get(&test_uri()).unwrap();
+        assert!(text_edits.len() >= 2);
+    }
+
+    #[test]
+    fn test_rename_with_analysis_empty_source() {
+        let analysis = DocumentAnalysis::new("");
+        let result = rename_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 0,
+            },
+            "new_name",
+            &test_uri(),
+        );
+        assert!(result.is_none(), "Empty source should not allow rename");
+    }
+
+    #[test]
+    fn test_rename_with_analysis_position_beyond_end() {
+        let analysis = DocumentAnalysis::new("SELECT 1");
+        let result = rename_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 999,
+            },
+            "new_name",
+            &test_uri(),
+        );
+        assert!(
+            result.is_none(),
+            "Position beyond source end should not allow rename"
+        );
+    }
+
+    #[test]
+    fn test_rename_with_analysis_var_without_at_prefix() {
+        let analysis = DocumentAnalysis::new("DECLARE @count INT\nSET @count = 1");
+        let result = rename_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 5,
+            },
+            "total",
+            &test_uri(),
+        );
+        assert!(
+            result.is_none(),
+            "Variable rename without @ prefix should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_get_rename_placeholder_with_analysis() {
+        let analysis = DocumentAnalysis::new("SELECT * FROM users");
+        let placeholder = get_rename_placeholder_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 15,
+            },
+        );
+        assert_eq!(placeholder, Some("users".to_string()));
+    }
+
+    #[test]
+    fn test_get_rename_placeholder_with_analysis_no_token() {
+        let analysis = DocumentAnalysis::new("SELECT  FROM t");
+        let placeholder = get_rename_placeholder_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 7,
+            },
+        );
+        assert!(placeholder.is_none());
+    }
 }
