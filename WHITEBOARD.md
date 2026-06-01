@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-02 / Session 7 (dead code removal + test coverage improvements)
+**最終更新:** 2026-06-02 / Session 8 (parser infinite loop fix + test coverage)
 
 ---
 
@@ -10,12 +10,26 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1085 passed, 2 skipped (+36 from Session 6) |
+| **テスト** | 1085 passed, 2 skipped |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Open Issues** | 11 |
 | **Open PRs** | 1 (#123) |
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) |
+
+---
+
+## 🔄 Session 8 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `18be817` | fix(parser): prevent infinite loop in parse_with_errors error recovery |
+
+### 修正内容
+- **根本原因**: `parse_with_errors` のエラー回復で `synchronize()` が同期ポイント（END等）で停止してもトークンを消費しないため、`END` が `parse_statement` の有効開始トークンでない場合に無限ループ発生
+- **修正**: `synchronize()` 後に必ず1トークン消費して前進を保証
+- **影響**: 複数行の `BEGIN TRY...END TRY BEGIN CATCH...END CATCH` 入力で `DocumentAnalysis::new` がスタックオーバーフローしていた問題が解消
 
 ---
 
@@ -40,7 +54,7 @@
 - **hover.rs**: +3テスト（空ソース, GETDATE関数, 範囲外位置）
 
 ### 発見した既存バグ
-- `DocumentAnalysis::new("BEGIN TRY\n    SELECT 1\n    SELECT 2\nEND TRY\n...")` がスタックオーバーフローを起こす（10GBメモリ割当でクラッシュ）。`SymbolTableBuilder::build_tolerant` またはパーサーが無限再帰する可能性。根本原因は未特定。
+- ~~DocumentAnalysis スタックオーバーフロー~~ → **Session 8 で修正**（parser infinite loop）
 
 ---
 
@@ -96,3 +110,4 @@ ase-ls (tower-lsp 0.20, lsp-types 0.94.1)
 | 5 | 4 | 1018 | signature help fix (#77), dead code removal |
 | 6 | 4 | 1049 | 4 issues closed, coverage +2.38% |
 | 7 | 4 | 1085 | dead code removal, +36 tests across 8 modules |
+| 8 | 1 | 1085 | fix parser infinite loop in error recovery |
