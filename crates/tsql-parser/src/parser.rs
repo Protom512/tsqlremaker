@@ -113,6 +113,12 @@ impl<'src> Parser<'src> {
                 Err(e) => {
                     self.errors.push(e.clone());
                     self.synchronize();
+                    // Safety: always advance past the current token to prevent
+                    // infinite loops when synchronize stops at a sync-point
+                    // (e.g., END) that is not a valid statement starter.
+                    if !self.is_at_eof() {
+                        let _ = self.buffer.consume();
+                    }
                 }
             }
 
