@@ -1929,4 +1929,222 @@ mod tests {
             "Should not offer column list when all columns are IDENTITY"
         );
     }
+
+    // === Coverage gap tests ===
+
+    /// String-based `code_actions()` API for INSERT skeleton generation
+    #[test]
+    fn test_string_based_insert_skeleton() {
+        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\nINSERT INTO users";
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions(source, range, &test_uri());
+        let insert_action = actions.iter().find(
+            |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT")),
+        );
+        assert!(
+            insert_action.is_some(),
+            "String-based code_actions should offer INSERT skeleton"
+        );
+    }
+
+    /// `code_actions()` returns empty for empty line
+    #[test]
+    fn test_string_based_empty_line_no_actions() {
+        let source = "CREATE TABLE t (a INT)\n\nSELECT * FROM t";
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 0,
+            },
+        };
+        let actions = code_actions(source, range, &test_uri());
+        assert!(
+            actions.is_empty(),
+            "Empty line should produce no actions via string-based path"
+        );
+    }
+
+    /// `build_fallback_symbol_table` fallback: DDL before parse errors
+    /// When the full source fails to produce tables via build_tolerant,
+    /// the fallback progressively shortens the source to find DDL definitions.
+    #[test]
+    fn test_fallback_symbol_table_with_parse_errors() {
+        // Use SELECT * which triggers expand via string-based path
+        let source = concat!(
+            "CREATE TABLE t (a INT, b INT)\n",
+            "GO\n",
+            "SELECT * FROM t\n",
+        );
+        let range = Range {
+            start: Position {
+                line: 2,
+                character: 0,
+            },
+            end: Position {
+                line: 2,
+                character: 20,
+            },
+        };
+        let actions = code_actions(source, range, &test_uri());
+        // The string-based expand should find the table and offer SELECT * expansion
+        let expand_action = actions.iter().find(
+            |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Expand")),
+        );
+        assert!(
+            expand_action.is_some(),
+            "Fallback symbol table should find table definition and offer SELECT * expansion"
+        );
+    }
+
+    /// `resolve_insert_stmt_end` with broken span (span.end == 0):
+    /// Should fall back to semicolon-based scan
+    #[test]
+    fn test_insert_column_list_with_semicolon_terminated() {
+        let source = "CREATE TABLE t (a INT, b INT)\nINSERT INTO t VALUES (1, 2);\nSELECT * FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        // Should still work with semicolon-terminated statements
+        assert!(
+            add_cols.is_some(),
+            "Should offer column list for semicolon-terminated INSERT"
+        );
+    }
+
+    /// `resolve_insert_stmt_end` fallback: no semicolon, uses last token
+    #[test]
+    fn test_insert_column_list_no_semicolon_uses_last_token() {
+        let source = "CREATE TABLE t (a INT, b INT)\nINSERT INTO t VALUES (1, 2)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(
+            add_cols.is_some(),
+            "Should offer column list even without semicolon"
+        );
+    }
+
+    /// Cursor outside INSERT span should not trigger column list action
+    #[test]
+    fn test_insert_column_list_cursor_before_insert() {
+        let source = "CREATE TABLE t (a INT, b INT)\nINSERT INTO t VALUES (1, 2)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // Cursor on CREATE TABLE line
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 5,
+            },
+            end: Position {
+                line: 0,
+                character: 10,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(
+            add_cols.is_none(),
+            "Should not offer column list when cursor is before INSERT"
+        );
+    }
+
+    /// `get_line_at` utility: out-of-range line returns empty string
+    #[test]
+    fn test_get_line_at_out_of_range() {
+        assert_eq!(get_line_at("hello\nworld", 0), "hello");
+        assert_eq!(get_line_at("hello\nworld", 1), "world");
+        assert_eq!(get_line_at("hello\nworld", 5), "");
+        assert_eq!(get_line_at("", 0), "");
+    }
+
+    /// `find_values_token_start`: no VALUES token in range returns None
+    /// This covers the early-break path when tokens exceed insert_end
+    #[test]
+    fn test_insert_skip_when_no_values_source() {
+        // INSERT ... SELECT has no VALUES keyword
+        let source = "CREATE TABLE t (a INT, b INT)\nINSERT INTO t SELECT * FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 20,
+            },
+        };
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        let add_cols = actions.iter().find(|a| {
+            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Add column list"))
+        });
+        assert!(
+            add_cols.is_none(),
+            "Should not offer column list for INSERT...SELECT (no VALUES)"
+        );
+    }
+
+    /// String-based `try_wrap_try_catch` via `code_actions()`:
+    /// BEGIN on current line should trigger TRY...CATCH wrap
+    #[test]
+    fn test_string_based_try_catch() {
+        let source = "BEGIN\n    SELECT 1\nEND";
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 5,
+            },
+        };
+        let actions = code_actions(source, range, &test_uri());
+        let try_action = actions
+            .iter()
+            .find(|a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("TRY")));
+        assert!(
+            try_action.is_some(),
+            "String-based code_actions should offer TRY...CATCH for BEGIN"
+        );
+    }
 }
