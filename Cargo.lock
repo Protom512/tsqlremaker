@@ -102,6 +102,7 @@ dependencies = [
  "once_cell",
  "rstest",
  "thiserror",
+ "tracing",
  "tsql-lexer",
  "tsql-parser",
  "tsql-token",

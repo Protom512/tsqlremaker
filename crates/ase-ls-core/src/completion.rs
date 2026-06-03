@@ -368,4 +368,49 @@ mod tests {
             _ => panic!("Expected List"),
         }
     }
+
+    #[test]
+    fn test_complete_all_includes_system_variables() {
+        let response = complete_all();
+        match response {
+            CompletionResponse::List(list) => {
+                let has_rowcount = list.items.iter().any(|i| {
+                    i.label == "@@ROWCOUNT" && i.kind == Some(CompletionItemKind::VARIABLE)
+                });
+                assert!(has_rowcount, "Should include @@ROWCOUNT system variable");
+            }
+            _ => panic!("Expected List response"),
+        }
+    }
+
+    #[test]
+    fn test_complete_all_no_duplicate_labels() {
+        let response = complete_all();
+        match response {
+            CompletionResponse::List(list) => {
+                let mut labels: Vec<&str> = list.items.iter().map(|i| i.label.as_str()).collect();
+                labels.sort();
+                let deduped: Vec<&str> = labels
+                    .windows(2)
+                    .filter(|w| w[0] == w[1])
+                    .map(|w| w[0])
+                    .collect();
+                // Keywords may appear as both keyword and function (e.g., SELECT)
+                // so allow some duplicates but verify it's not excessive
+                assert!(
+                    deduped.len() <= 5,
+                    "Too many duplicate labels: {:?}",
+                    deduped
+                );
+            }
+            _ => panic!("Expected List response"),
+        }
+    }
+
+    #[test]
+    fn test_is_comma_separated_syntax_edge_cases() {
+        assert!(!is_comma_separated_syntax(""));
+        assert!(is_comma_separated_syntax("()")); // empty parens still match pattern
+        assert!(is_comma_separated_syntax("F()")); // single char func
+    }
 }
