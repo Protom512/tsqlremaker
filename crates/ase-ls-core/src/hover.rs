@@ -389,6 +389,14 @@ fn build_schema_hover(
                     idx.table_name
                 ));
             }
+            // トリガー情報を表示
+            if let Some(trigger) = symbol_table.triggers.get(&upper) {
+                let events = trigger.events.join(", ");
+                return Some(format!(
+                    "```tsql\nCREATE TRIGGER {} ON {} FOR {}\n```\n\n**Trigger** — on `{}`",
+                    trigger.name, trigger.table_name, events, trigger.table_name
+                ));
+            }
             None
         }
         _ => None,
@@ -1037,6 +1045,29 @@ mod tests {
                     mc.value.contains("id"),
                     "Hover inside trigger should show column name"
                 );
+            }
+            other => panic!("Expected Markup content, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_hover_trigger_shows_info() {
+        let source = "CREATE TRIGGER tr_test ON users FOR INSERT, UPDATE AS BEGIN SELECT 1 END";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // Hover over "tr_test" (line 0, char 18)
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 18,
+            },
+        );
+        assert!(result.is_some(), "Hover on trigger name should return info");
+        let h = result.expect("checked is_some");
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(mc.value.contains("Trigger"), "Should show Trigger label");
+                assert!(mc.value.contains("users"), "Should show target table name");
             }
             other => panic!("Expected Markup content, got {other:?}"),
         }

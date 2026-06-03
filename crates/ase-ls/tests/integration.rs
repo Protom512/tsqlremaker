@@ -371,7 +371,10 @@ async fn test_goto_definition_table() {
         }
     });
     let response = send(&mut service, &req.to_string()).await;
-    assert!(response.is_some(), "Should return definition response for table");
+    assert!(
+        response.is_some(),
+        "Should return definition response for table"
+    );
 
     // Verify it actually found the definition (not null result)
     let result = response.unwrap();
@@ -386,12 +389,7 @@ async fn test_goto_definition_table() {
 #[tokio::test]
 async fn test_goto_definition_on_whitespace_returns_null() {
     let mut service = setup();
-    init_and_open(
-        &mut service,
-        "file:///test.sql",
-        "SELECT  FROM t",
-    )
-    .await;
+    init_and_open(&mut service, "file:///test.sql", "SELECT  FROM t").await;
 
     let req = serde_json::json!({
         "jsonrpc": "2.0", "id": 2, "method": "textDocument/definition",
@@ -401,7 +399,10 @@ async fn test_goto_definition_on_whitespace_returns_null() {
         }
     });
     let response = send(&mut service, &req.to_string()).await;
-    assert!(response.is_some(), "Should return response even for whitespace");
+    assert!(
+        response.is_some(),
+        "Should return response even for whitespace"
+    );
 }
 
 // --- References tests ---
@@ -622,12 +623,7 @@ async fn test_diagnostics_on_open_with_select_star() {
     // didOpen should trigger publishDiagnostics via server notification
     // We can't directly capture notifications in this test framework,
     // but we can verify the open+diagnose path doesn't panic
-    init_and_open(
-        &mut service,
-        "file:///test.sql",
-        "SELECT * FROM users",
-    )
-    .await;
+    init_and_open(&mut service, "file:///test.sql", "SELECT * FROM users").await;
     // Reaching here without panic proves the diagnostics path is stable
 }
 
@@ -635,11 +631,6 @@ async fn test_diagnostics_on_open_with_select_star() {
 async fn test_diagnostics_on_open_with_parse_error() {
     let mut service = setup();
     // Opening invalid SQL should not crash
-    init_and_open(
-        &mut service,
-        "file:///test.sql",
-        "SELCT * FRM",
-    )
-    .await;
+    init_and_open(&mut service, "file:///test.sql", "SELCT * FRM").await;
     // Reaching here without panic proves the parse error diagnostics path is stable
 }

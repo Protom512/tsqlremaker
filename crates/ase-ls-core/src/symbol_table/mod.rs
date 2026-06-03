@@ -56,6 +56,8 @@ pub struct SymbolTable {
     pub views: HashMap<CaseInsensitiveKey, ViewSymbol>,
     /// インデックス定義 (case-insensitive key → IndexSymbol)
     pub indexes: HashMap<CaseInsensitiveKey, IndexSymbol>,
+    /// トリガー定義 (case-insensitive key → TriggerSymbol)
+    pub triggers: HashMap<CaseInsensitiveKey, TriggerSymbol>,
     /// 変数定義 (case-insensitive key → VariableSymbol)
     pub variables: HashMap<CaseInsensitiveKey, VariableSymbol>,
 }
@@ -146,6 +148,19 @@ pub struct VariableSymbol {
     pub name: String,
     pub range: Range,
     pub data_type: DataType,
+}
+
+/// トリガーシンボル
+#[derive(Debug, Clone)]
+pub struct TriggerSymbol {
+    /// トリガー名
+    pub name: String,
+    /// 定義位置
+    pub range: Range,
+    /// 対象テーブル名
+    pub table_name: String,
+    /// トリガーイベント（INSERT, UPDATE, DELETE）
+    pub events: Vec<String>,
 }
 
 /// シンボルテーブルビルダー
@@ -309,8 +324,18 @@ impl SymbolTableBuilder {
                         },
                     );
                 }
-                CreateStatement::Trigger(_) => {
-                    // Triggers are not tracked in the symbol table (no column/param info)
+                CreateStatement::Trigger(trigger) => {
+                    let range = span_to_range(line_index, trigger.span);
+                    let events = trigger.events.iter().map(|e| format!("{e:?}")).collect();
+                    table.triggers.insert(
+                        CaseInsensitiveKey::new(&trigger.name.name),
+                        TriggerSymbol {
+                            name: trigger.name.name.clone(),
+                            range,
+                            table_name: trigger.table.name.clone(),
+                            events,
+                        },
+                    );
                 }
             },
             Statement::Declare(decl) => {
@@ -793,6 +818,52 @@ mod tests {
             table.indexes.contains_key("IDX_NAME"),
             "Index should be tracked: {:?}",
             table.indexes.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_trigger_extraction() {
+        let source = "CREATE TRIGGER tr_test ON users FOR INSERT AS BEGIN SELECT 1 END";
+        let table = SymbolTableBuilder::build_tolerant(source);
+        assert!(
+            table.triggers.contains_key("TR_TEST"),
+            "Trigger should be tracked: {:?}",
+            table.triggers.keys().collect::<Vec<_>>()
+        );
+        let trigger = table.triggers.get("TR_TEST").expect("trigger exists");
+        assert_eq!(trigger.name, "tr_test");
+        assert_eq!(trigger.table_name, "users");
+        assert!(trigger.events.contains(&"Insert".to_string()));
+    }
+
+    #[test]
+    fn test_trigger_multiple_events() {
+        let source =
+            "CREATE TRIGGER tr_multi ON users FOR INSERT, UPDATE, DELETE AS BEGIN SELECT 1 END";
+        let table = SymbolTableBuilder::build_tolerant(source);
+        let trigger = table.triggers.get("TR_MULTI").expect("trigger exists");
+        assert_eq!(trigger.events.len(), 3);
+    }
+
+    #[test]
+    fn test_trigger_definition_found() {
+        let source = "CREATE TRIGGER tr_test ON users FOR INSERT AS BEGIN SELECT 1 END";
+        // Verify trigger is tracked in symbol table
+        let table = SymbolTableBuilder::build(source);
+        assert!(
+            table.triggers.contains_key("TR_TEST"),
+            "Trigger should be tracked before testing definition"
+        );
+        let results = crate::definition::definition_ranges_with_analysis(
+            &crate::analysis::DocumentAnalysis::new(source),
+            Position {
+                line: 0,
+                character: 18,
+            },
+        );
+        assert!(
+            !results.is_empty(),
+            "Go to Definition should find trigger definition"
         );
     }
 }

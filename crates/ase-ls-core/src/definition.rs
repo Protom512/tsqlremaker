@@ -87,7 +87,7 @@ fn find_variable_definition(table: &SymbolTable, name: &str) -> Vec<Range> {
     results
 }
 
-/// オブジェクト定義（テーブル、プロシージャ、ビュー、インデックス）を検索する
+/// オブジェクト定義（テーブル、プロシージャ、ビュー、インデックス、トリガー）を検索する
 fn find_object_definition(table: &SymbolTable, name: &str) -> Vec<Range> {
     let mut results = Vec::new();
 
@@ -102,6 +102,9 @@ fn find_object_definition(table: &SymbolTable, name: &str) -> Vec<Range> {
     }
     if let Some(idx) = table.indexes.get(name) {
         results.push(idx.range);
+    }
+    if let Some(trigger) = table.triggers.get(name) {
+        results.push(trigger.range);
     }
 
     results
