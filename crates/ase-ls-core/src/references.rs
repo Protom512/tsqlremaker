@@ -115,11 +115,13 @@ fn is_definition_token(source: &str, span_start: usize, is_var: bool) -> bool {
             return true;
         }
     } else {
-        // テーブル/プロシージャ/ビュー/インデックス定義: CREATE [OBJECT] name
+        // テーブル/プロシージャ/ビュー/インデックス/トリガー定義: CREATE [OBJECT] name
         if upper.ends_with("CREATE TABLE")
             || upper.ends_with("CREATE PROCEDURE")
             || upper.ends_with("CREATE VIEW")
             || upper.ends_with("CREATE INDEX")
+            || upper.ends_with("CREATE UNIQUE INDEX")
+            || upper.ends_with("CREATE TRIGGER")
         {
             return true;
         }
@@ -442,5 +444,55 @@ mod tests {
         for range in &ranges {
             assert_ne!(range.start.line, 0, "Definition should be excluded");
         }
+    }
+
+    #[test]
+    fn test_is_definition_unique_index() {
+        // CREATE UNIQUE INDEX idx ON t(c) — idx should be recognized as definition
+        assert!(is_definition_token(
+            "CREATE TABLE t (c INT)\nCREATE UNIQUE INDEX idx ON t (c)",
+            "CREATE TABLE t (c INT)\nCREATE UNIQUE INDEX ".len(),
+            false,
+        ));
+    }
+
+    #[test]
+    fn test_is_definition_trigger() {
+        // CREATE TRIGGER trg ... — trg should be recognized as definition
+        assert!(is_definition_token(
+            "CREATE TABLE t (c INT)\nCREATE TRIGGER trg ON t FOR INSERT AS BEGIN END",
+            "CREATE TABLE t (c INT)\nCREATE TRIGGER ".len(),
+            false,
+        ));
+    }
+
+    #[test]
+    fn test_is_definition_regular_index() {
+        // CREATE INDEX idx — still recognized
+        assert!(is_definition_token(
+            "CREATE TABLE t (c INT)\nCREATE INDEX idx ON t (c)",
+            "CREATE TABLE t (c INT)\nCREATE INDEX ".len(),
+            false,
+        ));
+    }
+
+    #[test]
+    fn test_is_not_definition_select_reference() {
+        // SELECT FROM users — users is NOT a definition
+        assert!(!is_definition_token(
+            "CREATE TABLE users (id INT)\nSELECT * FROM ",
+            "CREATE TABLE users (id INT)\nSELECT * FROM ".len(),
+            false,
+        ));
+    }
+
+    #[test]
+    fn test_is_definition_variable_in_declare() {
+        // DECLARE @count — @count IS a definition
+        assert!(is_definition_token(
+            "DECLARE @count INT",
+            "DECLARE ".len(),
+            true
+        ));
     }
 }
