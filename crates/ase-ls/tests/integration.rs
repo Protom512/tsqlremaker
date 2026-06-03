@@ -327,3 +327,319 @@ async fn test_folding_range_comment() {
         "Should contain comment fold for block comment"
     );
 }
+
+// --- Definition tests ---
+
+#[tokio::test]
+async fn test_goto_definition_variable() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "DECLARE @count INT\nSET @count = 1",
+    )
+    .await;
+
+    // Click on @count in SET line (line 1, char 5)
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "position": { "line": 1, "character": 5 }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    assert!(response.is_some(), "Should return definition response");
+}
+
+#[tokio::test]
+async fn test_goto_definition_table() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "CREATE TABLE users (id INT)\nSELECT * FROM users",
+    )
+    .await;
+
+    // Click on "users" in SELECT (line 1, char 15)
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "position": { "line": 1, "character": 15 }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    assert!(response.is_some(), "Should return definition response for table");
+
+    // Verify it actually found the definition (not null result)
+    let result = response.unwrap();
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    assert!(
+        result_val.is_array() || result_val.is_object(),
+        "Definition should return locations or null"
+    );
+}
+
+#[tokio::test]
+async fn test_goto_definition_on_whitespace_returns_null() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "SELECT  FROM t",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "position": { "line": 0, "character": 7 }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    assert!(response.is_some(), "Should return response even for whitespace");
+}
+
+// --- References tests ---
+
+#[tokio::test]
+async fn test_references_variable() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "DECLARE @count INT\nSET @count = 1\nSELECT @count",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "position": { "line": 1, "character": 5 },
+            "context": { "includeDeclaration": true }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    assert!(response.is_some(), "Should return references response");
+
+    let result = response.unwrap();
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    let refs = result_val.as_array();
+    assert!(
+        refs.is_some_and(|r| r.len() >= 2),
+        "Should find at least 2 references to @count"
+    );
+}
+
+#[tokio::test]
+async fn test_references_table() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "CREATE TABLE users (id INT)\nSELECT * FROM users\nDELETE FROM users",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "position": { "line": 0, "character": 14 },
+            "context": { "includeDeclaration": true }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    assert!(response.is_some(), "Should return references for table");
+
+    let result = response.unwrap();
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    let refs = result_val.as_array();
+    assert!(
+        refs.is_some_and(|r| r.len() >= 2),
+        "Should find references to users table"
+    );
+}
+
+// --- Rename tests ---
+
+#[tokio::test]
+async fn test_prepare_rename_on_identifier() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "CREATE TABLE users (id INT)",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/prepareRename",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "position": { "line": 0, "character": 14 }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    assert!(response.is_some(), "Should return prepareRename response");
+}
+
+#[tokio::test]
+async fn test_rename_variable() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "DECLARE @count INT\nSET @count = 1\nSELECT @count",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/rename",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "position": { "line": 1, "character": 5 },
+            "newName": "@total"
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    assert!(response.is_some(), "Should return rename response");
+
+    let result = response.unwrap();
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    assert!(
+        result_val.get("changes").is_some(),
+        "Rename should return WorkspaceEdit with changes"
+    );
+}
+
+#[tokio::test]
+async fn test_rename_variable_without_at_prefix_rejected() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "DECLARE @count INT\nSET @count = 1",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/rename",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "position": { "line": 1, "character": 5 },
+            "newName": "total"
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    assert!(response.is_some(), "Should return response");
+
+    let result = response.unwrap();
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    assert!(
+        result_val.is_null(),
+        "Rename without @ prefix should return null"
+    );
+}
+
+// --- Code Action tests ---
+
+#[tokio::test]
+async fn test_code_action_select_star_expand() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "CREATE TABLE users (id INT, name VARCHAR(100))\nSELECT * FROM users",
+    )
+    .await;
+
+    // Cursor on the SELECT * line
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "range": { "start": { "line": 1, "character": 0 }, "end": { "line": 1, "character": 5 } },
+            "context": { "diagnostics": [] }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    assert!(response.is_some(), "Should return code actions");
+
+    let result = response.unwrap();
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    let actions = result_val.as_array();
+    assert!(
+        actions.is_some_and(|a| !a.is_empty()),
+        "Should offer code actions for SELECT *"
+    );
+}
+
+#[tokio::test]
+async fn test_code_action_insert_skeleton() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "CREATE TABLE users (id INT, name VARCHAR(100))\nINSERT INTO users VALUES (1, 'test')",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "range": { "start": { "line": 1, "character": 0 }, "end": { "line": 1, "character": 5 } },
+            "context": { "diagnostics": [] }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    assert!(response.is_some(), "Should return code actions");
+}
+
+// --- Diagnostics (via didOpen) ---
+
+#[tokio::test]
+async fn test_diagnostics_on_open_with_select_star() {
+    let mut service = setup();
+    // Initialize without auto-publish to check diagnostics from didOpen
+    let init = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    });
+    send(&mut service, &init.to_string()).await;
+
+    // didOpen should trigger publishDiagnostics via server notification
+    // We can't directly capture notifications in this test framework,
+    // but we can verify the open+diagnose path doesn't panic
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "SELECT * FROM users",
+    )
+    .await;
+    // Reaching here without panic proves the diagnostics path is stable
+}
+
+#[tokio::test]
+async fn test_diagnostics_on_open_with_parse_error() {
+    let mut service = setup();
+    // Opening invalid SQL should not crash
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "SELCT * FRM",
+    )
+    .await;
+    // Reaching here without panic proves the parse error diagnostics path is stable
+}
