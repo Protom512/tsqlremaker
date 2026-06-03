@@ -97,6 +97,17 @@ fn collect_symbols(
         SymbolKind::VARIABLE,
     );
 
+    push_matching(
+        &mut results,
+        table
+            .triggers
+            .values()
+            .map(|s| (s.name.clone(), s.range, Some(s.table_name.clone()))),
+        query_upper,
+        uri,
+        SymbolKind::EVENT,
+    );
+
     results
 }
 
@@ -290,5 +301,20 @@ mod tests {
         let analysis = crate::analysis::DocumentAnalysis::new(source);
         let results = workspace_symbols_with_analysis(&analysis, "orders", &test_uri());
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_analysis_based_trigger_symbol() {
+        let source = "CREATE TRIGGER tr_audit ON users FOR INSERT AS BEGIN SELECT 1 END";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let results = workspace_symbols_with_analysis(&analysis, "audit", &test_uri());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "tr_audit");
+        assert_eq!(results[0].kind, SymbolKind::EVENT);
+        assert_eq!(
+            results[0].container_name,
+            Some("users".to_string()),
+            "Trigger should have table name as container"
+        );
     }
 }
