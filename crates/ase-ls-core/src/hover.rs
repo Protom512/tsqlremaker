@@ -273,14 +273,20 @@ fn resolve_column_in_statement(
             .find_map(|child| {
                 resolve_column_in_statement(child, symbol_table, offset, upper_ident)
             }),
-        Statement::Create(create) => {
-            if let tsql_parser::ast::CreateStatement::Procedure(proc) = &**create {
-                proc.body.iter().find_map(|child| {
+        Statement::Create(create) => match &**create {
+            tsql_parser::ast::CreateStatement::Procedure(proc) => proc
+                .body
+                .iter()
+                .find_map(|child| {
                     resolve_column_in_statement(child, symbol_table, offset, upper_ident)
-                })
-            } else {
-                None
-            }
+                }),
+            tsql_parser::ast::CreateStatement::Trigger(trigger) => trigger
+                .body
+                .iter()
+                .find_map(|child| {
+                    resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+                }),
+            _ => None,
         }
         _ => None,
     }
@@ -1004,5 +1010,37 @@ mod tests {
             result.is_none(),
             "Position beyond source end should return None"
         );
+    }
+
+    #[test]
+    fn test_hover_column_inside_trigger_body() {
+        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\n\
+                      CREATE TRIGGER tr_test ON users FOR INSERT AS\n\
+                      BEGIN\n\
+                          SELECT id FROM users\n\
+                      END";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // Hover over "id" inside the trigger body (line 3, char 18)
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 3,
+                character: 18,
+            },
+        );
+        assert!(
+            result.is_some(),
+            "Hover over column inside trigger body should return hover info"
+        );
+        let h = result.expect("checked is_some");
+        match &h.contents {
+            HoverContents::Markup(mc) => {
+                assert!(
+                    mc.value.contains("id"),
+                    "Hover inside trigger should show column name"
+                );
+            }
+            other => panic!("Expected Markup content, got {other:?}"),
+        }
     }
 }

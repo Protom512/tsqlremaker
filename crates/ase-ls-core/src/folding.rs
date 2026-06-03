@@ -87,13 +87,26 @@ fn collect_ast_folds(
                 collect_ast_folds(child, analysis, ranges);
             }
         }
-        Statement::Create(create) => {
-            if let tsql_parser::ast::CreateStatement::Procedure(proc) = create.as_ref() {
+        Statement::Create(create) => match create.as_ref() {
+            tsql_parser::ast::CreateStatement::Procedure(proc) => {
                 // Fold procedure body if multi-line
                 let start = proc.span.start as usize;
                 let end = proc.span.end as usize;
                 add_fold_if_multiline(start, end, analysis, ranges);
+                for child in &proc.body {
+                    collect_ast_folds(child, analysis, ranges);
+                }
             }
+            tsql_parser::ast::CreateStatement::Trigger(trigger) => {
+                // Fold trigger body if multi-line
+                let start = trigger.span.start as usize;
+                let end = trigger.span.end as usize;
+                add_fold_if_multiline(start, end, analysis, ranges);
+                for child in &trigger.body {
+                    collect_ast_folds(child, analysis, ranges);
+                }
+            }
+            _ => {}
         }
         // For other statements with nested bodies, recurse into children
         Statement::Select(_)
@@ -421,5 +434,29 @@ mod tests {
     fn test_empty_source_no_folds() {
         let ranges = folding_ranges("");
         assert!(ranges.is_empty(), "Empty source should produce no folds");
+    }
+
+    #[test]
+    fn test_ast_fold_create_trigger() {
+        let source = "CREATE TRIGGER tr_test ON users FOR INSERT AS\nBEGIN\n    SELECT 1\n    SELECT 2\nEND";
+        let analysis = make_analysis(source);
+        let ranges = folding_ranges_with_analysis(&analysis);
+        let region_folds = count_region_folds(&ranges);
+        assert!(
+            region_folds >= 1,
+            "CREATE TRIGGER body should be foldable, got {region_folds}"
+        );
+    }
+
+    #[test]
+    fn test_ast_fold_nested_while_in_trigger() {
+        let source = "CREATE TRIGGER tr_test ON users FOR INSERT AS\nBEGIN\n    WHILE 1 = 1\n    BEGIN\n        SELECT 1\n    END\nEND";
+        let analysis = make_analysis(source);
+        let ranges = folding_ranges_with_analysis(&analysis);
+        let region_folds = count_region_folds(&ranges);
+        assert!(
+            region_folds >= 2,
+            "Nested WHILE inside trigger should produce multiple folds, got {region_folds}"
+        );
     }
 }

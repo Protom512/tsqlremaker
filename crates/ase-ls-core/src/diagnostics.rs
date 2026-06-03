@@ -101,6 +101,11 @@ fn collect_select_star_warnings(
                     diags,
                 );
             }
+            tsql_parser::ast::CreateStatement::Trigger(trigger) => {
+                for child in &trigger.body {
+                    collect_select_star_warnings(child, analysis, diags);
+                }
+            }
             _ => {}
         },
         _ => {}
@@ -622,5 +627,20 @@ mod tests {
         assert!(!diags.is_empty());
         // Position should be 0-indexed (not 1-indexed)
         assert_eq!(diags[0].range.start.line, 0);
+    }
+
+    #[test]
+    fn test_select_star_inside_trigger_warns() {
+        let source = "CREATE TRIGGER tr_test ON users FOR INSERT AS\nBEGIN\n    SELECT * FROM users\nEND";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let diags = diagnose(&analysis);
+        let star_warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.message.contains("SELECT *"))
+            .collect();
+        assert!(
+            !star_warnings.is_empty(),
+            "SELECT * inside CREATE TRIGGER should produce a warning"
+        );
     }
 }

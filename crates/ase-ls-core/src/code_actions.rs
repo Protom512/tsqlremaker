@@ -665,11 +665,14 @@ fn find_block_at_offset<'a>(
             None
         }
         Statement::Create(create) => {
-            if let tsql_parser::ast::CreateStatement::Procedure(proc) = create.as_ref() {
-                for child in &proc.body {
-                    if let Some(b) = find_block_at_offset(child, offset, analysis) {
-                        return Some(b);
-                    }
+            let body: &[Statement] = match create.as_ref() {
+                tsql_parser::ast::CreateStatement::Procedure(proc) => &proc.body,
+                tsql_parser::ast::CreateStatement::Trigger(trigger) => &trigger.body,
+                _ => return None,
+            };
+            for child in body {
+                if let Some(b) = find_block_at_offset(child, offset, analysis) {
+                    return Some(b);
                 }
             }
             None
@@ -1547,6 +1550,34 @@ mod tests {
             ca.kind,
             Some(CodeActionKind::REFACTOR),
             "TRY...CATCH wrap must be REFACTOR, not QUICKFIX"
+        );
+    }
+
+    #[test]
+    fn test_ast_try_catch_inside_trigger_body() {
+        let source = "CREATE TRIGGER tr_test ON users FOR INSERT AS\n\
+                      BEGIN\n\
+                          SELECT 1\n\
+                      END";
+        let analysis = make_analysis(source);
+        let actions = code_actions_with_analysis(
+            &analysis,
+            Range {
+                start: Position {
+                    line: 1,
+                    character: 0,
+                },
+                end: Position {
+                    line: 1,
+                    character: 5,
+                },
+            },
+            &test_uri(),
+        );
+        let action = find_try_catch_action(&actions);
+        assert!(
+            action.is_some(),
+            "TRY...CATCH wrap should be offered for BEGIN block inside CREATE TRIGGER"
         );
     }
 }
