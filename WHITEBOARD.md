@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-04 / Session 12 (Trigger body recursion fix, branch cleanup)
+**最終更新:** 2026-06-04 / Session 12 (Trigger recursion fix, integration tests, branch cleanup)
 
 ---
 
@@ -10,7 +10,7 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1125 passed, 2 skipped |
+| **テスト** | 1137 passed, 2 skipped |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Open Issues** | 11 |
@@ -26,6 +26,7 @@
 |---------|------|
 | `583c2c7` | fix(lsp): add Trigger body recursion to folding, hover, diagnostics, code_actions |
 | `b2694a7` | fix(references): detect CREATE UNIQUE INDEX and CREATE TRIGGER as definitions |
+| `da35bbb` | test(lsp): add 12 integration tests for definition, references, rename, code actions, diagnostics |
 
 ### 変更内容
 - **folding.rs**: `collect_ast_folds` に Trigger ボディ再帰追加。Procedure body も再帰するよう修正（従来はトップレベルフォールドのみ）
@@ -33,7 +34,7 @@
 - **diagnostics.rs**: `collect_select_star_warnings` に Trigger ボディ再帰追加。Trigger 内の SELECT * が警告対象に
 - **code_actions.rs**: `find_block_at_offset` に Trigger ボディ再帰追加。Trigger 内の TRY...CATCH code action が動作するように
 - **references.rs**: (前セッション) CREATE UNIQUE INDEX と CREATE TRIGGER を定義として検出
-- **テスト**: +5 テスト（folding 2, diagnostics 1, hover 1, code_actions 1）
+- **テスト**: +5 テスト（folding 2, diagnostics 1, hover 1, code_actions 1）+ 12 統合テスト
 - **ブランチ整理**: `feat/114-alter-table-parser`（古い）と `feat/code-action-insert-column-list`（旧PR）を削除。リモート旧ブランチも削除
 
 ### 調査結果
@@ -177,4 +178,4 @@ ase-ls (tower-lsp 0.20, lsp-types 0.94.1)
 | 9 | 2 | 1097 | +12 tests for lib.rs, symbol_table, line_index |
 | 10 | 6 | 1115 | bug fix (analysis Clone), dedup 2 modules, +15 tests |
 | 11 | 1 | 1115 | DataType Display impl + PR #123 review tests |
-| 12 | 2 | 1125 | Trigger body recursion fix, branch cleanup |
+| 12 | 3 | 1137 | Trigger body recursion fix, +12 integration tests, branch cleanup |
