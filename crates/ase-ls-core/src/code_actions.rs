@@ -271,16 +271,10 @@ fn try_expand_select_star_ast(
         expanded,
     );
 
-    Some(CodeAction {
-        title: format!("Expand SELECT * with columns from {table_name}"),
-        kind: Some(CodeActionKind::QUICKFIX),
-        diagnostics: None,
-        edit: Some(edit),
-        command: None,
-        is_preferred: Some(true),
-        disabled: None,
-        data: None,
-    })
+    Some(make_quickfix(
+        format!("Expand SELECT * with columns from {table_name}"),
+        edit,
+    ))
 }
 
 /// AST-based INSERT skeleton generation using Statement spans.
@@ -299,7 +293,7 @@ fn try_generate_insert_skeleton_ast(
     match &ins.source {
         tsql_parser::InsertSource::Values(v) if !v.is_empty() => return None,
         tsql_parser::InsertSource::Select(_) => return None,
-        _ => {}
+        tsql_parser::InsertSource::Values(_) | tsql_parser::InsertSource::DefaultValues => {}
     }
 
     let table_name = ins.table.name.clone();
@@ -342,16 +336,10 @@ fn try_generate_insert_skeleton_ast(
         new_text,
     );
 
-    Some(CodeAction {
-        title: format!("Generate INSERT skeleton for {table_name}"),
-        kind: Some(CodeActionKind::QUICKFIX),
-        diagnostics: None,
-        edit: Some(edit),
-        command: None,
-        is_preferred: Some(true),
-        disabled: None,
-        data: None,
-    })
+    Some(make_quickfix(
+        format!("Generate INSERT skeleton for {table_name}"),
+        edit,
+    ))
 }
 
 /// SELECT * FROM table → カラム展開クイックフィックス
@@ -413,16 +401,10 @@ fn try_expand_select_star(
         expanded,
     );
 
-    Some(CodeAction {
-        title: format!("Expand SELECT * with columns from {table_name}"),
-        kind: Some(CodeActionKind::QUICKFIX),
-        diagnostics: None,
-        edit: Some(edit),
-        command: None,
-        is_preferred: Some(true),
-        disabled: None,
-        data: None,
-    })
+    Some(make_quickfix(
+        format!("Expand SELECT * with columns from {table_name}"),
+        edit,
+    ))
 }
 
 /// INSERT INTO table → VALUES骨組み生成クイックフィックス
@@ -491,16 +473,10 @@ fn try_generate_insert_skeleton(
         new_text,
     );
 
-    Some(CodeAction {
-        title: format!("Generate INSERT skeleton for {table_name}"),
-        kind: Some(CodeActionKind::QUICKFIX),
-        diagnostics: None,
-        edit: Some(edit),
-        command: None,
-        is_preferred: Some(true),
-        disabled: None,
-        data: None,
-    })
+    Some(make_quickfix(
+        format!("Generate INSERT skeleton for {table_name}"),
+        edit,
+    ))
 }
 
 /// BEGIN → TRY...CATCH ラッパー
@@ -545,16 +521,7 @@ fn try_wrap_try_catch(
         new_text,
     );
 
-    Some(CodeAction {
-        title: "Wrap with TRY...CATCH".to_string(),
-        kind: Some(CodeActionKind::REFACTOR),
-        diagnostics: None,
-        edit: Some(edit),
-        command: None,
-        is_preferred: None,
-        disabled: None,
-        data: None,
-    })
+    Some(make_refactor("Wrap with TRY...CATCH".to_string(), edit))
 }
 
 /// 指定行のBEGINに対応するEND行を見つける
@@ -648,16 +615,7 @@ fn try_wrap_try_catch_ast(
         new_text,
     );
 
-    Some(CodeAction {
-        title: "Wrap with TRY...CATCH".to_string(),
-        kind: Some(CodeActionKind::REFACTOR),
-        diagnostics: None,
-        edit: Some(edit),
-        command: None,
-        is_preferred: None,
-        disabled: None,
-        data: None,
-    })
+    Some(make_refactor("Wrap with TRY...CATCH".to_string(), edit))
 }
 
 /// Find the innermost Statement::Block containing the given offset.
@@ -786,6 +744,34 @@ fn make_text_edit(uri: &lsp_types::Url, range: Range, new_text: String) -> Works
         changes: Some(changes),
         document_changes: None,
         change_annotations: None,
+    }
+}
+
+/// Create a quick-fix CodeAction with standard fields.
+fn make_quickfix(title: String, edit: WorkspaceEdit) -> CodeAction {
+    CodeAction {
+        title,
+        kind: Some(CodeActionKind::QUICKFIX),
+        diagnostics: None,
+        edit: Some(edit),
+        command: None,
+        is_preferred: Some(true),
+        disabled: None,
+        data: None,
+    }
+}
+
+/// Create a refactor CodeAction with standard fields.
+fn make_refactor(title: String, edit: WorkspaceEdit) -> CodeAction {
+    CodeAction {
+        title,
+        kind: Some(CodeActionKind::REFACTOR),
+        diagnostics: None,
+        edit: Some(edit),
+        command: None,
+        is_preferred: None,
+        disabled: None,
+        data: None,
     }
 }
 
