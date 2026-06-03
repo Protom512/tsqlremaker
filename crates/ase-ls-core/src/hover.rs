@@ -141,7 +141,7 @@ fn format_column_hover(col: &crate::symbol_table::ColumnSymbol, table_name: &str
     };
     let identity = if col.is_identity { " IDENTITY" } else { "" };
     format!(
-        "```tsql\n{} {:?}{}{}\n```\n\n**Column** of `{}`",
+        "```tsql\n{} {}{}{}\n```\n\n**Column** of `{}`",
         col.name, col.data_type, nullable, identity, table_name
     )
 }
@@ -265,23 +265,14 @@ fn resolve_column_in_statement(
         Statement::While(while_stmt) => {
             resolve_column_in_statement(&while_stmt.body, symbol_table, offset, upper_ident)
         }
-        Statement::TryCatch(tc) => {
-            for child in &tc.try_block.statements {
-                if let Some(r) =
-                    resolve_column_in_statement(child, symbol_table, offset, upper_ident)
-                {
-                    return Some(r);
-                }
-            }
-            for child in &tc.catch_block.statements {
-                if let Some(r) =
-                    resolve_column_in_statement(child, symbol_table, offset, upper_ident)
-                {
-                    return Some(r);
-                }
-            }
-            None
-        }
+        Statement::TryCatch(tc) => tc
+            .try_block
+            .statements
+            .iter()
+            .chain(tc.catch_block.statements.iter())
+            .find_map(|child| {
+                resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+            }),
         Statement::Create(create) => {
             if let tsql_parser::ast::CreateStatement::Procedure(proc) = &**create {
                 proc.body.iter().find_map(|child| {
@@ -310,7 +301,7 @@ fn build_schema_hover(
                 crate::symbol_table::SymbolTableBuilder::find_variable(symbol_table, text)
             {
                 return Some(format!(
-                    "```tsql\n{}: {:?}\n```\n\n**Variable** — Declared with `DECLARE {} {:?}`",
+                    "```tsql\n{}: {}\n```\n\n**Variable** — Declared with `DECLARE {} {}`",
                     text, var.data_type, var.name, var.data_type
                 ));
             }
@@ -319,7 +310,7 @@ fn build_schema_hover(
                 for body_var in &proc.body_variables {
                     if body_var.name.to_uppercase() == upper {
                         return Some(format!(
-                            "```tsql\n{}: {:?}\n```\n\n**Variable** in `{}` — `DECLARE {} {:?}`",
+                            "```tsql\n{}: {}\n```\n\n**Variable** in `{}` — `DECLARE {} {}`",
                             text, body_var.data_type, proc.name, body_var.name, body_var.data_type
                         ));
                     }
@@ -328,7 +319,7 @@ fn build_schema_hover(
                     if param.name.to_uppercase() == upper {
                         let output_marker = if param.is_output { " OUTPUT" } else { "" };
                         return Some(format!(
-                            "```tsql\n{}: {:?}{}\n```\n\n**Parameter** of `{}`",
+                            "```tsql\n{}: {}{}\n```\n\n**Parameter** of `{}`",
                             text, param.data_type, output_marker, proc.name
                         ));
                     }
@@ -348,7 +339,7 @@ fn build_schema_hover(
                     };
                     let identity = if col.is_identity { " IDENTITY" } else { "" };
                     cols.push_str(&format!(
-                        "\n  `{} {:?}`{}{}",
+                        "\n  `{} {}`{}{}",
                         col.name, col.data_type, nullable, identity
                     ));
                 }
@@ -365,7 +356,7 @@ fn build_schema_hover(
                 let mut params = String::new();
                 for p in &proc.parameters {
                     let output = if p.is_output { " OUTPUT" } else { "" };
-                    params.push_str(&format!("\n  `{} {:?}{}`", p.name, p.data_type, output));
+                    params.push_str(&format!("\n  `{} {}{}`", p.name, p.data_type, output));
                 }
                 return Some(format!(
                     "```tsql\nCREATE PROCEDURE {} ({}\n)\n```\n\n**Procedure** — {} parameter{}",
@@ -604,7 +595,7 @@ mod tests {
         match &h.contents {
             HoverContents::Markup(mc) => {
                 assert!(mc.value.contains("@count"));
-                assert!(mc.value.contains("Int"));
+                assert!(mc.value.contains("INT"));
                 assert!(mc.value.contains("Variable"));
             }
             _ => panic!("Expected Markup content"),
@@ -844,7 +835,7 @@ mod tests {
                     mc.value
                 );
                 assert!(
-                    mc.value.contains("Int"),
+                    mc.value.contains("INT"),
                     "Should show data type: {}",
                     mc.value
                 );

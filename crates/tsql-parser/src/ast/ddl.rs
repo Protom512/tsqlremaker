@@ -140,6 +140,42 @@ pub enum DataType {
     SmallMoney,
 }
 
+impl std::fmt::Display for DataType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DataType::Int => write!(f, "INT"),
+            DataType::SmallInt => write!(f, "SMALLINT"),
+            DataType::TinyInt => write!(f, "TINYINT"),
+            DataType::BigInt => write!(f, "BIGINT"),
+            DataType::Varchar(Some(n)) => write!(f, "VARCHAR({n})"),
+            DataType::Varchar(None) => write!(f, "VARCHAR"),
+            DataType::Char(n) => write!(f, "CHAR({n})"),
+            DataType::Decimal(Some(p), Some(s)) => write!(f, "DECIMAL({p},{s})"),
+            DataType::Decimal(Some(p), None) => write!(f, "DECIMAL({p})"),
+            DataType::Decimal(None, _) => write!(f, "DECIMAL"),
+            DataType::Numeric(Some(p), Some(s)) => write!(f, "NUMERIC({p},{s})"),
+            DataType::Numeric(Some(p), None) => write!(f, "NUMERIC({p})"),
+            DataType::Numeric(None, _) => write!(f, "NUMERIC"),
+            DataType::Float => write!(f, "FLOAT"),
+            DataType::Real => write!(f, "REAL"),
+            DataType::Double => write!(f, "DOUBLE"),
+            DataType::Date => write!(f, "DATE"),
+            DataType::Time => write!(f, "TIME"),
+            DataType::Datetime => write!(f, "DATETIME"),
+            DataType::SmallDateTime => write!(f, "SMALLDATETIME"),
+            DataType::Timestamp => write!(f, "TIMESTAMP"),
+            DataType::Bit => write!(f, "BIT"),
+            DataType::Text => write!(f, "TEXT"),
+            DataType::Binary(n) => write!(f, "BINARY({n})"),
+            DataType::VarBinary(Some(n)) => write!(f, "VARBINARY({n})"),
+            DataType::VarBinary(None) => write!(f, "VARBINARY"),
+            DataType::UniqueIdentifier => write!(f, "UNIQUEIDENTIFIER"),
+            DataType::Money => write!(f, "MONEY"),
+            DataType::SmallMoney => write!(f, "SMALLMONEY"),
+        }
+    }
+}
+
 /// テーブル制約
 #[derive(Debug, Clone)]
 pub enum TableConstraint {
