@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-02 / Session 9 (test coverage improvements)
+**最終更新:** 2026-06-03 / Session 10 (code quality improvements)
 
 ---
 
@@ -10,7 +10,7 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1097 passed, 2 skipped (+48 from Session 6) |
+| **テスト** | 1115 passed, 2 skipped (+18 from Session 9) |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Open Issues** | 11 |
@@ -18,6 +18,26 @@
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) |
 
 ---
+
+## 🔄 Session 10 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `5692413` | fix(analysis): avoid O(n) LineIndex recomputation in Clone impl |
+| `9446695` | refactor(code_actions): extract make_quickfix/make_refactor helpers |
+| `aa6c4ce` | refactor(workspace_symbols): deduplicate symbol iteration code |
+| `680659e` | test(completion): add 3 edge case tests for completion module |
+| `4e06ca7` | test(parser): add 12 to_common.rs conversion tests |
+| `f71cea4` | docs(emitter): clarify dead_code indentation helpers as future use |
+
+### 変更内容
+- **analysis.rs**: `DocumentAnalysis::clone()` が `LineIndex::new()` を再計算していたバグを修正（`derive(Clone)` + 直接clone）
+- **code_actions.rs**: 6箇所のCodeAction構築ボイラープレートを `make_quickfix()` / `make_refactor()` ヘルパーに抽出。`InsertSource` のワイルドカードマッチを明示的マッチに修正
+- **workspace_symbols.rs**: `push_matching()` + `collect_symbols()` ヘルパーで~80行の重複コードを削除（171行→87行）
+- **completion.rs**: 3テスト追加（システム変数、重複ラベル、構文エッジケース）
+- **common_ast_conversion.rs**: 12テスト追加（INSERT SELECT, CASE, ORDER/GROUP/HAVING, EXISTS, unary minus, NOT BETWEEN/LIKE, hex literal, BatchSeparator, CREATE方言固有, UPDATE/DELETE FROM方言固有, サブクエリ, 制御フロー）
+- **postgresql-emitter/sqlite-emitter**: `#[allow(dead_code)]` に「将来のフォーマット機能用」コメント追加
 
 ## 🔄 Session 8 成果
 
@@ -112,3 +132,4 @@ ase-ls (tower-lsp 0.20, lsp-types 0.94.1)
 | 7 | 4 | 1085 | dead code removal, +36 tests across 8 modules |
 | 8 | 1 | 1085 | fix parser infinite loop in error recovery |
 | 9 | 2 | 1097 | +12 tests for lib.rs, symbol_table, line_index |
+| 10 | 6 | 1115 | bug fix (analysis Clone), dedup 2 modules, +15 tests |
