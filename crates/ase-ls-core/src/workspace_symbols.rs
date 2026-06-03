@@ -8,8 +8,99 @@ use crate::analysis::DocumentAnalysis;
 use crate::symbol_table::SymbolTableBuilder;
 use lsp_types::{Location, SymbolInformation, SymbolKind, Url};
 
-/// DocumentAnalysisからクエリにマッチするシンボルを検索する
+/// Append symbols whose name matches `query_upper` (case-insensitive substring).
 #[allow(deprecated)]
+fn push_matching(
+    results: &mut Vec<SymbolInformation>,
+    symbols: impl Iterator<Item = (String, lsp_types::Range, Option<String>)>,
+    query_upper: &str,
+    uri: &Url,
+    kind: SymbolKind,
+) {
+    for (name, range, container_name) in symbols {
+        if name.to_uppercase().contains(query_upper) {
+            results.push(SymbolInformation {
+                name,
+                kind,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: uri.clone(),
+                    range,
+                },
+                container_name,
+            });
+        }
+    }
+}
+
+/// Collect all matching symbols from a symbol table into results.
+fn collect_symbols(
+    table: &crate::symbol_table::SymbolTable,
+    query_upper: &str,
+    uri: &Url,
+) -> Vec<SymbolInformation> {
+    let mut results = Vec::new();
+
+    push_matching(
+        &mut results,
+        table
+            .tables
+            .values()
+            .map(|s| (s.name.clone(), s.range, None)),
+        query_upper,
+        uri,
+        SymbolKind::CLASS,
+    );
+
+    push_matching(
+        &mut results,
+        table
+            .procedures
+            .values()
+            .map(|s| (s.name.clone(), s.range, None)),
+        query_upper,
+        uri,
+        SymbolKind::FUNCTION,
+    );
+
+    push_matching(
+        &mut results,
+        table
+            .views
+            .values()
+            .map(|s| (s.name.clone(), s.range, None)),
+        query_upper,
+        uri,
+        SymbolKind::INTERFACE,
+    );
+
+    push_matching(
+        &mut results,
+        table
+            .indexes
+            .values()
+            .map(|s| (s.name.clone(), s.range, Some(s.table_name.clone()))),
+        query_upper,
+        uri,
+        SymbolKind::PROPERTY,
+    );
+
+    push_matching(
+        &mut results,
+        table
+            .variables
+            .values()
+            .map(|s| (s.name.clone(), s.range, None)),
+        query_upper,
+        uri,
+        SymbolKind::VARIABLE,
+    );
+
+    results
+}
+
+/// DocumentAnalysisからクエリにマッチするシンボルを検索する
 pub fn workspace_symbols_with_analysis(
     analysis: &DocumentAnalysis,
     query: &str,
@@ -18,193 +109,18 @@ pub fn workspace_symbols_with_analysis(
     if query.is_empty() {
         return Vec::new();
     }
-
-    let query_upper = query.to_uppercase();
-    let mut results = Vec::new();
-
-    for sym in analysis.symbol_table.tables.values() {
-        if sym.name.to_uppercase().contains(&query_upper) {
-            results.push(SymbolInformation {
-                name: sym.name.clone(),
-                kind: SymbolKind::CLASS,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: uri.clone(),
-                    range: sym.range,
-                },
-                container_name: None,
-            });
-        }
-    }
-
-    for sym in analysis.symbol_table.procedures.values() {
-        if sym.name.to_uppercase().contains(&query_upper) {
-            results.push(SymbolInformation {
-                name: sym.name.clone(),
-                kind: SymbolKind::FUNCTION,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: uri.clone(),
-                    range: sym.range,
-                },
-                container_name: None,
-            });
-        }
-    }
-
-    for sym in analysis.symbol_table.views.values() {
-        if sym.name.to_uppercase().contains(&query_upper) {
-            results.push(SymbolInformation {
-                name: sym.name.clone(),
-                kind: SymbolKind::INTERFACE,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: uri.clone(),
-                    range: sym.range,
-                },
-                container_name: None,
-            });
-        }
-    }
-
-    for sym in analysis.symbol_table.indexes.values() {
-        if sym.name.to_uppercase().contains(&query_upper) {
-            results.push(SymbolInformation {
-                name: sym.name.clone(),
-                kind: SymbolKind::PROPERTY,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: uri.clone(),
-                    range: sym.range,
-                },
-                container_name: Some(sym.table_name.clone()),
-            });
-        }
-    }
-
-    for sym in analysis.symbol_table.variables.values() {
-        if sym.name.to_uppercase().contains(&query_upper) {
-            results.push(SymbolInformation {
-                name: sym.name.clone(),
-                kind: SymbolKind::VARIABLE,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: uri.clone(),
-                    range: sym.range,
-                },
-                container_name: None,
-            });
-        }
-    }
-
-    results
+    collect_symbols(&analysis.symbol_table, &query.to_uppercase(), uri)
 }
 
 /// ソースコードからクエリにマッチするシンボルを検索する（ソースから構築）
 ///
 /// 大文字小文字を区別しない部分一致でフィルタリングする。
-#[allow(deprecated)]
 pub fn workspace_symbols(source: &str, query: &str, uri: &Url) -> Vec<SymbolInformation> {
     if query.is_empty() {
         return Vec::new();
     }
-
     let table = SymbolTableBuilder::build_tolerant(source);
-    let query_upper = query.to_uppercase();
-    let mut results = Vec::new();
-
-    // テーブルシンボル
-    for sym in table.tables.values() {
-        if sym.name.to_uppercase().contains(&query_upper) {
-            results.push(SymbolInformation {
-                name: sym.name.clone(),
-                kind: SymbolKind::CLASS,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: uri.clone(),
-                    range: sym.range,
-                },
-                container_name: None,
-            });
-        }
-    }
-
-    // プロシージャシンボル
-    for sym in table.procedures.values() {
-        if sym.name.to_uppercase().contains(&query_upper) {
-            results.push(SymbolInformation {
-                name: sym.name.clone(),
-                kind: SymbolKind::FUNCTION,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: uri.clone(),
-                    range: sym.range,
-                },
-                container_name: None,
-            });
-        }
-    }
-
-    // ビューシンボル
-    for sym in table.views.values() {
-        if sym.name.to_uppercase().contains(&query_upper) {
-            results.push(SymbolInformation {
-                name: sym.name.clone(),
-                kind: SymbolKind::INTERFACE,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: uri.clone(),
-                    range: sym.range,
-                },
-                container_name: None,
-            });
-        }
-    }
-
-    // インデックスシンボル
-    for sym in table.indexes.values() {
-        if sym.name.to_uppercase().contains(&query_upper) {
-            results.push(SymbolInformation {
-                name: sym.name.clone(),
-                kind: SymbolKind::PROPERTY,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: uri.clone(),
-                    range: sym.range,
-                },
-                container_name: Some(sym.table_name.clone()),
-            });
-        }
-    }
-
-    // 変数シンボル
-    for sym in table.variables.values() {
-        let display_name = sym.name.clone();
-        if display_name.to_uppercase().contains(&query_upper) {
-            results.push(SymbolInformation {
-                name: display_name,
-                kind: SymbolKind::VARIABLE,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: uri.clone(),
-                    range: sym.range,
-                },
-                container_name: None,
-            });
-        }
-    }
-
-    results
+    collect_symbols(&table, &query.to_uppercase(), uri)
 }
 
 #[cfg(test)]
