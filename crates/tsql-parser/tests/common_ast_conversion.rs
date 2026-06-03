@@ -593,3 +593,348 @@ fn test_dialect_specific_statement_conversion() {
         _ => panic!("方言固有としてマークされるべき"),
     }
 }
+
+/// INSERT SELECT 文の変換テスト
+#[test]
+fn test_insert_select_conversion() {
+    use tsql_parser::common::{CommonInsertSource, CommonStatement};
+
+    let sql = "INSERT INTO users (id, name) SELECT id, name FROM temp_users";
+    let statements = parse(sql).unwrap();
+
+    let common_stmt = statements[0].to_common_ast().unwrap();
+    match common_stmt {
+        CommonStatement::Insert(insert) => {
+            assert_eq!(insert.table, "users");
+            assert_eq!(insert.columns.len(), 2);
+            match &insert.source {
+                CommonInsertSource::Select(_) => {} // OK
+                _ => panic!("INSERT SELECTであること"),
+            }
+        }
+        _ => panic!("INSERT文に変換されるべき"),
+    }
+}
+
+/// CASE 式の変換テスト
+#[test]
+fn test_case_expression_conversion() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT CASE WHEN id > 10 THEN 'big' ELSE 'small' END FROM t";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select_stmt) => match &select_stmt.columns[0] {
+            tsql_parser::SelectItem::Expression(expr, _) => {
+                let common = expr.to_common_expression();
+                assert!(common.is_some());
+                match common.unwrap() {
+                    tsql_parser::common::CommonExpression::Case(case) => {
+                        assert_eq!(case.branches.len(), 1);
+                        assert!(case.else_result.is_some());
+                    }
+                    _ => panic!("CASE式に変換されるべき"),
+                }
+            }
+            _ => panic!("式であること"),
+        },
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// ORDER BY / GROUP BY / HAVING の変換テスト
+#[test]
+fn test_select_order_group_having_conversion() {
+    use tsql_parser::common::CommonStatement;
+
+    let sql = "SELECT category, COUNT(*) FROM products GROUP BY category HAVING COUNT(*) > 5 ORDER BY category";
+    let statements = parse(sql).unwrap();
+
+    let common_stmt = statements[0].to_common_ast().unwrap();
+    match common_stmt {
+        CommonStatement::Select(select) => {
+            assert!(!select.group_by.is_empty(), "GROUP BYがあること");
+            assert!(select.having.is_some(), "HAVINGがあること");
+            assert!(!select.order_by.is_empty(), "ORDER BYがあること");
+        }
+        _ => panic!("SELECT文に変換されるべき"),
+    }
+}
+
+/// EXISTS 式の変換テスト
+#[test]
+fn test_exists_expression_conversion() {
+    use tsql_parser::parse_one;
+
+    let sql =
+        "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select_stmt) => {
+            if let Some(where_expr) = &select_stmt.where_clause {
+                let common = where_expr.to_common_expression();
+                assert!(common.is_some());
+                match common.unwrap() {
+                    tsql_parser::common::CommonExpression::Exists { negated, .. } => {
+                        assert!(!negated, "NOT EXISTSではない");
+                    }
+                    _ => panic!("EXISTS式に変換されるべき"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// CREATE 文は方言固有として変換されること
+#[test]
+fn test_create_statement_dialect_specific() {
+    use tsql_parser::common::CommonStatement;
+
+    let sql = "CREATE TABLE users (id INT, name VARCHAR(100))";
+    let statements = parse(sql).unwrap();
+
+    let common_stmt = statements[0].to_common_ast().unwrap();
+    match common_stmt {
+        CommonStatement::DialectSpecific { description, .. } => {
+            assert!(
+                description.contains("CREATE"),
+                "CREATE文は方言固有: {description}"
+            );
+        }
+        _ => panic!("CREATE文は方言固有として変換されるべき"),
+    }
+}
+
+/// UPDATE with FROM clause は方言固有として変換されること
+#[test]
+fn test_update_with_from_dialect_specific() {
+    use tsql_parser::common::CommonStatement;
+
+    // ASE supports UPDATE with FROM clause
+    let sql = "UPDATE users SET name = 'test' FROM users WHERE id = 1";
+    let statements = parse(sql).unwrap();
+
+    let common_stmt = statements[0].to_common_ast().unwrap();
+    match common_stmt {
+        CommonStatement::DialectSpecific { description, .. } => {
+            assert!(
+                description.contains("FROM"),
+                "UPDATE with FROMは方言固有: {description}"
+            );
+        }
+        _ => panic!("UPDATE with FROMは方言固有として変換されるべき"),
+    }
+}
+
+/// DELETE with FROM clause は方言固有として変換されること
+#[test]
+fn test_delete_with_from_dialect_specific() {
+    use tsql_parser::common::CommonStatement;
+
+    let sql = "DELETE users FROM users WHERE id = 1";
+    let statements = parse(sql).unwrap();
+
+    let common_stmt = statements[0].to_common_ast().unwrap();
+    match common_stmt {
+        CommonStatement::DialectSpecific { description, .. } => {
+            assert!(
+                description.contains("FROM"),
+                "DELETE with FROMは方言固有: {description}"
+            );
+        }
+        _ => panic!("DELETE with FROMは方言固有として変換されるべき"),
+    }
+}
+
+/// 単項マイナス演算子の変換テスト
+#[test]
+fn test_unary_minus_conversion() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT -price FROM products";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select_stmt) => match &select_stmt.columns[0] {
+            tsql_parser::SelectItem::Expression(expr, _) => {
+                let common = expr.to_common_expression();
+                assert!(common.is_some());
+                match common.unwrap() {
+                    tsql_parser::common::CommonExpression::UnaryOp { op, .. } => {
+                        assert_eq!(
+                            op,
+                            tsql_parser::common::CommonUnaryOperator::Minus,
+                            "マイナス演算子であること"
+                        );
+                    }
+                    _ => panic!("単項演算子に変換されるべき"),
+                }
+            }
+            _ => panic!("式であること"),
+        },
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// NOT BETWEEN の変換テスト
+#[test]
+fn test_not_between_conversion() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT * FROM products WHERE price NOT BETWEEN 100 AND 200";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select_stmt) => {
+            if let Some(where_expr) = &select_stmt.where_clause {
+                let common = where_expr.to_common_expression();
+                assert!(common.is_some());
+                match common.unwrap() {
+                    tsql_parser::common::CommonExpression::Between { negated, .. } => {
+                        assert!(negated, "NOT BETWEENであること");
+                    }
+                    _ => panic!("BETWEEN式に変換されるべき"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// NOT LIKE の変換テスト
+#[test]
+fn test_not_like_conversion() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT * FROM users WHERE name NOT LIKE 'John%'";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select_stmt) => {
+            if let Some(where_expr) = &select_stmt.where_clause {
+                let common = where_expr.to_common_expression();
+                assert!(common.is_some());
+                match common.unwrap() {
+                    tsql_parser::common::CommonExpression::Like { negated, .. } => {
+                        assert!(negated, "NOT LIKEであること");
+                    }
+                    _ => panic!("LIKE式に変換されるべき"),
+                }
+            }
+        }
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 16進数リテラルは変換不可 (Noneを返す)
+#[test]
+fn test_hex_literal_not_converted() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT 0xFF";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select_stmt) => match &select_stmt.columns[0] {
+            tsql_parser::SelectItem::Expression(expr, _) => {
+                let common = expr.to_common_expression();
+                assert!(common.is_none(), "16進数リテラルは変換不可であること");
+            }
+            _ => {}
+        },
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// BatchSeparator (GO) は None を返す
+#[test]
+fn test_batch_separator_returns_none() {
+    use tsql_parser::common::ToCommonAst;
+
+    let sql = "SELECT 1\nGO";
+    let statements = parse(sql).unwrap();
+
+    // GO is parsed as BatchSeparator
+    for stmt in &statements {
+        if matches!(stmt, tsql_parser::Statement::BatchSeparator(_)) {
+            assert!(
+                stmt.to_common_ast().is_none(),
+                "BatchSeparatorはNoneを返すべき"
+            );
+        }
+    }
+}
+
+/// Plus演算子 (+) の変換テスト
+/// T-SQLでは + は算術加算としてパースされ、Common ASTでもPlusに変換される。
+/// 文字列連結としての + は型推論が必要なため、パーサーレベルでは区別されない。
+#[test]
+fn test_plus_operator_conversion() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT price + 100 FROM products";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select_stmt) => match &select_stmt.columns[0] {
+            tsql_parser::SelectItem::Expression(expr, _) => {
+                let common = expr.to_common_expression();
+                assert!(common.is_some());
+                match common.unwrap() {
+                    tsql_parser::common::CommonExpression::BinaryOp { op, .. } => {
+                        assert_eq!(
+                            op,
+                            tsql_parser::common::CommonBinaryOperator::Plus,
+                            "Plus演算子であること"
+                        );
+                    }
+                    _ => panic!("二項演算子に変換されるべき"),
+                }
+            }
+            _ => panic!("式であること"),
+        },
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// サブクエリ式の変換テスト
+#[test]
+fn test_subquery_expression_conversion() {
+    use tsql_parser::parse_one;
+
+    let sql = "SELECT (SELECT MAX(id) FROM users) AS max_id";
+    let stmt = parse_one(sql).unwrap();
+
+    match stmt {
+        tsql_parser::Statement::Select(select_stmt) => match &select_stmt.columns[0] {
+            tsql_parser::SelectItem::Expression(expr, _) => {
+                let common = expr.to_common_expression();
+                assert!(common.is_some());
+                match common.unwrap() {
+                    tsql_parser::common::CommonExpression::Subquery { .. } => {}
+                    _ => panic!("サブクエリ式に変換されるべき"),
+                }
+            }
+            _ => panic!("式であること"),
+        },
+        _ => panic!("SELECT文であること"),
+    }
+}
+
+/// 制御フロー文 (IF, WHILE, TRY...CATCH等) は方言固有としてマークされること
+#[test]
+fn test_control_flow_dialect_specific() {
+    use tsql_parser::common::CommonStatement;
+
+    let sql = "IF 1 = 1 BEGIN SELECT 1 END";
+    let statements = parse(sql).unwrap();
+
+    let common_stmt = statements[0].to_common_ast().unwrap();
+    match common_stmt {
+        CommonStatement::DialectSpecific { .. } => {} // OK
+        _ => panic!("IF文は方言固有としてマークされるべき"),
+    }
+}
