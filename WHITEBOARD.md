@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-03 / Session 10 (code quality improvements)
+**最終更新:** 2026-06-03 / Session 11 (DataType Display, PR #123 review tests)
 
 ---
 
@@ -10,7 +10,7 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1115 passed, 2 skipped (+18 from Session 9) |
+| **テスト** | 1115 passed, 2 skipped |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Open Issues** | 11 |
@@ -18,6 +18,23 @@
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) |
 
 ---
+
+## 🔄 Session 11 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `fa2bbce` | feat(parser): implement Display for DataType + fix hover output |
+
+### コミット（PR #123 ブランチ）
+| コミット | 内容 |
+|---------|------|
+| `5aab4d5` | test(lsp): add regression + direct unit tests for INSERT column list |
+
+### 変更内容
+- **tsql-parser/ast/ddl.rs**: `DataType` enum に `Display` trait を実装。SQL標準の形式（`INT`, `VARCHAR(100)`, `DECIMAL(10,2)`）を出力。従来の `Debug`（`Int`, `Varchar(Some(100))`）をユーザー向け出力から排除
+- **hover.rs**: 全 `{:?}` を `{}` に置換し、`DataType` の Display を使用。TryCatch パターンを `chain().find_map()` に統一
+- **code_actions.rs**（PR #123）: CodeRabbit レビュー指摘に対応。9テスト追加（複数INSERT回帰テスト、`resolve_insert_stmt_end`/`find_values_token_start`/`build_fallback_symbol_table` の直接テスト）
 
 ## 🔄 Session 10 成果
 
