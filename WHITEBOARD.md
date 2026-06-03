@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-04 / Session 12 (Trigger support, integration tests, branch cleanup)
+**最終更新:** 2026-06-04 / Session 12 (Trigger full support, integration tests, branch cleanup)
 
 ---
 
@@ -10,7 +10,7 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1141 passed, 2 skipped |
+| **テスト** | 1142 passed, 2 skipped |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Open Issues** | 11 |
@@ -28,6 +28,7 @@
 | `b2694a7` | fix(references): detect CREATE UNIQUE INDEX and CREATE TRIGGER as definitions |
 | `da35bbb` | test(lsp): add 12 integration tests for definition, references, rename, code actions, diagnostics |
 | `6289865` | feat(lsp): track Trigger definitions in symbol table for navigation |
+| `df7dc01` | feat(lsp): add Trigger to workspace symbol search results |
 
 ### 変更内容
 - **folding.rs**: `collect_ast_folds` に Trigger ボディ再帰追加。Procedure body も再帰するよう修正（従来はトップレベルフォールドのみ）
@@ -35,6 +36,7 @@
 - **diagnostics.rs**: `collect_select_star_warnings` に Trigger ボディ再帰追加。Trigger 内の SELECT * が警告対象に
 - **code_actions.rs**: `find_block_at_offset` に Trigger ボディ再帰追加。Trigger 内の TRY...CATCH code action が動作するように
 - **symbol_table**: `TriggerSymbol` 構造体追加。`triggers` フィールドで Trigger 定義を追跡。Go to Definition と Hover が利用可能に
+- **workspace_symbols**: Trigger を EVENT kind で workspace symbol 検索結果に含めるように対応
 - **references.rs**: (前セッション) CREATE UNIQUE INDEX と CREATE TRIGGER を定義として検出
 - **テスト**: +5 テスト（folding 2, diagnostics 1, hover 1, code_actions 1）+ 12 統合テスト + 5 Trigger symbol tableテスト
 - **ブランチ整理**: `feat/114-alter-table-parser`（古い）と `feat/code-action-insert-column-list`（旧PR）を削除。リモート旧ブランチも削除
@@ -180,4 +182,4 @@ ase-ls (tower-lsp 0.20, lsp-types 0.94.1)
 | 9 | 2 | 1097 | +12 tests for lib.rs, symbol_table, line_index |
 | 10 | 6 | 1115 | bug fix (analysis Clone), dedup 2 modules, +15 tests |
 | 11 | 1 | 1115 | DataType Display impl + PR #123 review tests |
-| 12 | 5 | 1141 | Trigger full support (recursion + symbol table), +17 tests, branch cleanup |
+| 12 | 6 | 1142 | Trigger full support (recursion + symbol table + workspace symbols), +18 tests, branch cleanup |
