@@ -390,7 +390,7 @@ impl SqliteEmitter {
         self.indent_level = 0;
     }
 
-    /// 現在のインデントを取得
+    /// 現在のインデントを取得（将来のフォーマット機能用）
     #[allow(dead_code)]
     fn current_indent(&self) -> String {
         " ".repeat(self.indent_level * self.config.indent_size)
@@ -406,20 +406,20 @@ impl SqliteEmitter {
         self.buffer.push('\n');
     }
 
-    /// インデントを追加
+    /// インデントを追加（将来のフォーマット機能用）
     #[allow(dead_code)]
     fn write_indent(&mut self) {
         let indent = self.current_indent();
         self.buffer.push_str(&indent);
     }
 
-    /// インデントを増やす
+    /// インデントを増やす（将来のフォーマット機能用）
     #[allow(dead_code)]
     fn inc_indent(&mut self) {
         self.indent_level += 1;
     }
 
-    /// インデントを減らす
+    /// インデントを減らす（将来のフォーマット機能用）
     #[allow(dead_code)]
     fn dec_indent(&mut self) {
         if self.indent_level > 0 {
