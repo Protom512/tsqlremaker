@@ -22,7 +22,7 @@ impl Clone for DocumentAnalysis {
     fn clone(&self) -> Self {
         Self {
             source: self.source.clone(),
-            line_index: LineIndex::new(&self.source),
+            line_index: self.line_index.clone(),
             tokens: self.tokens.clone(),
             statements: self.statements.clone(),
             parse_errors: self.parse_errors.clone(),
