@@ -631,7 +631,8 @@ mod tests {
 
     #[test]
     fn test_select_star_inside_trigger_warns() {
-        let source = "CREATE TRIGGER tr_test ON users FOR INSERT AS\nBEGIN\n    SELECT * FROM users\nEND";
+        let source =
+            "CREATE TRIGGER tr_test ON users FOR INSERT AS\nBEGIN\n    SELECT * FROM users\nEND";
         let analysis = crate::analysis::DocumentAnalysis::new(source);
         let diags = diagnose(&analysis);
         let star_warnings: Vec<_> = diags

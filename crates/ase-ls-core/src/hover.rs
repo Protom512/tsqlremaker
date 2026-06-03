@@ -274,20 +274,18 @@ fn resolve_column_in_statement(
                 resolve_column_in_statement(child, symbol_table, offset, upper_ident)
             }),
         Statement::Create(create) => match &**create {
-            tsql_parser::ast::CreateStatement::Procedure(proc) => proc
-                .body
-                .iter()
-                .find_map(|child| {
+            tsql_parser::ast::CreateStatement::Procedure(proc) => {
+                proc.body.iter().find_map(|child| {
                     resolve_column_in_statement(child, symbol_table, offset, upper_ident)
-                }),
-            tsql_parser::ast::CreateStatement::Trigger(trigger) => trigger
-                .body
-                .iter()
-                .find_map(|child| {
+                })
+            }
+            tsql_parser::ast::CreateStatement::Trigger(trigger) => {
+                trigger.body.iter().find_map(|child| {
                     resolve_column_in_statement(child, symbol_table, offset, upper_ident)
-                }),
+                })
+            }
             _ => None,
-        }
+        },
         _ => None,
     }
 }

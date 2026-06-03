@@ -107,7 +107,7 @@ fn collect_ast_folds(
                 }
             }
             _ => {}
-        }
+        },
         // For other statements with nested bodies, recurse into children
         Statement::Select(_)
         | Statement::Insert(_)
@@ -438,7 +438,8 @@ mod tests {
 
     #[test]
     fn test_ast_fold_create_trigger() {
-        let source = "CREATE TRIGGER tr_test ON users FOR INSERT AS\nBEGIN\n    SELECT 1\n    SELECT 2\nEND";
+        let source =
+            "CREATE TRIGGER tr_test ON users FOR INSERT AS\nBEGIN\n    SELECT 1\n    SELECT 2\nEND";
         let analysis = make_analysis(source);
         let ranges = folding_ranges_with_analysis(&analysis);
         let region_folds = count_region_folds(&ranges);
