@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-04 / Session 18 (offset_to_range completion, remaining consolidation)
+**最終更新:** 2026-06-04 / Session 19 (formatting Cow optimization)
 
 ---
 
@@ -17,6 +17,20 @@
 | **Open PRs** | 1 (#123, rebased) |
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) |
 | **依存** | once_cell 依存を完全除去（std::sync::LazyLockに移行） |
+
+---
+
+## 🔄 Session 19 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `b38c32a` | perf(formatting): return Cow<str> from format_token to avoid allocation |
+
+### 変更内容
+- **formatting.rs**: `format_token` の戻り値を `String` → `Cow<'_, str>` に変更
+- 識別子・演算子・数字・句読点は `Cow::Borrowed` でゼロアロケーション
+- キーワード大文字化・文字列・コメントのみ `Cow::Owned` でアロケーション
 
 ---
 
