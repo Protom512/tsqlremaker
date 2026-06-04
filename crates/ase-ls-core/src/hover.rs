@@ -5,7 +5,7 @@
 
 use crate::analysis::DocumentAnalysis;
 use crate::line_index::LineIndex;
-use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Range};
+use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position};
 use tsql_lexer::Lexer;
 use tsql_parser::ast::{Statement, TableReference};
 use tsql_token::TokenKind;
@@ -39,24 +39,12 @@ pub fn hover_with_analysis(analysis: &DocumentAnalysis, position: Position) -> O
         }
     };
 
-    let (start_line, start_char) = analysis.line_index.offset_to_position(start as u32);
-    let (end_line, end_char) = analysis.line_index.offset_to_position(end as u32);
-
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
             value: content,
         }),
-        range: Some(Range {
-            start: Position {
-                line: start_line,
-                character: start_char,
-            },
-            end: Position {
-                line: end_line,
-                character: end_char,
-            },
-        }),
+        range: Some(analysis.line_index.offset_to_range(start as u32, end as u32)),
     })
 }
 
@@ -92,24 +80,12 @@ pub fn hover(source: &str, position: Position) -> Option<Hover> {
     let content = build_schema_hover(&symbol_table, &kind, &text)
         .or_else(|| build_hover_content(&kind, &text))?;
 
-    let (start_line, start_char) = line_index.offset_to_position(start as u32);
-    let (end_line, end_char) = line_index.offset_to_position(end as u32);
-
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
             value: content,
         }),
-        range: Some(Range {
-            start: Position {
-                line: start_line,
-                character: start_char,
-            },
-            end: Position {
-                line: end_line,
-                character: end_char,
-            },
-        }),
+        range: Some(line_index.offset_to_range(start as u32, end as u32)),
     })
 }
 

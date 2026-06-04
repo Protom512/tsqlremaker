@@ -559,18 +559,7 @@ impl SymbolTableBuilder {
 
 /// Span → LSP Range 変換
 fn span_to_range(line_index: &LineIndex, span: Span) -> Range {
-    let (start_line, start_char) = line_index.offset_to_position(span.start);
-    let (end_line, end_char) = line_index.offset_to_position(span.end);
-    Range {
-        start: Position {
-            line: start_line,
-            character: start_char,
-        },
-        end: Position {
-            line: end_line,
-            character: end_char,
-        },
-    }
+    line_index.offset_to_range(span.start, span.end)
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@
 use crate::analysis::DocumentAnalysis;
 use crate::line_index::LineIndex;
 use crate::{find_token_at, token_matches_symbol};
-use lsp_types::{Position, PrepareRenameResponse, Range, TextEdit, Url, WorkspaceEdit};
+use lsp_types::{Position, PrepareRenameResponse, TextEdit, Url, WorkspaceEdit};
 use std::collections::HashMap;
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
@@ -43,19 +43,8 @@ pub fn rename_with_analysis(
 
     for token in &analysis.tokens {
         if token_matches_symbol(token.kind, &token.text, &search_upper, is_var) {
-            let (start_line, start_char) = analysis.line_index.offset_to_position(token.span.start);
-            let (end_line, end_char) = analysis.line_index.offset_to_position(token.span.end);
             edits.push(TextEdit {
-                range: Range {
-                    start: Position {
-                        line: start_line,
-                        character: start_char,
-                    },
-                    end: Position {
-                        line: end_line,
-                        character: end_char,
-                    },
-                },
+                range: analysis.line_index.offset_to_range(token.span.start, token.span.end),
                 new_text: new_name.to_string(),
             });
         }
@@ -112,20 +101,8 @@ pub fn prepare_rename_with_analysis(
         return None;
     }
 
-    let (start_line, start_char) = analysis.line_index.offset_to_position(token.span.start);
-    let (end_line, end_char) = analysis.line_index.offset_to_position(token.span.end);
-
     Some(PrepareRenameResponse::RangeWithPlaceholder {
-        range: Range {
-            start: Position {
-                line: start_line,
-                character: start_char,
-            },
-            end: Position {
-                line: end_line,
-                character: end_char,
-            },
-        },
+        range: analysis.line_index.offset_to_range(token.span.start, token.span.end),
         placeholder: token.text.clone(),
     })
 }
@@ -164,19 +141,8 @@ pub fn rename(
         };
 
         if token_matches_symbol(token.kind, token.text, &search_upper, is_var) {
-            let (start_line, start_char) = line_index.offset_to_position(token.span.start);
-            let (end_line, end_char) = line_index.offset_to_position(token.span.end);
             edits.push(TextEdit {
-                range: Range {
-                    start: Position {
-                        line: start_line,
-                        character: start_char,
-                    },
-                    end: Position {
-                        line: end_line,
-                        character: end_char,
-                    },
-                },
+                range: line_index.offset_to_range(token.span.start, token.span.end),
                 new_text: new_name.to_string(),
             });
         }

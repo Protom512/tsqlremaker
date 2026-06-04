@@ -1,6 +1,6 @@
 //! Line offset index for O(log n) byte offset ↔ position conversion.
 
-use lsp_types::Position;
+use lsp_types::{Position, Range};
 
 /// Pre-computed line offset index for O(log n) position conversion.
 ///
@@ -67,6 +67,22 @@ impl LineIndex {
     /// Get the byte offset of the start of a line. O(1).
     pub fn line_offset(&self, line: usize) -> usize {
         self.line_offsets.get(line).copied().unwrap_or(0) as usize
+    }
+
+    /// Convert two byte offsets to an LSP Range. O(log n).
+    pub fn offset_to_range(&self, start_offset: u32, end_offset: u32) -> Range {
+        let (start_line, start_char) = self.offset_to_position(start_offset);
+        let (end_line, end_char) = self.offset_to_position(end_offset);
+        Range {
+            start: Position {
+                line: start_line,
+                character: start_char,
+            },
+            end: Position {
+                line: end_line,
+                character: end_char,
+            },
+        }
     }
 }
 

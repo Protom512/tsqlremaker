@@ -35,18 +35,7 @@ pub fn reference_ranges_with_analysis(
 
     for token in &analysis.tokens {
         if token_matches_symbol(token.kind, &token.text, &search_name, is_var) {
-            let (start_line, start_char) = analysis.line_index.offset_to_position(token.span.start);
-            let (end_line, end_char) = analysis.line_index.offset_to_position(token.span.end);
-            let range = Range {
-                start: Position {
-                    line: start_line,
-                    character: start_char,
-                },
-                end: Position {
-                    line: end_line,
-                    character: end_char,
-                },
-            };
+            let range = analysis.line_index.offset_to_range(token.span.start, token.span.end);
 
             let is_declaration = !include_declaration
                 && is_definition_token(&analysis.source, token.span.start as usize, is_var);
@@ -131,18 +120,7 @@ fn is_definition_token(source: &str, span_start: usize, is_var: bool) -> bool {
 
 /// トークンのSpanからLSP Rangeを生成
 fn token_span_to_range(line_index: &LineIndex, token: &tsql_lexer::Token<'_>) -> Range {
-    let (start_line, start_char) = line_index.offset_to_position(token.span.start);
-    let (end_line, end_char) = line_index.offset_to_position(token.span.end);
-    Range {
-        start: Position {
-            line: start_line,
-            character: start_char,
-        },
-        end: Position {
-            line: end_line,
-            character: end_char,
-        },
-    }
+    line_index.offset_to_range(token.span.start, token.span.end)
 }
 
 #[cfg(test)]

@@ -145,20 +145,9 @@ fn make_star_diagnostic(
     let star_token = find_star_token_after_select(&analysis.tokens, select_span)?;
     let star_u32 = star_token.span.start;
     let end_u32 = star_token.span.end.max(star_u32 + 1);
-    let start = analysis.line_index.offset_to_position(star_u32);
-    let end = analysis.line_index.offset_to_position(end_u32);
 
     Some(Diagnostic {
-        range: Range {
-            start: Position {
-                line: start.0,
-                character: start.1,
-            },
-            end: Position {
-                line: end.0,
-                character: end.1,
-            },
-        },
+        range: analysis.line_index.offset_to_range(star_u32, end_u32),
         severity: Some(DiagnosticSeverity::WARNING),
         source: Some(diagnostic_source()),
         message: "SELECT *: consider specifying explicit columns for better performance and maintainability".to_string(),
@@ -241,18 +230,7 @@ fn parse_error_to_diagnostic(line_index: &LineIndex, error: &ParseError) -> Diag
 fn error_range(line_index: &LineIndex, error: &ParseError) -> Range {
     match error.span() {
         Some(span) => {
-            let start = line_index.offset_to_position(span.start);
-            let end = line_index.offset_to_position(span.end.max(span.start + 1));
-            Range {
-                start: Position {
-                    line: start.0,
-                    character: start.1,
-                },
-                end: Position {
-                    line: end.0,
-                    character: end.1,
-                },
-            }
+            line_index.offset_to_range(span.start, span.end.max(span.start + 1))
         }
         None => {
             let pos = error.position();
