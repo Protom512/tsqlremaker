@@ -170,7 +170,7 @@ impl PostgreSqlEmitter {
     ) -> Result<String, EmitError> {
         self.reset();
         self.visit_statement(stmt)?;
-        Ok(self.buffer.clone())
+        Ok(std::mem::take(&mut self.buffer))
     }
 
     /// Common SQL AST を PostgreSQL SQL に変換（複数ステートメント）
@@ -193,7 +193,7 @@ impl PostgreSqlEmitter {
                 self.write(";\n");
             }
         }
-        Ok(self.buffer.clone())
+        Ok(std::mem::take(&mut self.buffer))
     }
 
     /// ステートメントを訪問

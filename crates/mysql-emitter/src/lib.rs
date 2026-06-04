@@ -118,7 +118,7 @@ impl MySqlEmitter {
     pub fn emit(&mut self, stmt: &CommonStatement) -> Result<String, EmitError> {
         self.reset();
         self.visit_statement(stmt)?;
-        Ok(self.buffer.clone())
+        Ok(std::mem::take(&mut self.buffer))
     }
 
     /// Common SQL AST を MySQL SQL に変換（複数ステートメント）
@@ -138,7 +138,7 @@ impl MySqlEmitter {
                 self.write(";\n");
             }
         }
-        Ok(self.buffer.clone())
+        Ok(std::mem::take(&mut self.buffer))
     }
 
     /// ステートメントを訪問
@@ -304,8 +304,7 @@ impl MySqlEmitter {
     ///
     /// MySQL SQL文字列
     pub fn visit_expression(&mut self, expr: &CommonExpression) -> Result<String, EmitError> {
-        let old_buffer = self.buffer.clone();
-        self.buffer.clear();
+        let old_buffer = std::mem::take(&mut self.buffer);
 
         match expr {
             CommonExpression::Literal(lit) => self.visit_literal(lit),
@@ -352,7 +351,7 @@ impl MySqlEmitter {
             }
         }?;
 
-        let result = self.buffer.clone();
+        let result = std::mem::take(&mut self.buffer);
         self.buffer = old_buffer;
         Ok(result)
     }
