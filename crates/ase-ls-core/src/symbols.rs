@@ -48,7 +48,7 @@ fn statement_to_symbol(line_index: &LineIndex, stmt: &Statement) -> Option<Docum
                     (td.name.name.clone(), SymbolKind::EVENT, td.span)
                 }
             };
-            let range = span_to_lsp_range(line_index,span.start, span.end);
+            let range = span_to_lsp_range(line_index, span.start, span.end);
             Some(make_symbol(name, kind, range))
         }
         Statement::Declare(decl) => {
@@ -58,11 +58,11 @@ fn statement_to_symbol(line_index: &LineIndex, stmt: &Statement) -> Option<Docum
                 .map(|v| v.name.name.as_str())
                 .collect();
             let name = format!("DECLARE {}", names.join(", "));
-            let range = span_to_lsp_range(line_index,decl.span.start, decl.span.end);
+            let range = span_to_lsp_range(line_index, decl.span.start, decl.span.end);
             Some(make_symbol(name, SymbolKind::VARIABLE, range))
         }
         Statement::Select(sel) => {
-            let range = span_to_lsp_range(line_index,sel.span.start, sel.span.end);
+            let range = span_to_lsp_range(line_index, sel.span.start, sel.span.end);
             Some(make_symbol(
                 "SELECT".to_string(),
                 SymbolKind::NAMESPACE,
@@ -71,18 +71,18 @@ fn statement_to_symbol(line_index: &LineIndex, stmt: &Statement) -> Option<Docum
         }
         Statement::Insert(ins) => {
             let name = format!("INSERT {}", ins.table.name);
-            let range = span_to_lsp_range(line_index,ins.span.start, ins.span.end);
+            let range = span_to_lsp_range(line_index, ins.span.start, ins.span.end);
             Some(make_symbol(name, SymbolKind::NAMESPACE, range))
         }
         Statement::Update(upd) => {
             let table_name = table_ref_name(&upd.table);
             let name = format!("UPDATE {table_name}");
-            let range = span_to_lsp_range(line_index,upd.span.start, upd.span.end);
+            let range = span_to_lsp_range(line_index, upd.span.start, upd.span.end);
             Some(make_symbol(name, SymbolKind::NAMESPACE, range))
         }
         Statement::Delete(del) => {
             let name = format!("DELETE FROM {}", del.table.name);
-            let range = span_to_lsp_range(line_index,del.span.start, del.span.end);
+            let range = span_to_lsp_range(line_index, del.span.start, del.span.end);
             Some(make_symbol(name, SymbolKind::NAMESPACE, range))
         }
         _ => None,

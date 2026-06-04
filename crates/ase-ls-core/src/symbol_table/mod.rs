@@ -6,8 +6,6 @@
 //! - ビュー定義（CREATE VIEW）とインデックス定義（CREATE INDEX）を抽出
 //! - 変数宣言（DECLARE）から変数情報を抽出
 
-#![allow(missing_docs)]
-
 use lsp_types::{Position, Range};
 use std::borrow::Borrow;
 use std::collections::HashMap;
@@ -22,10 +20,12 @@ use crate::line_index::LineIndex;
 /// Implements `Borrow<str>` so `HashMap::get("foo")` works directly.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CaseInsensitiveKey {
+    /// Uppercase-normalized name used for hashing and comparison.
     upper: String,
 }
 
 impl CaseInsensitiveKey {
+    /// Create a new case-insensitive key from any string.
     pub fn new(name: &str) -> Self {
         Self {
             upper: name.to_uppercase(),
@@ -62,91 +62,129 @@ pub struct SymbolTable {
     pub variables: HashMap<CaseInsensitiveKey, VariableSymbol>,
 }
 
-/// テーブルシンボル
+/// Table symbol extracted from `CREATE TABLE`.
 #[derive(Debug, Clone)]
 pub struct TableSymbol {
+    /// Table name (original casing).
     pub name: String,
+    /// LSP range of the table name in source.
     pub range: Range,
+    /// Columns defined in the table.
     pub columns: Vec<ColumnSymbol>,
+    /// Constraints defined on the table.
     pub constraints: Vec<ConstraintInfo>,
+    /// Whether this is a temporary table (`#` or `##` prefix).
     pub is_temporary: bool,
 }
 
-/// カラムシンボル
+/// Column symbol within a table definition.
 #[derive(Debug, Clone)]
 pub struct ColumnSymbol {
+    /// Column name.
     pub name: String,
+    /// LSP range of the column name in source.
     pub range: Range,
+    /// SQL data type of the column.
     pub data_type: DataType,
+    /// Whether the column is nullable (`None` means unspecified).
     pub nullable: Option<bool>,
+    /// Whether the column is an IDENTITY column.
     pub is_identity: bool,
+    /// Owning table name (for cross-reference).
     pub table_name: String,
 }
 
-/// 制約情報
+/// Constraint information attached to a table.
 #[derive(Debug, Clone)]
 pub struct ConstraintInfo {
+    /// Optional constraint name.
     pub name: Option<String>,
+    /// Kind of constraint (primary key, foreign key, unique).
     pub kind: ConstraintKind,
 }
 
-/// 制約種別
+/// Kind of table constraint.
 #[derive(Debug, Clone)]
 pub enum ConstraintKind {
+    /// `PRIMARY KEY (columns...)`
     PrimaryKey {
+        /// Column names in the primary key.
         columns: Vec<String>,
     },
+    /// `FOREIGN KEY (columns...) REFERENCES ref_table (ref_columns)`
     Foreign {
+        /// Column names in the foreign key.
         columns: Vec<String>,
+        /// Referenced table name.
         ref_table: String,
+        /// Referenced column names.
         ref_columns: Vec<String>,
     },
+    /// `UNIQUE (columns...)`
     Unique {
+        /// Column names in the unique constraint.
         columns: Vec<String>,
     },
 }
 
-/// プロシージャシンボル
+/// Procedure symbol extracted from `CREATE PROCEDURE`.
 #[derive(Debug, Clone)]
 pub struct ProcedureSymbol {
+    /// Procedure name (original casing).
     pub name: String,
+    /// LSP range of the procedure name in source.
     pub range: Range,
+    /// Parameters declared in the procedure signature.
     pub parameters: Vec<ParameterSymbol>,
-    /// プロシージャボディ内の変数
+    /// Variables declared inside the procedure body.
     pub body_variables: Vec<VariableSymbol>,
 }
 
-/// パラメータシンボル
+/// Parameter symbol in a procedure signature.
 #[derive(Debug, Clone)]
 pub struct ParameterSymbol {
+    /// Parameter name (includes `@` prefix).
     pub name: String,
+    /// LSP range of the parameter name in source.
     pub range: Range,
+    /// SQL data type of the parameter.
     pub data_type: DataType,
+    /// Whether the parameter is declared with OUTPUT.
     pub is_output: bool,
 }
 
-/// ビューシンボル
+/// View symbol extracted from `CREATE VIEW`.
 #[derive(Debug, Clone)]
 pub struct ViewSymbol {
+    /// View name (original casing).
     pub name: String,
+    /// LSP range of the view name in source.
     pub range: Range,
 }
 
-/// インデックスシンボル
+/// Index symbol extracted from `CREATE [UNIQUE] INDEX`.
 #[derive(Debug, Clone)]
 pub struct IndexSymbol {
+    /// Index name (original casing).
     pub name: String,
+    /// LSP range of the index name in source.
     pub range: Range,
+    /// Target table name.
     pub table_name: String,
+    /// Column names covered by the index.
     pub columns: Vec<String>,
+    /// Whether the index is unique.
     pub is_unique: bool,
 }
 
-/// 変数シンボル
+/// Variable symbol extracted from `DECLARE`.
 #[derive(Debug, Clone)]
 pub struct VariableSymbol {
+    /// Variable name (includes `@` prefix).
     pub name: String,
+    /// LSP range of the variable name in source.
     pub range: Range,
+    /// SQL data type of the variable.
     pub data_type: DataType,
 }
 

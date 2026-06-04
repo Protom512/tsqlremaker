@@ -72,21 +72,28 @@ impl DocumentAnalysis {
 
         let symbol_table = SymbolTableBuilder::build_tolerant(source);
         let symbol_table = if symbol_table.tables.is_empty()
-            && source.to_ascii_uppercase().contains("CREATE TABLE")
+            && source
+                .as_bytes()
+                .windows(b"CREATE TABLE".len())
+                .any(|w| w.eq_ignore_ascii_case(b"CREATE TABLE"))
         {
-            // Fallback: parse progressively shorter substrings to extract DDL definitions
-            // from partially valid sources (e.g., incomplete INSERT after CREATE TABLE)
-            let lines: Vec<&str> = source.lines().collect();
-            let mut best = symbol_table;
-            for cut in (1..lines.len()).rev() {
-                let partial: String = lines[..cut].join("\n");
-                let partial_table = SymbolTableBuilder::build_tolerant(&partial);
-                if !partial_table.tables.is_empty() {
-                    best = partial_table;
-                    break;
+            // Fallback: scan tokens to find the CREATE TABLE definition boundary,
+            // then parse just that portion. O(n) token scan + single parse attempt.
+            let table_end = find_create_table_end(&tokens);
+            if let Some(end) = table_end {
+                if let Some(partial) = source.get(..end) {
+                    let partial_table = SymbolTableBuilder::build_tolerant(partial);
+                    if !partial_table.tables.is_empty() {
+                        partial_table
+                    } else {
+                        symbol_table
+                    }
+                } else {
+                    symbol_table
                 }
+            } else {
+                symbol_table
             }
-            best
         } else {
             symbol_table
         };
@@ -134,6 +141,47 @@ impl DocumentAnalysis {
         let line_text = &self.source[start..end];
         line_text.trim_end_matches('\n').trim_end_matches('\r')
     }
+}
+
+/// Find the byte offset of the closing `)` that ends the first CREATE TABLE definition.
+///
+/// Scans the token stream for `CREATE TABLE ident (` ... `)` and returns the
+/// end offset of the matching `)`. Returns `None` if no such pattern is found
+/// or if the parentheses are unbalanced.
+fn find_create_table_end(tokens: &[OwnedToken]) -> Option<usize> {
+    let mut i = 0;
+    while i + 2 < tokens.len() {
+        if tokens[i].kind == TokenKind::Create
+            && tokens[i + 1].kind == TokenKind::Table
+            && tokens[i + 2].kind == TokenKind::Ident
+        {
+            // Skip past CREATE TABLE <ident> to find the opening (
+            let mut j = i + 3;
+            while j < tokens.len() && tokens[j].kind != TokenKind::LParen {
+                j += 1;
+            }
+            if j >= tokens.len() {
+                return None;
+            }
+            // Track paren depth to find the matching )
+            let mut depth = 0i32;
+            for tok in &tokens[j..] {
+                match tok.kind {
+                    TokenKind::LParen => depth += 1,
+                    TokenKind::RParen => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some(tok.span.end as usize);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return None; // Unbalanced parens
+        }
+        i += 1;
+    }
+    None
 }
 
 #[cfg(test)]
@@ -273,5 +321,51 @@ mod tests {
         let analysis = DocumentAnalysis::new("line1\r\nline2");
         assert_eq!(analysis.get_line(0), "line1");
         assert_eq!(analysis.get_line(1), "line2");
+    }
+
+    // --- Binary search fallback tests ---
+
+    #[test]
+    fn test_fallback_extracts_table_from_partial_source() {
+        // Full source has garbage after CREATE TABLE that breaks the parser.
+        // The fallback should find and extract the table definition.
+        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\nINSERT INTO users VALUES (";
+        let analysis = DocumentAnalysis::new(source);
+        assert!(
+            analysis.symbol_table.tables.contains_key("USERS"),
+            "Fallback should extract table from partial source"
+        );
+    }
+
+    #[test]
+    fn test_no_fallback_when_table_already_found() {
+        let source = "CREATE TABLE users (id INT)";
+        let analysis = DocumentAnalysis::new(source);
+        assert!(analysis.symbol_table.tables.contains_key("USERS"));
+    }
+
+    #[test]
+    fn test_no_fallback_without_create_table_keyword() {
+        let source = "SELECT * FROM users\nWHERE id = 1";
+        let analysis = DocumentAnalysis::new(source);
+        assert!(analysis.symbol_table.tables.is_empty());
+    }
+
+    #[test]
+    fn test_fallback_with_many_lines() {
+        // Stress test: many lines before the garbage
+        let mut lines = vec!["CREATE TABLE big_table (id INT".to_string()];
+        for i in 1..50 {
+            lines.push(format!("  , col_{i} VARCHAR(100)"));
+        }
+        lines.push(")".to_string());
+        lines.push("INSERT INTO big_table VALUES (1,".to_string()); // incomplete
+        let source = lines.join("\n");
+
+        let analysis = DocumentAnalysis::new(&source);
+        assert!(
+            analysis.symbol_table.tables.contains_key("BIG_TABLE"),
+            "Fallback should handle many-line sources"
+        );
     }
 }
