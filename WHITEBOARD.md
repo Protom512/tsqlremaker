@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-04 / Session 15 (PR #123 review verification, code quality improvements)
+**最終更新:** 2026-06-04 / Session 16 (once_cell removal, doc cleanup, minor refactors)
 
 ---
 
@@ -10,12 +10,35 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1147 passed, 2 skipped |
+| **テスト** | 1146 passed, 2 skipped |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Open Issues** | 11 |
 | **Open PRs** | 1 (#123, rebased) |
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) |
+| **依存** | once_cell 依存を完全除去（std::sync::LazyLockに移行） |
+
+---
+
+## 🔄 Session 16 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `3c05ed4` | refactor: replace once_cell::sync::Lazy with std::sync::LazyLock |
+| `97fe528` | style(core): dedup diagnostics tests, centralize source string, clarify deprecated allow |
+| `7fedde2` | docs(lsp): add crate-level and constructor doc comments for ase-ls |
+
+### 変更内容
+- **全クレート**: `once_cell::sync::Lazy` → `std::sync::LazyLock` に移行。once_cell依存を完全除去（Cargo.toml workspace + 4 crate）
+- **diagnostics.rs**: 重複テスト `test_insert_select_star_warns` を削除。`diagnostic_source()` ヘルパーで "ase-ls" リテラルを一元化
+- **workspace_symbols.rs**: `#[allow(deprecated)]` に理由コメント追加（lsp-types 0.94 / tower-lsp 0.20 制約）
+- **ase-ls/lib.rs**: クレートレベルdoc追加。`AseLanguageServer::new()` にdoc comment追加。全クレートでmissing_docs警告ゼロ達成
+
+### 品質状況
+- **依存削減**: once_cell (1.21) をworkspace依存から完全除去
+- **ドキュメント**: `RUSTFLAGS="-W missing_docs"` で全クレート警告ゼロ
+- **テスト**: 1146 passed（重複テスト1件削除で-1）
 
 ---
 
