@@ -54,60 +54,6 @@ pub fn code_actions_with_analysis(
     actions
 }
 
-/// Code Actionsを生成する（ソースから構築）
-pub fn code_actions(source: &str, range: Range, uri: &lsp_types::Url) -> Vec<CodeActionOrCommand> {
-    let mut actions = Vec::new();
-
-    // カーソル位置の行を取得
-    let line_text = get_line_at(source, range.start.line);
-    if line_text.is_empty() {
-        return actions;
-    }
-
-    // シンボルテーブルを構築（現在行より前の部分も試行）
-    let symbol_table = build_fallback_symbol_table(source);
-
-    // SELECT * FROM table → カラム展開
-    if let Some(action) = try_expand_select_star(&symbol_table, line_text, range.start, uri) {
-        actions.push(CodeActionOrCommand::CodeAction(action));
-    }
-
-    // INSERT INTO table → VALUES骨組み生成
-    if let Some(action) = try_generate_insert_skeleton(&symbol_table, line_text, range.start, uri) {
-        actions.push(CodeActionOrCommand::CodeAction(action));
-    }
-
-    // BEGIN → TRY...CATCH ラッパー
-    if let Some(action) = try_wrap_try_catch(source, line_text, range.start, uri) {
-        actions.push(CodeActionOrCommand::CodeAction(action));
-    }
-
-    actions
-}
-
-/// フォールバック付きシンボルテーブル構築
-///
-/// 完全なパースに失敗した場合、ソースを行ごとに分割して
-/// 前方部分だけをパースし、DDL定義を抽出する。
-fn build_fallback_symbol_table(source: &str) -> crate::symbol_table::SymbolTable {
-    let table = SymbolTableBuilder::build_tolerant(source);
-    if !table.tables.is_empty() {
-        return table;
-    }
-
-    // フォールバック: 前方から徐々に短くしてパースを試行
-    let lines: Vec<&str> = source.lines().collect();
-    for cut in (1..lines.len()).rev() {
-        let partial: String = lines[..cut].join("\n");
-        let partial_table = SymbolTableBuilder::build_tolerant(&partial);
-        if !partial_table.tables.is_empty() {
-            return partial_table;
-        }
-    }
-
-    table
-}
-
 /// Find the SELECT statement with Wildcard that the cursor position falls within.
 /// Uses token spans instead of statement spans because the parser may produce
 /// incorrect end offsets for multi-line statements.
@@ -307,77 +253,14 @@ fn try_generate_insert_skeleton_ast(
     // Replace the entire INSERT statement span
     let edit = make_text_edit(
         uri,
-        analysis.line_index.offset_to_range(ins.span.start, ins.span.end),
+        analysis
+            .line_index
+            .offset_to_range(ins.span.start, ins.span.end),
         new_text,
     );
 
     Some(make_quickfix(
         format!("Generate INSERT skeleton for {table_name}"),
-        edit,
-    ))
-}
-
-/// SELECT * FROM table → カラム展開クイックフィックス
-fn try_expand_select_star(
-    symbol_table: &crate::symbol_table::SymbolTable,
-    line_text: &str,
-    position: Position,
-    uri: &lsp_types::Url,
-) -> Option<CodeAction> {
-    let upper = line_text.to_uppercase();
-
-    // SELECT * FROM パターンを検索
-    let star_pos = upper.find("SELECT *")?;
-    let from_pos = upper.find("FROM")?;
-    if from_pos < star_pos + 8 {
-        return None;
-    }
-
-    // テーブル名を抽出
-    let after_from = line_text[from_pos + 4..].trim();
-    let table_name = after_from
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .trim_end_matches(';')
-        .trim_end_matches(',');
-
-    if table_name.is_empty() {
-        return None;
-    }
-
-    // シンボルテーブルからテーブルのカラムを検索
-    let tbl = SymbolTableBuilder::find_table(symbol_table, table_name)?;
-
-    if tbl.columns.is_empty() {
-        return None;
-    }
-
-    // カラム展開テキストを生成
-    let columns: Vec<String> = tbl.columns.iter().map(|c| c.name.clone()).collect();
-    let expanded = format!("SELECT {}", columns.join(", "));
-
-    // * の位置を特定
-    let star_start = star_pos + "SELECT ".len();
-    let star_end = star_start + 1;
-
-    let edit = make_text_edit(
-        uri,
-        Range {
-            start: Position {
-                line: position.line,
-                character: star_start as u32,
-            },
-            end: Position {
-                line: position.line,
-                character: star_end as u32,
-            },
-        },
-        expanded,
-    );
-
-    Some(make_quickfix(
-        format!("Expand SELECT * with columns from {table_name}"),
         edit,
     ))
 }
@@ -709,10 +592,6 @@ fn resolve_block_end(
     }
     resolve_span_end_fallback(span.start as usize, analysis)
 }
-fn get_line_at(source: &str, line: u32) -> &str {
-    source.lines().nth(line as usize).unwrap_or("")
-}
-
 /// WorkspaceEdit を生成するヘルパー
 fn make_text_edit(uri: &lsp_types::Url, range: Range, new_text: String) -> WorkspaceEdit {
     #[allow(clippy::mutable_key_type)]
@@ -763,199 +642,6 @@ mod tests {
 
     fn test_uri() -> Url {
         Url::parse("file:///test.sql").unwrap()
-    }
-
-    #[test]
-    fn test_expand_select_star() {
-        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\nSELECT * FROM users";
-        let range = Range {
-            start: Position {
-                line: 1,
-                character: 0,
-            },
-            end: Position {
-                line: 1,
-                character: 20,
-            },
-        };
-        let actions = code_actions(source, range, &test_uri());
-        let expand_action = actions.iter().find(
-            |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Expand")),
-        );
-        assert!(expand_action.is_some());
-        if let CodeActionOrCommand::CodeAction(ca) = expand_action.unwrap() {
-            assert_eq!(ca.kind, Some(CodeActionKind::QUICKFIX));
-        }
-    }
-
-    #[test]
-    fn test_expand_select_star_columns() {
-        let source = "CREATE TABLE users (id INT, name VARCHAR(100), email VARCHAR(200))\nSELECT * FROM users";
-        let range = Range {
-            start: Position {
-                line: 1,
-                character: 0,
-            },
-            end: Position {
-                line: 1,
-                character: 20,
-            },
-        };
-        let actions = code_actions(source, range, &test_uri());
-        let expand = actions.iter().find(
-            |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Expand")),
-        );
-        assert!(expand.is_some());
-        if let CodeActionOrCommand::CodeAction(ca) = expand.unwrap() {
-            let edit = ca.edit.as_ref().unwrap();
-            let changes = edit.changes.as_ref().unwrap();
-            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
-            assert!(text_edit.new_text.contains("id"));
-            assert!(text_edit.new_text.contains("name"));
-            assert!(text_edit.new_text.contains("email"));
-        }
-    }
-
-    #[test]
-    fn test_generate_insert_skeleton() {
-        let source = "CREATE TABLE users (id INT, name VARCHAR(100))\nINSERT INTO users";
-        let range = Range {
-            start: Position {
-                line: 1,
-                character: 0,
-            },
-            end: Position {
-                line: 1,
-                character: 16,
-            },
-        };
-        let actions = code_actions(source, range, &test_uri());
-        let insert_action = actions.iter().find(
-            |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT")),
-        );
-        assert!(insert_action.is_some());
-        if let CodeActionOrCommand::CodeAction(ca) = insert_action.unwrap() {
-            let edit = ca.edit.as_ref().unwrap();
-            let changes = edit.changes.as_ref().unwrap();
-            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
-            assert!(text_edit.new_text.contains("(id, name)"));
-            assert!(text_edit.new_text.contains("VALUES (?, ?)"));
-        }
-    }
-
-    #[test]
-    fn test_wrap_try_catch() {
-        let source = "CREATE PROCEDURE test_proc AS\nBEGIN\n    SELECT 1\nEND";
-        let range = Range {
-            start: Position {
-                line: 1,
-                character: 0,
-            },
-            end: Position {
-                line: 1,
-                character: 5,
-            },
-        };
-        let actions = code_actions(source, range, &test_uri());
-        let try_catch = actions
-            .iter()
-            .find(|a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("TRY")));
-        assert!(try_catch.is_some());
-        if let CodeActionOrCommand::CodeAction(ca) = try_catch.unwrap() {
-            let edit = ca.edit.as_ref().unwrap();
-            let changes = edit.changes.as_ref().unwrap();
-            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
-            assert!(text_edit.new_text.contains("BEGIN TRY"));
-            assert!(text_edit.new_text.contains("BEGIN CATCH"));
-            // Range covers BEGIN (line 1) through END (line 3)
-            assert_eq!(text_edit.range.start.line, 1);
-            assert_eq!(text_edit.range.end.line, 3);
-        }
-    }
-
-    #[test]
-    fn test_wrap_try_catch_nested_begin_end() {
-        let source = "BEGIN\n    BEGIN\n        SELECT 1\n    END\nEND";
-        let range = Range {
-            start: Position {
-                line: 0,
-                character: 0,
-            },
-            end: Position {
-                line: 0,
-                character: 5,
-            },
-        };
-        let actions = code_actions(source, range, &test_uri());
-        let try_catch = actions
-            .iter()
-            .find(|a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("TRY")));
-        assert!(try_catch.is_some());
-        if let CodeActionOrCommand::CodeAction(ca) = try_catch.unwrap() {
-            let edit = ca.edit.as_ref().unwrap();
-            let changes = edit.changes.as_ref().unwrap();
-            let text_edit = changes.get(&test_uri()).unwrap().first().unwrap();
-            // Should match outer BEGIN (line 0) with outer END (line 4)
-            assert_eq!(text_edit.range.start.line, 0);
-            assert_eq!(text_edit.range.end.line, 4);
-        }
-    }
-
-    #[test]
-    fn test_wrap_try_catch_no_matching_end() {
-        let source = "BEGIN\n    SELECT 1";
-        let range = Range {
-            start: Position {
-                line: 0,
-                character: 0,
-            },
-            end: Position {
-                line: 0,
-                character: 5,
-            },
-        };
-        let actions = code_actions(source, range, &test_uri());
-        let try_catch = actions
-            .iter()
-            .find(|a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("TRY")));
-        assert!(try_catch.is_none());
-    }
-
-    #[test]
-    fn test_no_action_on_regular_line() {
-        let source = "SELECT id, name FROM users";
-        let range = Range {
-            start: Position {
-                line: 0,
-                character: 0,
-            },
-            end: Position {
-                line: 0,
-                character: 10,
-            },
-        };
-        let actions = code_actions(source, range, &test_uri());
-        assert!(actions.is_empty());
-    }
-
-    #[test]
-    fn test_insert_skip_when_values_exists() {
-        let source = "CREATE TABLE users (id INT)\nINSERT INTO users VALUES (1)";
-        let range = Range {
-            start: Position {
-                line: 1,
-                character: 0,
-            },
-            end: Position {
-                line: 1,
-                character: 16,
-            },
-        };
-        let actions = code_actions(source, range, &test_uri());
-        let insert_action = actions.iter().find(|a| {
-            matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT skeleton"))
-        });
-        assert!(insert_action.is_none());
     }
 
     // === AST-aware tests (RED phase for #68) ===

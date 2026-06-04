@@ -7,10 +7,8 @@
 //! - ビュー: CREATE VIEW + SELECT内の参照
 
 use crate::analysis::DocumentAnalysis;
-use crate::line_index::LineIndex;
-use crate::{find_token_at, token_matches_symbol};
+use crate::token_matches_symbol;
 use lsp_types::{Position, Range};
-use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
 
 /// カーソル位置のシンボルの全参照箇所を検索する（DocumentAnalysis利用）
@@ -35,7 +33,9 @@ pub fn reference_ranges_with_analysis(
 
     for token in &analysis.tokens {
         if token_matches_symbol(token.kind, &token.text, &search_name, is_var) {
-            let range = analysis.line_index.offset_to_range(token.span.start, token.span.end);
+            let range = analysis
+                .line_index
+                .offset_to_range(token.span.start, token.span.end);
 
             let is_declaration = !include_declaration
                 && is_definition_token(&analysis.source, token.span.start as usize, is_var);
@@ -47,48 +47,6 @@ pub fn reference_ranges_with_analysis(
     }
 
     refs.dedup_by(|a, b| a.start == b.start && a.end == b.end);
-    refs
-}
-
-/// カーソル位置のシンボルの全参照箇所を検索する
-///
-/// `include_declaration` が true の場合は定義箇所も含める。
-pub fn reference_ranges(source: &str, position: Position, include_declaration: bool) -> Vec<Range> {
-    let line_index = LineIndex::new(source);
-    let offset = line_index.position_to_offset(source, position);
-
-    let (target_kind, target_text) = match find_token_at(source, offset) {
-        Some(t) => t,
-        None => return Vec::new(),
-    };
-
-    let search_name = target_text.to_uppercase();
-    let is_var = target_kind == TokenKind::LocalVar;
-
-    let mut refs = Vec::new();
-
-    for token_result in Lexer::new(source) {
-        let token = match token_result {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-
-        if token_matches_symbol(token.kind, token.text, &search_name, is_var) {
-            let range = token_span_to_range(&line_index, &token);
-
-            // 定義箇所の判定
-            let is_declaration = !include_declaration
-                && is_definition_token(source, token.span.start as usize, is_var);
-
-            if include_declaration || !is_declaration {
-                refs.push(range);
-            }
-        }
-    }
-
-    // 重複除去
-    refs.dedup_by(|a, b| a.start == b.start && a.end == b.end);
-
     refs
 }
 
@@ -118,230 +76,12 @@ fn is_definition_token(source: &str, span_start: usize, is_var: bool) -> bool {
     false
 }
 
-/// トークンのSpanからLSP Rangeを生成
-fn token_span_to_range(line_index: &LineIndex, token: &tsql_lexer::Token<'_>) -> Range {
-    line_index.offset_to_range(token.span.start, token.span.end)
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::panic)]
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_references_variable_with_declaration() {
-        let source = "DECLARE @count INT\nSET @count = 1\nSELECT @count";
-        let ranges = reference_ranges(
-            source,
-            Position {
-                line: 1,
-                character: 5,
-            },
-            true,
-        );
-        assert_eq!(ranges.len(), 3);
-    }
-
-    #[test]
-    fn test_references_variable_without_declaration() {
-        let source = "DECLARE @count INT\nSET @count = 1\nSELECT @count";
-        let ranges = reference_ranges(
-            source,
-            Position {
-                line: 1,
-                character: 5,
-            },
-            false,
-        );
-        assert_eq!(ranges.len(), 2);
-    }
-
-    #[test]
-    fn test_references_table_name() {
-        let source = "CREATE TABLE users (id INT)\nSELECT * FROM users\nDELETE FROM users";
-        let ranges = reference_ranges(
-            source,
-            Position {
-                line: 0,
-                character: 14,
-            },
-            true,
-        );
-        assert!(ranges.len() >= 2);
-    }
-
-    #[test]
-    fn test_references_no_match() {
-        let source = "DECLARE @count INT\nSET @other = 1";
-        let ranges = reference_ranges(
-            source,
-            Position {
-                line: 1,
-                character: 5,
-            },
-            true,
-        );
-        assert_eq!(ranges.len(), 1);
-    }
-
-    #[test]
-    fn test_references_case_insensitive_table() {
-        let source = "CREATE TABLE Users (id INT)\nSELECT * FROM users";
-        let ranges = reference_ranges(
-            source,
-            Position {
-                line: 0,
-                character: 14,
-            },
-            true,
-        );
-        assert!(ranges.len() >= 2);
-    }
-
-    #[test]
-    fn test_references_empty_on_whitespace() {
-        let source = "SELECT  FROM t";
-        let ranges = reference_ranges(
-            source,
-            Position {
-                line: 0,
-                character: 7,
-            },
-            true,
-        );
-        assert!(ranges.is_empty());
-    }
-
-    #[test]
-    fn test_references_procedure() {
-        let source = "CREATE PROCEDURE my_proc AS BEGIN RETURN 1 END\nEXEC my_proc";
-        let ranges = reference_ranges(
-            source,
-            Position {
-                line: 0,
-                character: 18,
-            },
-            true,
-        );
-        assert!(ranges.len() >= 2);
-    }
-
-    #[test]
-    fn test_references_table_in_insert() {
-        let source = "CREATE TABLE orders (id INT)\nINSERT INTO orders (id) VALUES (1)\nSELECT * FROM orders";
-        let ranges = reference_ranges(
-            source,
-            Position {
-                line: 0,
-                character: 14,
-            },
-            true,
-        );
-        // CREATE TABLE, INSERT INTO, SELECT FROM
-        assert!(ranges.len() >= 3);
-    }
-
-    #[test]
-    fn test_references_view() {
-        let source = "CREATE VIEW active_users AS SELECT * FROM users\nSELECT * FROM active_users";
-        let ranges = reference_ranges(
-            source,
-            Position {
-                line: 1,
-                character: 15,
-            },
-            true,
-        );
-        assert!(ranges.len() >= 2);
-    }
-
-    #[test]
-    fn test_references_exclude_table_definition() {
-        let source = "CREATE TABLE users (id INT)\nSELECT * FROM users";
-        let ranges = reference_ranges(
-            source,
-            Position {
-                line: 0,
-                character: 14,
-            },
-            false, // exclude declaration
-        );
-        // Should NOT include the CREATE TABLE line (it's a definition)
-        // Should include the SELECT FROM line (it's a reference)
-        assert!(!ranges.is_empty());
-        // None of the ranges should be on line 0 (definition excluded)
-        for range in &ranges {
-            assert_ne!(range.start.line, 0, "Definition should be excluded");
-        }
-    }
-
-    #[test]
-    fn test_references_dedup_identical_ranges() {
-        // Same token appearing multiple times should be deduped
-        let source = "SELECT * FROM users WHERE users.id = 1";
-        let ranges = reference_ranges(
-            source,
-            Position {
-                line: 0,
-                character: 15,
-            },
-            true,
-        );
-        // "users" appears twice, should have 2 distinct ranges (not duplicated)
-        assert_eq!(ranges.len(), 2);
-        // Ranges should be unique
-        for i in 0..ranges.len() {
-            for j in (i + 1)..ranges.len() {
-                assert!(ranges[i].start != ranges[j].start || ranges[i].end != ranges[j].end);
-            }
-        }
-    }
-
-    #[test]
-    fn test_references_variable_comma_separated_declare() {
-        let source = "DECLARE @a INT, @b INT\nSET @a = 1\nSET @b = 2";
-        let ranges_with_decl = reference_ranges(
-            source,
-            Position {
-                line: 1,
-                character: 5,
-            },
-            true,
-        );
-        // @a: DECLARE + SET @a = 1
-        assert!(ranges_with_decl.len() >= 2);
-
-        let ranges_no_decl = reference_ranges(
-            source,
-            Position {
-                line: 1,
-                character: 5,
-            },
-            false,
-        );
-        // Only SET @a = 1 (DECLARE excluded)
-        assert_eq!(ranges_no_decl.len(), 1);
-    }
-
-    #[test]
-    fn test_references_range_has_correct_bounds() {
-        let source = "CREATE TABLE users (id INT)\nSELECT * FROM users";
-        let ranges = reference_ranges(
-            source,
-            Position {
-                line: 0,
-                character: 14,
-            },
-            true,
-        );
-        for range in &ranges {
-            assert!(
-                range.end.character > range.start.character || range.end.line > range.start.line
-            );
-        }
-    }
 
     // --- reference_ranges_with_analysis tests ---
 

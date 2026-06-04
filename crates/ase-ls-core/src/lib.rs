@@ -26,32 +26,7 @@ pub mod symbol_table;
 pub mod symbols;
 pub mod workspace_symbols;
 
-pub use tsql_lexer::Lexer;
 pub use tsql_parser::Parser;
-
-/// カーソル位置のトークンを特定する（共有ユーティリティ）
-///
-/// 指定バイトオフセットに含まれるトークンの種類とテキストを返す。
-pub(crate) fn find_token_at(
-    source: &str,
-    offset: usize,
-) -> Option<(tsql_token::TokenKind, String)> {
-    for token_result in Lexer::new(source) {
-        let token = match token_result {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-        let start = token.span.start as usize;
-        let end = token.span.end as usize;
-        if offset >= start && offset < end {
-            return Some((token.kind, token.text.to_string()));
-        }
-        if start > offset {
-            break;
-        }
-    }
-    None
-}
 
 /// トークンがシンボル名にマッチするかを判定する（共有ユーティリティ）
 ///
@@ -96,54 +71,6 @@ pub(crate) fn token_matches_symbol(
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_find_token_at_start_of_token() {
-        let source = "SELECT * FROM users";
-        let result = find_token_at(source, 0);
-        assert!(result.is_some());
-        let (kind, text) = result.unwrap();
-        assert_eq!(text, "SELECT");
-        assert_eq!(kind, tsql_token::TokenKind::Select);
-    }
-
-    #[test]
-    fn test_find_token_at_mid_token() {
-        let source = "SELECT * FROM users";
-        let result = find_token_at(source, 2);
-        assert!(result.is_some());
-        let (kind, text) = result.unwrap();
-        assert_eq!(text, "SELECT");
-        assert_eq!(kind, tsql_token::TokenKind::Select);
-    }
-
-    #[test]
-    fn test_find_token_at_end_boundary() {
-        let source = "SELECT * FROM users";
-        // "SELECT" is bytes 0..6, so offset 6 is past it
-        let result = find_token_at(source, 6);
-        // offset 6 should be whitespace, not SELECT
-        assert!(
-            result.is_none()
-                || result
-                    .map(|(k, _)| k != tsql_token::TokenKind::Select)
-                    .unwrap_or(true)
-        );
-    }
-
-    #[test]
-    fn test_find_token_at_past_all_tokens() {
-        let source = "SELECT";
-        let result = find_token_at(source, 100);
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_find_token_at_whitespace() {
-        let source = "SELECT  FROM t";
-        let result = find_token_at(source, 7);
-        assert!(result.is_none());
-    }
 
     #[test]
     fn test_token_matches_symbol_variable() {
@@ -191,12 +118,6 @@ mod tests {
             "TABLE",
             false
         ));
-    }
-
-    #[test]
-    fn test_find_token_at_empty_source() {
-        let result = find_token_at("", 0);
-        assert!(result.is_none());
     }
 
     #[test]
