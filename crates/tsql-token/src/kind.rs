@@ -372,6 +372,8 @@ impl TokenKind {
                 | Self::Save
                 | Self::Savepoint
                 | Self::Go
+                | Self::Exec
+                | Self::Execute
         )
     }
 }

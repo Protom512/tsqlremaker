@@ -81,22 +81,9 @@ pub(crate) fn token_matches_symbol(
     if is_var {
         kind == tsql_token::TokenKind::LocalVar && text.to_uppercase() == search_upper
     } else {
-        (kind == tsql_token::TokenKind::Ident
-            || matches!(
-                kind,
-                tsql_token::TokenKind::Select
-                    | tsql_token::TokenKind::From
-                    | tsql_token::TokenKind::Insert
-                    | tsql_token::TokenKind::Update
-                    | tsql_token::TokenKind::Delete
-                    | tsql_token::TokenKind::Create
-                    | tsql_token::TokenKind::Exec
-                    | tsql_token::TokenKind::Procedure
-                    | tsql_token::TokenKind::Table
-                    | tsql_token::TokenKind::View
-                    | tsql_token::TokenKind::Index
-            )
-            || kind.is_keyword())
+        // Ident and any keyword can be an object name in T-SQL
+        // (e.g., table named "Select", "Create", etc.)
+        (kind == tsql_token::TokenKind::Ident || kind.is_keyword())
             && text.to_uppercase() == search_upper
     }
 }
