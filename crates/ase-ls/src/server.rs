@@ -84,9 +84,9 @@ impl LanguageServer for AseLanguageServer {
                 completion_provider: Some(CompletionOptions {
                     resolve_provider: Some(false),
                     trigger_characters: Some(vec![
-                        ".".to_string(),
-                        "@".to_string(),
-                        " ".to_string(),
+                        String::from("."),
+                        String::from("@"),
+                        String::from(" "),
                     ]),
                     all_commit_characters: None,
                     work_done_progress_options: WorkDoneProgressOptions {
@@ -100,7 +100,7 @@ impl LanguageServer for AseLanguageServer {
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_range_formatting_provider: Some(OneOf::Left(true)),
                 signature_help_provider: Some(SignatureHelpOptions {
-                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+                    trigger_characters: Some(vec![String::from("("), String::from(",")]),
                     retrigger_characters: None,
                     work_done_progress_options: WorkDoneProgressOptions {
                         work_done_progress: None,
@@ -131,8 +131,8 @@ impl LanguageServer for AseLanguageServer {
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
-                name: "ase-ls".to_string(),
-                version: Some("0.1.0".to_string()),
+                name: String::from("ase-ls"),
+                version: Some(String::from("0.1.0")),
             }),
         })
     }

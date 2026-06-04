@@ -59,8 +59,9 @@ fn format_sql(source: &str) -> String {
 
         // インデント挿入
         if at_line_start {
+            const INDENT: &str = "    ";
             for _ in 0..indent_level {
-                result.push_str("    ");
+                result.push_str(INDENT);
             }
             at_line_start = false;
         }
@@ -97,13 +98,13 @@ fn format_sql(source: &str) -> String {
 /// キーワードを大文字化する
 fn format_token(kind: &TokenKind, text: &str) -> String {
     match kind {
-        TokenKind::String | TokenKind::NString | TokenKind::HexString => text.to_string(),
-        TokenKind::LineComment | TokenKind::BlockComment => text.to_string(),
+        TokenKind::String | TokenKind::NString | TokenKind::HexString => text.to_owned(),
+        TokenKind::LineComment | TokenKind::BlockComment => text.to_owned(),
         _ => {
             if kind.is_keyword() {
                 text.to_uppercase()
             } else {
-                text.to_string()
+                text.to_owned()
             }
         }
     }
