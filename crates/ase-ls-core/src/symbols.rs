@@ -14,9 +14,10 @@ pub fn document_symbols(source: &str) -> Option<DocumentSymbolResponse> {
         Err(_) => return None,
     };
 
+    let line_index = LineIndex::new(source);
     let symbols: Vec<DocumentSymbol> = statements
         .iter()
-        .filter_map(|stmt| statement_to_symbol(source, stmt))
+        .filter_map(|stmt| statement_to_symbol(&line_index, stmt))
         .collect();
 
     if symbols.is_empty() {
@@ -27,7 +28,7 @@ pub fn document_symbols(source: &str) -> Option<DocumentSymbolResponse> {
 }
 
 /// Statement から DocumentSymbol への変換
-fn statement_to_symbol(source: &str, stmt: &Statement) -> Option<DocumentSymbol> {
+fn statement_to_symbol(line_index: &LineIndex, stmt: &Statement) -> Option<DocumentSymbol> {
     match stmt {
         Statement::Create(create) => {
             let (name, kind, span) = match create.as_ref() {
@@ -47,7 +48,7 @@ fn statement_to_symbol(source: &str, stmt: &Statement) -> Option<DocumentSymbol>
                     (td.name.name.clone(), SymbolKind::EVENT, td.span)
                 }
             };
-            let range = span_to_lsp_range(source, span.start, span.end);
+            let range = span_to_lsp_range(line_index,span.start, span.end);
             Some(make_symbol(name, kind, range))
         }
         Statement::Declare(decl) => {
@@ -57,11 +58,11 @@ fn statement_to_symbol(source: &str, stmt: &Statement) -> Option<DocumentSymbol>
                 .map(|v| v.name.name.as_str())
                 .collect();
             let name = format!("DECLARE {}", names.join(", "));
-            let range = span_to_lsp_range(source, decl.span.start, decl.span.end);
+            let range = span_to_lsp_range(line_index,decl.span.start, decl.span.end);
             Some(make_symbol(name, SymbolKind::VARIABLE, range))
         }
         Statement::Select(sel) => {
-            let range = span_to_lsp_range(source, sel.span.start, sel.span.end);
+            let range = span_to_lsp_range(line_index,sel.span.start, sel.span.end);
             Some(make_symbol(
                 "SELECT".to_string(),
                 SymbolKind::NAMESPACE,
@@ -70,18 +71,18 @@ fn statement_to_symbol(source: &str, stmt: &Statement) -> Option<DocumentSymbol>
         }
         Statement::Insert(ins) => {
             let name = format!("INSERT {}", ins.table.name);
-            let range = span_to_lsp_range(source, ins.span.start, ins.span.end);
+            let range = span_to_lsp_range(line_index,ins.span.start, ins.span.end);
             Some(make_symbol(name, SymbolKind::NAMESPACE, range))
         }
         Statement::Update(upd) => {
             let table_name = table_ref_name(&upd.table);
             let name = format!("UPDATE {table_name}");
-            let range = span_to_lsp_range(source, upd.span.start, upd.span.end);
+            let range = span_to_lsp_range(line_index,upd.span.start, upd.span.end);
             Some(make_symbol(name, SymbolKind::NAMESPACE, range))
         }
         Statement::Delete(del) => {
             let name = format!("DELETE FROM {}", del.table.name);
-            let range = span_to_lsp_range(source, del.span.start, del.span.end);
+            let range = span_to_lsp_range(line_index,del.span.start, del.span.end);
             Some(make_symbol(name, SymbolKind::NAMESPACE, range))
         }
         _ => None,
@@ -115,8 +116,7 @@ fn make_symbol(name: String, kind: SymbolKind, range: lsp_types::Range) -> Docum
 }
 
 /// バイトオフセット範囲から LSP Range を生成
-fn span_to_lsp_range(source: &str, start: u32, end: u32) -> lsp_types::Range {
-    let line_index = LineIndex::new(source);
+fn span_to_lsp_range(line_index: &LineIndex, start: u32, end: u32) -> lsp_types::Range {
     let (start_line, start_char) = line_index.offset_to_position(start);
     let (end_line, end_char) = line_index.offset_to_position(end);
     lsp_types::Range {
