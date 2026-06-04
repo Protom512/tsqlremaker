@@ -250,23 +250,11 @@ fn try_expand_select_star_ast(
     let columns: Vec<String> = tbl.columns.iter().map(|c| c.name.clone()).collect();
     let expanded = format!("SELECT {}", columns.join(", "));
 
-    let (star_line, star_char_start) = analysis
-        .line_index
-        .offset_to_position(star_token.span.start);
-    let (_, star_char_end) = analysis.line_index.offset_to_position(star_token.span.end);
-
     let edit = make_text_edit(
         uri,
-        Range {
-            start: Position {
-                line: star_line,
-                character: star_char_start,
-            },
-            end: Position {
-                line: star_line,
-                character: star_char_end,
-            },
-        },
+        analysis
+            .line_index
+            .offset_to_range(star_token.span.start, star_token.span.end),
         expanded,
     );
 
@@ -317,21 +305,9 @@ fn try_generate_insert_skeleton_ast(
     );
 
     // Replace the entire INSERT statement span
-    let (start_line, start_char) = analysis.line_index.offset_to_position(ins.span.start);
-    let (end_line, end_char) = analysis.line_index.offset_to_position(ins.span.end);
-
     let edit = make_text_edit(
         uri,
-        Range {
-            start: Position {
-                line: start_line,
-                character: start_char,
-            },
-            end: Position {
-                line: end_line,
-                character: end_char,
-            },
-        },
+        analysis.line_index.offset_to_range(ins.span.start, ins.span.end),
         new_text,
     );
 

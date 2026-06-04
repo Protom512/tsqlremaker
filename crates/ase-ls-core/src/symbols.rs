@@ -117,18 +117,7 @@ fn make_symbol(name: String, kind: SymbolKind, range: lsp_types::Range) -> Docum
 
 /// バイトオフセット範囲から LSP Range を生成
 fn span_to_lsp_range(line_index: &LineIndex, start: u32, end: u32) -> lsp_types::Range {
-    let (start_line, start_char) = line_index.offset_to_position(start);
-    let (end_line, end_char) = line_index.offset_to_position(end);
-    lsp_types::Range {
-        start: lsp_types::Position {
-            line: start_line,
-            character: start_char,
-        },
-        end: lsp_types::Position {
-            line: end_line,
-            character: end_char,
-        },
-    }
+    line_index.offset_to_range(start, end)
 }
 
 #[cfg(test)]
