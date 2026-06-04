@@ -18,22 +18,10 @@ pub struct OwnedToken {
     pub span: Span,
 }
 
-impl Clone for DocumentAnalysis {
-    fn clone(&self) -> Self {
-        Self {
-            source: self.source.clone(),
-            line_index: self.line_index.clone(),
-            tokens: self.tokens.clone(),
-            statements: self.statements.clone(),
-            parse_errors: self.parse_errors.clone(),
-            symbol_table: self.symbol_table.clone(),
-        }
-    }
-}
-
 /// Pre-computed analysis of a source document.
 ///
 /// Built once per `did_open`/`did_change`, shared by all LSP handlers.
+#[derive(Clone)]
 pub struct DocumentAnalysis {
     /// Original source text (needed for position_to_offset and formatting).
     pub source: String,
@@ -109,6 +97,7 @@ impl DocumentAnalysis {
     }
 
     /// Find the token at a given byte offset using binary search. O(log n).
+    #[must_use]
     pub fn find_token_at(&self, offset: usize) -> Option<(&OwnedToken, usize)> {
         let idx = self
             .tokens
@@ -126,6 +115,7 @@ impl DocumentAnalysis {
     }
 
     /// Get the text of a specific line. O(1) line lookup via LineIndex.
+    #[must_use]
     pub fn get_line(&self, line: u32) -> &str {
         let line_count = self.line_index.line_count();
         let line = line as usize;

@@ -498,18 +498,21 @@ impl SymbolTableBuilder {
     }
 
     /// テーブル名でテーブルを検索 (case-insensitive)
+    #[must_use]
     pub fn find_table<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a TableSymbol> {
         let key = CaseInsensitiveKey::new(name);
         table.tables.get::<str>(key.borrow())
     }
 
     /// プロシージャ名でプロシージャを検索 (case-insensitive)
+    #[must_use]
     pub fn find_procedure<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a ProcedureSymbol> {
         let key = CaseInsensitiveKey::new(name);
         table.procedures.get::<str>(key.borrow())
     }
 
     /// 変数名で変数を検索 (case-insensitive, @prefix auto-added)
+    #[must_use]
     pub fn find_variable<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a VariableSymbol> {
         let search_name = if name.starts_with('@') {
             CaseInsensitiveKey::new(name)

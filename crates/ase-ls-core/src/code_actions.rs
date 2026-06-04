@@ -68,18 +68,18 @@ pub fn code_actions(source: &str, range: Range, uri: &lsp_types::Url) -> Vec<Cod
     let symbol_table = build_fallback_symbol_table(source);
 
     // SELECT * FROM table → カラム展開
-    if let Some(action) = try_expand_select_star(&symbol_table, &line_text, range.start, uri) {
+    if let Some(action) = try_expand_select_star(&symbol_table, line_text, range.start, uri) {
         actions.push(CodeActionOrCommand::CodeAction(action));
     }
 
     // INSERT INTO table → VALUES骨組み生成
-    if let Some(action) = try_generate_insert_skeleton(&symbol_table, &line_text, range.start, uri)
+    if let Some(action) = try_generate_insert_skeleton(&symbol_table, line_text, range.start, uri)
     {
         actions.push(CodeActionOrCommand::CodeAction(action));
     }
 
     // BEGIN → TRY...CATCH ラッパー
-    if let Some(action) = try_wrap_try_catch(source, &line_text, range.start, uri) {
+    if let Some(action) = try_wrap_try_catch(source, line_text, range.start, uri) {
         actions.push(CodeActionOrCommand::CodeAction(action));
     }
 
@@ -734,8 +734,8 @@ fn resolve_block_end(
     }
     resolve_span_end_fallback(span.start as usize, analysis)
 }
-fn get_line_at(source: &str, line: u32) -> String {
-    source.lines().nth(line as usize).unwrap_or("").to_string()
+fn get_line_at(source: &str, line: u32) -> &str {
+    source.lines().nth(line as usize).unwrap_or("")
 }
 
 /// WorkspaceEdit を生成するヘルパー
