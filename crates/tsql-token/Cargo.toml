@@ -4,9 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# 静的 HashMap の構築に使用
-once_cell = { workspace = true }
-
 # エラーハンドリング用（Display, Error 実装）
 thiserror = { workspace = true, optional = true }
 

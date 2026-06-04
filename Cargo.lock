@@ -99,7 +99,6 @@ name = "ase-ls-core"
 version = "0.1.0"
 dependencies = [
  "lsp-types",
- "once_cell",
  "rstest",
  "thiserror",
  "tracing",
@@ -1714,7 +1713,6 @@ name = "tsql-lexer"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "once_cell",
  "proptest",
  "rstest",
  "thiserror",
@@ -1726,7 +1724,6 @@ name = "tsql-parser"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "once_cell",
  "rstest",
  "thiserror",
  "tsql-lexer",
@@ -1756,7 +1753,6 @@ dependencies = [
 name = "tsql-token"
 version = "0.1.0"
 dependencies = [
- "once_cell",
  "proptest",
  "rstest",
  "thiserror",

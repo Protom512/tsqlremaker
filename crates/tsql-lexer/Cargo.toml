@@ -7,9 +7,6 @@ edition = "2021"
 # Token 型定義
 tsql-token = { path = "../tsql-token" }
 
-# 静的 HashMap の構築
-once_cell = { workspace = true }
-
 # エラー型の定義
 thiserror = { workspace = true }
 

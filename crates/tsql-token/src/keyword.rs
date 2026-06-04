@@ -2,15 +2,15 @@
 //!
 //! 大文字小文字を区別せずにキーワードを解決するための静的な HashMap を提供する。
 
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use crate::TokenKind;
 
 /// 静的キーワードマップ（プログラム起動時に1回のみ初期化）
 ///
 /// SAP ASE T-SQL のすべての予約語を小文字キーでマッピングする。
-static KEYWORDS: Lazy<HashMap<&'static str, TokenKind>> = Lazy::new(|| {
+static KEYWORDS: LazyLock<HashMap<&'static str, TokenKind>> = LazyLock::new(|| {
     let mut m = HashMap::with_capacity(150);
 
     // DML Keywords

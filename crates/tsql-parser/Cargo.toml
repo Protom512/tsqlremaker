@@ -11,7 +11,6 @@ repository = "https://github.com/Protom512/tsqlremaker"
 tsql-lexer = { path = "../tsql-lexer" }
 tsql-token = { path = "../tsql-token" }
 thiserror = { workspace = true }
-once_cell = { workspace = true }
 
 [dev-dependencies]
 rstest = { workspace = true }

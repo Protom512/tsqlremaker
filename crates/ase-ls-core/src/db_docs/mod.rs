@@ -15,8 +15,8 @@ mod functions;
 mod keywords;
 mod sysvars;
 
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 pub use datatypes::DATATYPE_ENTRIES;
 pub use functions::FUNCTION_ENTRIES;
@@ -56,11 +56,11 @@ pub struct DocEntry {
 // ---------------------------------------------------------------------------
 
 /// 関数エントリの名前で検索できるHashMap（関数優先）
-static FUNCTION_LOOKUP: Lazy<HashMap<&'static str, &'static DocEntry>> =
-    Lazy::new(|| FUNCTION_ENTRIES.iter().map(|e| (e.name, e)).collect());
+static FUNCTION_LOOKUP: LazyLock<HashMap<&'static str, &'static DocEntry>> =
+    LazyLock::new(|| FUNCTION_ENTRIES.iter().map(|e| (e.name, e)).collect());
 
 /// キーワード・データ型・システム変数エントリの名前で検索できるHashMap
-static OTHER_LOOKUP: Lazy<HashMap<&'static str, &'static DocEntry>> = Lazy::new(|| {
+static OTHER_LOOKUP: LazyLock<HashMap<&'static str, &'static DocEntry>> = LazyLock::new(|| {
     KEYWORD_ENTRIES
         .iter()
         .chain(DATATYPE_ENTRIES.iter())

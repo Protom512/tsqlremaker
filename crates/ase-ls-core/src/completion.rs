@@ -3,13 +3,13 @@
 //! SQL キーワード、データ型、組み込み関数の補完候補を提供する。
 
 use lsp_types::{CompletionItem, CompletionItemKind, CompletionList, CompletionResponse};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 /// 全補完候補のグローバルキャッシュ。初回アクセス時のみ構築される。
-static COMPLETE_ALL_CACHE: Lazy<CompletionResponse> = Lazy::new(build_complete_all);
+static COMPLETE_ALL_CACHE: LazyLock<CompletionResponse> = LazyLock::new(build_complete_all);
 
 /// キーワード補完のグローバルキャッシュ。
-static COMPLETE_KEYWORDS_CACHE: Lazy<CompletionResponse> = Lazy::new(build_complete_keywords);
+static COMPLETE_KEYWORDS_CACHE: LazyLock<CompletionResponse> = LazyLock::new(build_complete_keywords);
 
 /// 関数名とパラメータリストからLSP snippet形式のinsert_textを生成する
 ///
