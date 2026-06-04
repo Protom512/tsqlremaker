@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-04 / Session 16 (once_cell removal, doc cleanup, minor refactors)
+**最終更新:** 2026-06-04 / Session 17 (offset_to_range extraction, code consolidation)
 
 ---
 
@@ -17,6 +17,27 @@
 | **Open PRs** | 1 (#123, rebased) |
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) |
 | **依存** | once_cell 依存を完全除去（std::sync::LazyLockに移行） |
+
+---
+
+## 🔄 Session 17 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `124060e` | refactor(core): extract offset_to_range utility, reduce Position/Range boilerplate |
+
+### 変更内容
+- **line_index.rs**: `offset_to_range(start, end) -> Range` メソッド追加
+- **diagnostics.rs**: `make_star_diagnostic` と `error_range` で利用（2箇所）
+- **hover.rs**: 2つのhover関数で利用。`Range` import除去
+- **references.rs**: analysis ループ + `token_span_to_range` で利用（2箇所）
+- **rename.rs**: 3箇所のTextEdit/PrepareRename で利用。`Range` import除去
+- **symbol_table/mod.rs**: `span_to_range` を1行に簡素化
+
+### 削減効果
+- **97行削除**（Position/Range構築ボイラープレート除去）
+- 5モジュールのRange構築パターンを統一
 
 ---
 
