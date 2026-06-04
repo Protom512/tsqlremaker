@@ -10,7 +10,7 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            log_level: "info".to_string(),
+            log_level: String::from("info"),
         }
     }
 }

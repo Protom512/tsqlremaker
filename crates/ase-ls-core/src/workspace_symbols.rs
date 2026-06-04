@@ -9,6 +9,8 @@ use crate::symbol_table::SymbolTableBuilder;
 use lsp_types::{Location, SymbolInformation, SymbolKind, Url};
 
 /// Append symbols whose name matches `query_upper` (case-insensitive substring).
+// SymbolInformation.deprecated field is #[deprecated] in lsp-types 0.94.
+// tower-lsp 0.20 requires this type — cannot migrate until tower-lsp upgrades.
 #[allow(deprecated)]
 fn push_matching(
     results: &mut Vec<SymbolInformation>,

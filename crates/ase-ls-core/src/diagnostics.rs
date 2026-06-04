@@ -8,6 +8,11 @@ use crate::line_index::LineIndex;
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use tsql_parser::ast::{SelectItem, Statement};
 use tsql_parser::ParseError;
+
+/// Diagnostic source identifier shared across all diagnostic constructors.
+fn diagnostic_source() -> String {
+    String::from("ase-ls")
+}
 use tsql_token::TokenKind;
 
 /// DocumentAnalysisから診断を生成する（キャッシュ利用）
@@ -155,7 +160,7 @@ fn make_star_diagnostic(
             },
         },
         severity: Some(DiagnosticSeverity::WARNING),
-        source: Some("ase-ls".to_string()),
+        source: Some(diagnostic_source()),
         message: "SELECT *: consider specifying explicit columns for better performance and maintainability".to_string(),
         ..Diagnostic::default()
     })
@@ -226,7 +231,7 @@ fn parse_error_to_diagnostic(line_index: &LineIndex, error: &ParseError) -> Diag
     Diagnostic {
         range,
         severity: Some(DiagnosticSeverity::ERROR),
-        source: Some("ase-ls".to_string()),
+        source: Some(diagnostic_source()),
         message,
         ..Diagnostic::default()
     }
@@ -488,21 +493,6 @@ mod tests {
 
     #[test]
     fn test_select_star_in_insert_select_warns() {
-        let source = "INSERT INTO t2 SELECT * FROM t1";
-        let analysis = crate::analysis::DocumentAnalysis::new(source);
-        let diags = diagnose(&analysis);
-        let star_warnings: Vec<_> = diags
-            .iter()
-            .filter(|d| d.message.contains("SELECT *"))
-            .collect();
-        assert!(
-            !star_warnings.is_empty(),
-            "SELECT * in INSERT...SELECT should produce warning"
-        );
-    }
-
-    #[test]
-    fn test_insert_select_star_warns() {
         let source = "INSERT INTO t2 SELECT * FROM t1";
         let analysis = crate::analysis::DocumentAnalysis::new(source);
         let diags = diagnose(&analysis);
