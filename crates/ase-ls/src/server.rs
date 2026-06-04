@@ -186,7 +186,7 @@ impl LanguageServer for AseLanguageServer {
     }
 
     async fn completion(&self, _: CompletionParams) -> Result<Option<CompletionResponse>> {
-        let response = completion::complete_all();
+        let response = completion::complete_all().clone();
         Ok(Some(response))
     }
 

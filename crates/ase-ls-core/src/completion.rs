@@ -48,8 +48,11 @@ fn is_comma_separated_syntax(syntax: &str) -> bool {
 }
 
 /// 全ての補完候補を返す（キャッシュ済み）
-pub fn complete_all() -> CompletionResponse {
-    COMPLETE_ALL_CACHE.clone()
+///
+/// 内部の `Lazy` static から参照を返す。呼び出し元で所有権が必要な場合は
+/// `.clone()` すること。
+pub fn complete_all() -> &'static CompletionResponse {
+    &COMPLETE_ALL_CACHE
 }
 
 /// 全ての補完候補を構築する（内部実装）
