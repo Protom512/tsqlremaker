@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-04 / Session 13 (Codebase quality audit, performance optimizations, PR #123 rebase)
+**最終更新:** 2026-06-04 / Session 14 (Fallback optimization, doc cleanup, quality audit)
 
 ---
 
@@ -10,12 +10,39 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1142 passed, 2 skipped |
+| **テスト** | 1146 passed, 2 skipped |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Open Issues** | 11 |
 | **Open PRs** | 1 (#123, rebased) |
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) |
+
+---
+
+## 🔄 Session 14 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `45feddc` | refactor(analysis): replace O(n²) fallback with O(n) token scan |
+| `04378e1` | refactor(core): derive Clone, reduce allocations, add #[must_use] |
+| `18e749a` | style(core,server): minor idiomatic cleanups |
+
+### 変更内容
+- **analysis.rs**: フォールバックパースをO(n²)の行ごとバイナリサーチからO(n)トークンスキャンに変更。`find_create_table_end()`でCREATE TABLE定義の閉じ括弧を特定し、1回のパースで抽出。`to_ascii_uppercase()`の不要なStringアロケーションも`eq_ignore_ascii_case()`に置換
+- **analysis.rs**: 手動`Clone` implを`#[derive(Clone)]`に置換
+- **symbol_table/mod.rs**: `#![allow(missing_docs)]`を削除し、全公開struct field・enum variantにdoc comment追加（40件の警告を解消）
+- **symbols.rs**: 6箇所のカンマ後空白不足を修正
+- **code_actions.rs**: `get_line_at()`の返却型を`String`→`&str`に変更し不要なアロケーションを削除。`#[must_use]`を`find_token_at()`, `get_line()`に追加
+- **symbol_table/mod.rs**: `find_table()`, `find_procedure()`, `find_variable()`に`#[must_use]`追加
+- **formatting.rs**: インデント文字列を`const INDENT`に抽出
+- **server.rs**: リテラル文字列の`.to_string()`を`String::from()`に置換
+
+### 残る改善候補
+- **P1**: レガシー関数群の削除（テストの *_with_analysis 移行が必要、50+件）
+- **P2**: DocumentAnalysis::get_line() → Option<&str>（保留: 10+呼び出し元に影響、利益小）
+- **P2**: WASMクレートのテスト追加
+- **P3**: emitterの #[allow(dead_code)] インデントメソッド群（将来フォーマット機能用として意図的）
 
 ---
 
