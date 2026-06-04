@@ -410,12 +410,9 @@ fn build_hover_content(kind: &TokenKind, text: &str) -> Option<String> {
     let upper = text.to_uppercase();
 
     match kind {
-        TokenKind::LocalVar => {
-            let var_name = text.trim_start_matches('@');
-            Some(format!(
-                "```tsql\n{text}: VARIABLE\n```\n\nLocal variable — Declare with `DECLARE @{var_name} TYPE`"
-            ))
-        }
+        TokenKind::LocalVar => Some(format!(
+            "```tsql\n{text}: VARIABLE\n```\n\nLocal variable — Declare with `DECLARE {text} TYPE`"
+        )),
         _ => {
             if let Some(entry) = crate::db_docs::lookup(upper.as_str()) {
                 Some(format!(

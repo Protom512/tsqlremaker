@@ -73,8 +73,7 @@ pub fn code_actions(source: &str, range: Range, uri: &lsp_types::Url) -> Vec<Cod
     }
 
     // INSERT INTO table → VALUES骨組み生成
-    if let Some(action) = try_generate_insert_skeleton(&symbol_table, line_text, range.start, uri)
-    {
+    if let Some(action) = try_generate_insert_skeleton(&symbol_table, line_text, range.start, uri) {
         actions.push(CodeActionOrCommand::CodeAction(action));
     }
 

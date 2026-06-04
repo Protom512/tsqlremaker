@@ -21,7 +21,7 @@ pub struct OwnedToken {
 /// Pre-computed analysis of a source document.
 ///
 /// Built once per `did_open`/`did_change`, shared by all LSP handlers.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DocumentAnalysis {
     /// Original source text (needed for position_to_offset and formatting).
     pub source: String,
@@ -40,10 +40,10 @@ pub struct DocumentAnalysis {
 impl DocumentAnalysis {
     /// Build a full analysis from source text.
     pub fn new(source: &str) -> Self {
-        let owned_source = source.to_string();
-        let line_index = LineIndex::new(source);
+        let source = source.to_string();
+        let line_index = LineIndex::new(&source);
 
-        let tokens: Vec<OwnedToken> = tsql_lexer::Lexer::new(source)
+        let tokens: Vec<OwnedToken> = tsql_lexer::Lexer::new(&source)
             .filter_map(|r| r.ok())
             .map(|t| OwnedToken {
                 kind: t.kind,
@@ -52,13 +52,13 @@ impl DocumentAnalysis {
             })
             .collect();
 
-        let (statements, parse_errors) = match tsql_parser::Parser::new(source).parse_with_errors()
+        let (statements, parse_errors) = match tsql_parser::Parser::new(&source).parse_with_errors()
         {
             Ok((stmts, errs)) => (stmts, errs),
             Err(errs) => (Vec::new(), errs.errors),
         };
 
-        let symbol_table = SymbolTableBuilder::build_tolerant(source);
+        let symbol_table = SymbolTableBuilder::build_tolerant(&source);
         let symbol_table = if symbol_table.tables.is_empty()
             && source
                 .as_bytes()
@@ -87,7 +87,7 @@ impl DocumentAnalysis {
         };
 
         Self {
-            source: owned_source,
+            source,
             line_index,
             tokens,
             statements,

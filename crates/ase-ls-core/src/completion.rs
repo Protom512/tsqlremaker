@@ -120,8 +120,10 @@ fn build_complete_all() -> CompletionResponse {
 }
 
 /// キーワード補完のみを返す（キャッシュ済み）
-pub fn complete_keywords() -> CompletionResponse {
-    COMPLETE_KEYWORDS_CACHE.clone()
+///
+/// `complete_all()` と同様に `&'static` 参照を返し、不要な clone を回避する。
+pub fn complete_keywords() -> &'static CompletionResponse {
+    &COMPLETE_KEYWORDS_CACHE
 }
 
 /// キーワード補完を構築する（内部実装）
@@ -287,6 +289,14 @@ mod tests {
     }
 
     #[test]
+    fn test_complete_keywords_is_static_ref() {
+        let a = complete_keywords() as *const CompletionResponse;
+        let b = complete_keywords() as *const CompletionResponse;
+        // Same static address — no clone
+        assert_eq!(a, b);
+    }
+
+    #[test]
     fn test_cast_uses_plain_text() {
         let response = complete_all();
         match response {
@@ -364,7 +374,7 @@ mod tests {
     fn test_complete_keywords_cache_returns_same_count() {
         let a = complete_keywords();
         let b = complete_keywords();
-        match (&a, &b) {
+        match (a, b) {
             (CompletionResponse::List(la), CompletionResponse::List(lb)) => {
                 assert_eq!(la.items.len(), lb.items.len());
             }

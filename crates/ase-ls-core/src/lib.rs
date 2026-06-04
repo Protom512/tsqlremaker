@@ -78,14 +78,16 @@ pub(crate) fn token_matches_symbol(
     search_upper: &str,
     is_var: bool,
 ) -> bool {
-    if is_var {
-        kind == tsql_token::TokenKind::LocalVar && text.to_uppercase() == search_upper
+    let kind_ok = if is_var {
+        kind == tsql_token::TokenKind::LocalVar
     } else {
         // Ident and any keyword can be an object name in T-SQL
         // (e.g., table named "Select", "Create", etc.)
-        (kind == tsql_token::TokenKind::Ident || kind.is_keyword())
-            && text.to_uppercase() == search_upper
-    }
+        kind == tsql_token::TokenKind::Ident || kind.is_keyword()
+    };
+    // search_upper is already uppercase, so ascii-case-insensitive compare
+    // avoids allocating a new String via text.to_uppercase() on every token.
+    kind_ok && text.eq_ignore_ascii_case(search_upper)
 }
 
 #[cfg(test)]

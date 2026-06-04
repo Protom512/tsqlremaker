@@ -32,12 +32,8 @@ impl DocumentStore {
         }
     }
 
-    fn open(&mut self, uri: &str, text: &str) {
-        let analysis = DocumentAnalysis::new(text);
-        self.docs.insert(uri.to_string(), analysis);
-    }
-
-    fn update(&mut self, uri: &str, text: &str) {
+    /// Insert or replace a document's analysis.
+    fn upsert(&mut self, uri: &str, text: &str) {
         let analysis = DocumentAnalysis::new(text);
         self.docs.insert(uri.to_string(), analysis);
     }
@@ -153,7 +149,7 @@ impl LanguageServer for AseLanguageServer {
 
         {
             let mut docs = self.documents.write().await;
-            docs.open(uri.as_str(), &text);
+            docs.upsert(uri.as_str(), &text);
         }
 
         self.publish_diagnostics_for(&uri).await;
@@ -165,7 +161,7 @@ impl LanguageServer for AseLanguageServer {
         // FULL sync mode: use the last change
         if let Some(change) = params.content_changes.last() {
             let mut docs = self.documents.write().await;
-            docs.update(uri.as_str(), &change.text);
+            docs.upsert(uri.as_str(), &change.text);
         }
 
         self.publish_diagnostics_for(&uri).await;

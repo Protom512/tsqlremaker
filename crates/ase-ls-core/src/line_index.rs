@@ -6,7 +6,7 @@ use lsp_types::Position;
 ///
 /// Builds a table of byte offsets for each line start, enabling
 /// binary search instead of linear scan for offset→position and position→offset.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LineIndex {
     /// Byte offset of each line start. line_offsets[i] = byte offset of line i.
     /// Always has at least one entry (offset 0 for line 0).
