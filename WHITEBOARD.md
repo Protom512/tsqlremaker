@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-04 / Session 14 (Fallback optimization, doc cleanup, quality audit)
+**最終更新:** 2026-06-04 / Session 15 (PR #123 review verification, code quality improvements)
 
 ---
 
@@ -10,12 +10,41 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1146 passed, 2 skipped |
+| **テスト** | 1147 passed, 2 skipped |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Open Issues** | 11 |
 | **Open PRs** | 1 (#123, rebased) |
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) |
+
+---
+
+## 🔄 Session 15 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `acb5f02` | refactor(core): eliminate allocations, add Debug derives, dedup DocumentStore |
+
+### 変更内容
+- **lib.rs**: `token_matches_symbol` で全トークンの `.to_uppercase()` アロケーションを `eq_ignore_ascii_case()` に置換（references/rename/definitionのホットパス改善）
+- **analysis.rs**: `DocumentAnalysis` に `Debug` derive追加。`owned_source` 変数をパラメータシャドウイングに簡素化
+- **line_index.rs**: `LineIndex` に `Debug` derive追加
+- **server.rs**: `DocumentStore::open()`/`update()` の同一メソッドを `upsert()` に統合
+- **completion.rs**: `complete_keywords()` の戻り値を `&'static CompletionResponse` に変更（clone回避）。静的参照テスト追加
+- **hover.rs**: LocalVarの冗長な@剥がし→再付与を `text` 直接使用に簡素化
+- **code_actions.rs**: fmt差分のみ（既存コードのフォーマット修正）
+
+### PR #123 レビュー確認
+- 3件のレビュー指摘（HIGH×2, MEDIUM×1, NITPICK×1）は全て既に適用済みを確認
+- テスト1176 passed, 2 skipped（PR ブランチ）
+
+### 監査結果（20件の改善候補を特定）
+| 優先度 | 件数 | 対応 |
+|--------|------|------|
+| P1 | 2件 | 1件完了（complete_keywords最適化）、1件保留（range formatting: #60既知の制限） |
+| P2 | 7件 | 4件完了（Debug derive, DocumentStore統合, token最適化, hover簡素化）、3件保留（legacy関数削除, Range構築ヘルパー共通化, テストカバレッジ） |
+| P3 | 11件 | 未着手（美化的改善、once_cell→LazyLock移行等） |
 
 ---
 
