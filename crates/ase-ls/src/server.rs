@@ -44,6 +44,7 @@ impl DocumentStore {
 }
 
 impl AseLanguageServer {
+    /// Create a new language server instance with the given LSP client.
     pub fn new(client: Client) -> Self {
         Self {
             client,
