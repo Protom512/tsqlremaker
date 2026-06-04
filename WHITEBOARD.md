@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-04 / Session 12 (Trigger full support, integration tests, branch cleanup)
+**最終更新:** 2026-06-04 / Session 13 (Codebase quality audit, performance optimizations, PR #123 rebase)
 
 ---
 
@@ -14,8 +14,52 @@
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Open Issues** | 11 |
-| **Open PRs** | 1 (#123) |
+| **Open PRs** | 1 (#123, rebased) |
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) |
+
+---
+
+## 🔄 Session 13 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `1f49edc` | perf(emitter): replace buffer.clone() with mem::take in all emitters |
+| `c937eab` | refactor(completion): return static reference from complete_all() |
+| `fb0d53a` | refactor(server): remove unused Arc<str> from DocumentStore |
+| `c9b0125` | refactor(parser): return &[ParseError] instead of Vec from errors() |
+| `5cea77a` | perf(symbols): build LineIndex once instead of per-statement |
+| `c417592` | refactor(token): simplify token_matches_symbol using is_keyword() |
+
+### PR #123 ブランチ
+- リベース完了（masterのTrigger対応を統合、コンフリクト解消）
+- レビュー指摘（multi-INSERT回帰テスト、fallback直接テスト）は既に対応済み
+- テスト 1176 passed, 2 skipped（master 1142 + PR追加 34）
+
+### 変更内容
+- **3エミッター** (sqlite/mysql/postgresql): `self.buffer.clone()` → `std::mem::take(&mut self.buffer)` でヒープコピー回避
+- **completion.rs**: `complete_all()` が `&'static CompletionResponse` を返すよう変更。clone箇所を呼び出し元(server.rs)に明示化
+- **server.rs**: `DocumentStore` から不要な `Arc<str>` を削除。`HashMap<String, DocumentAnalysis>` に簡略化
+- **parser.rs**: `errors()` が `&[ParseError]` を返すよう変更（Lexer APIと統一）。不要な Vec clone を除去
+- **symbols.rs**: `span_to_lsp_range()` が毎回 `LineIndex::new()` していたのを、`document_symbols()` で一度だけ構築して参照渡しに変更
+- **token/kind.rs**: `Exec`, `Execute` を `is_keyword()` に追加
+- **lib.rs**: `token_matches_symbol()` の15行 `matches!` マクロを `is_keyword()` 呼び出しに簡素化
+
+### 監査結果（25件の改善箇所を特定）
+| 優先度 | 件数 | 対応 |
+|--------|------|------|
+| P1 | 5件 | 3件完了（emitter, completion, DocumentStore）、1件保留（legacy関数削除: 50+テスト依存）、1件保留（O(n^2)フォールバック） |
+| P2 | 14件 | 3件完了（LineIndex, errors API, keyword統一）、残りはdocument/doc/テスト系 |
+| P3 | 5件 | 未着手（emitter dead_code, 重複テスト, URL parse, sysvars, WASMテスト） |
+
+### 残る改善候補
+- **P1**: analysis.rs の O(n^2) フォールバックパース（バイナリサーチ的試行に変更）
+- **P1**: レガシー関数群の削除（テストの *_with_analysis 移行が必要、50+件）
+- **P2**: symbol_table の #![allow(missing_docs)] 解除とdoc comment追加
+- **P2**: tsql-parser 公開APIのdoc comment追加
+- **P2**: DocumentAnalysis::get_line() → Option<&str> 返却
+- **P2**: WASMクレートのテスト追加
+- **P3**: emitterの #[allow(dead_code)] インデントメソッド群
 
 ---
 
@@ -183,3 +227,4 @@ ase-ls (tower-lsp 0.20, lsp-types 0.94.1)
 | 10 | 6 | 1115 | bug fix (analysis Clone), dedup 2 modules, +15 tests |
 | 11 | 1 | 1115 | DataType Display impl + PR #123 review tests |
 | 12 | 6 | 1142 | Trigger full support (recursion + symbol table + workspace symbols), +18 tests, branch cleanup |
+| 13 | 6 | 1142 | Codebase quality audit (25 findings), 6 performance/refactor commits, PR #123 rebase |
