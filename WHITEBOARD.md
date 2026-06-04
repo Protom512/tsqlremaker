@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-04 / Session 17 (offset_to_range extraction, code consolidation)
+**最終更新:** 2026-06-04 / Session 18 (offset_to_range completion, remaining consolidation)
 
 ---
 
@@ -19,6 +19,29 @@
 | **依存** | once_cell 依存を完全除去（std::sync::LazyLockに移行） |
 
 ---
+
+## 🔄 Session 18 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `bd45619` | refactor(core): use offset_to_range in symbols.rs and code_actions.rs |
+
+### 変更内容
+- **symbols.rs**: `span_to_lsp_range` を1行の委譲に簡素化（-10行）
+- **code_actions.rs**: SELECT * 展開とINSERT骨組み生成で `offset_to_range` 利用（-25行）
+
+### offset_to_range マイグレーション完了状況
+全7モジュールのRange構築を統一完了:
+- ✅ diagnostics.rs (2箇所)
+- ✅ hover.rs (2箇所)
+- ✅ references.rs (2箇所)
+- ✅ rename.rs (3箇所)
+- ✅ symbol_table/mod.rs (1箇所)
+- ✅ symbols.rs (1箇所)
+- ✅ code_actions.rs (2箇所)
+- 🔒 semantic_tokens.rs — delta計算に個別positionを使うため移行不可
+- 🔒 folding.rs — FoldingRange型でRangeではないため移行不可
 
 ## 🔄 Session 17 成果
 
