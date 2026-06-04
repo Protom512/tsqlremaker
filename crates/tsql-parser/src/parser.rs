@@ -141,10 +141,10 @@ impl<'src> Parser<'src> {
     ///
     /// # Returns
     ///
-    /// エラーリストのコピー
+    /// エラーリストへの参照を返す
     #[must_use]
-    pub fn errors(&self) -> Vec<ParseError> {
-        self.errors.clone()
+    pub fn errors(&self) -> &[ParseError] {
+        &self.errors
     }
 
     /// エラーがあるかどうかを確認
