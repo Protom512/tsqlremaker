@@ -4,6 +4,7 @@
 //! キーワード大文字化、インデント、改行の挿入を行う。
 
 use lsp_types::{Position, Range, TextEdit};
+use std::borrow::Cow;
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
 
@@ -96,15 +97,19 @@ fn format_sql(source: &str) -> String {
 }
 
 /// キーワードを大文字化する
-fn format_token(kind: &TokenKind, text: &str) -> String {
+///
+/// 変換が不要なトークン（識別子、演算子、数字等）は `Cow::Borrowed` を返し、
+/// アロケーションを回避する。キーワードの大文字化と文字列/コメントの
+/// コピーにのみ `Cow::Owned` を使用する。
+fn format_token<'a>(kind: &TokenKind, text: &'a str) -> Cow<'a, str> {
     match kind {
-        TokenKind::String | TokenKind::NString | TokenKind::HexString => text.to_owned(),
-        TokenKind::LineComment | TokenKind::BlockComment => text.to_owned(),
+        TokenKind::String | TokenKind::NString | TokenKind::HexString => Cow::Owned(text.to_owned()),
+        TokenKind::LineComment | TokenKind::BlockComment => Cow::Owned(text.to_owned()),
         _ => {
             if kind.is_keyword() {
-                text.to_uppercase()
+                Cow::Owned(text.to_uppercase())
             } else {
-                text.to_owned()
+                Cow::Borrowed(text)
             }
         }
     }
