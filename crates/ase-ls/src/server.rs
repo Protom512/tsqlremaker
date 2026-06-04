@@ -21,8 +21,8 @@ pub struct AseLanguageServer {
 
 /// メモリ上のドキュメント管理
 struct DocumentStore {
-    /// URI → (source, analysis)
-    docs: std::collections::HashMap<String, (Arc<str>, DocumentAnalysis)>,
+    /// URI → analysis
+    docs: std::collections::HashMap<String, DocumentAnalysis>,
 }
 
 impl DocumentStore {
@@ -34,14 +34,12 @@ impl DocumentStore {
 
     fn open(&mut self, uri: &str, text: &str) {
         let analysis = DocumentAnalysis::new(text);
-        self.docs
-            .insert(uri.to_string(), (Arc::from(text), analysis));
+        self.docs.insert(uri.to_string(), analysis);
     }
 
     fn update(&mut self, uri: &str, text: &str) {
         let analysis = DocumentAnalysis::new(text);
-        self.docs
-            .insert(uri.to_string(), (Arc::from(text), analysis));
+        self.docs.insert(uri.to_string(), analysis);
     }
 
     fn close(&mut self, uri: &str) {
@@ -70,7 +68,7 @@ impl AseLanguageServer {
     /// URIに対応するDocumentAnalysisを取得する
     async fn get_analysis(&self, uri: &Url) -> Option<DocumentAnalysis> {
         let docs = self.documents.read().await;
-        docs.docs.get(uri.as_str()).map(|(_, a)| a).cloned()
+        docs.docs.get(uri.as_str()).cloned()
     }
 }
 
@@ -406,7 +404,7 @@ impl LanguageServer for AseLanguageServer {
         let docs = self.documents.read().await;
         let mut all_symbols = Vec::new();
 
-        for (uri_str, (_source, analysis)) in &docs.docs {
+        for (uri_str, analysis) in &docs.docs {
             if let Ok(uri) = Url::parse(uri_str) {
                 let symbols = workspace_symbols::workspace_symbols_with_analysis(
                     analysis,
