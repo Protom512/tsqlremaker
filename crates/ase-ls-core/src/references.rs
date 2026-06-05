@@ -49,25 +49,37 @@ pub fn reference_ranges_with_analysis(
     refs
 }
 
+/// Check if `haystack` ends with `suffix`, comparing ASCII characters case-insensitively.
+fn ends_with_ignore_ascii_case(haystack: &str, suffix: &str) -> bool {
+    if suffix.len() > haystack.len() {
+        return false;
+    }
+    let haystack_bytes = haystack.as_bytes();
+    let suffix_bytes = suffix.as_bytes();
+    haystack_bytes[haystack.len() - suffix.len()..]
+        .iter()
+        .zip(suffix_bytes)
+        .all(|(a, b)| a.eq_ignore_ascii_case(b))
+}
+
 /// トークンが定義箇所かどうかを判定する
 fn is_definition_token(source: &str, span_start: usize, is_var: bool) -> bool {
     let before = &source[..span_start];
     let trimmed = before.trim_end();
-    let upper = trimmed.to_uppercase();
 
     if is_var {
         // 変数定義: DECLARE @var
-        if upper.ends_with("DECLARE") || trimmed.ends_with(',') {
+        if ends_with_ignore_ascii_case(trimmed, "DECLARE") || trimmed.ends_with(',') {
             return true;
         }
     } else {
         // テーブル/プロシージャ/ビュー/インデックス/トリガー定義: CREATE [OBJECT] name
-        if upper.ends_with("CREATE TABLE")
-            || upper.ends_with("CREATE PROCEDURE")
-            || upper.ends_with("CREATE VIEW")
-            || upper.ends_with("CREATE INDEX")
-            || upper.ends_with("CREATE UNIQUE INDEX")
-            || upper.ends_with("CREATE TRIGGER")
+        if ends_with_ignore_ascii_case(trimmed, "CREATE TABLE")
+            || ends_with_ignore_ascii_case(trimmed, "CREATE PROCEDURE")
+            || ends_with_ignore_ascii_case(trimmed, "CREATE VIEW")
+            || ends_with_ignore_ascii_case(trimmed, "CREATE INDEX")
+            || ends_with_ignore_ascii_case(trimmed, "CREATE UNIQUE INDEX")
+            || ends_with_ignore_ascii_case(trimmed, "CREATE TRIGGER")
         {
             return true;
         }
