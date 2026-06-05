@@ -191,7 +191,7 @@ impl LanguageServer for AseLanguageServer {
     ) -> Result<Option<DocumentSymbolResponse>> {
         let uri = &params.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            Ok(symbols::document_symbols(&analysis.source))
+            Ok(symbols::document_symbols_with_analysis(&analysis))
         } else {
             Ok(None)
         }

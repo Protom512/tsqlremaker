@@ -2,22 +2,17 @@
 //!
 //! AST の文から LSP DocumentSymbol / SymbolInformation を生成する。
 
+use crate::analysis::DocumentAnalysis;
 use crate::line_index::LineIndex;
 use lsp_types::{DocumentSymbol, DocumentSymbolResponse, SymbolKind};
 use tsql_parser::ast::{Statement, TableReference};
 
-/// ソースコードから Document Symbols を生成する
-pub fn document_symbols(source: &str) -> Option<DocumentSymbolResponse> {
-    let mut parser = tsql_parser::Parser::new(source);
-    let statements = match parser.parse() {
-        Ok(s) => s,
-        Err(_) => return None,
-    };
-
-    let line_index = LineIndex::new(source);
-    let symbols: Vec<DocumentSymbol> = statements
+/// DocumentAnalysisから Document Symbols を生成する（キャッシュ利用）
+pub fn document_symbols_with_analysis(analysis: &DocumentAnalysis) -> Option<DocumentSymbolResponse> {
+    let symbols: Vec<DocumentSymbol> = analysis
+        .statements
         .iter()
-        .filter_map(|stmt| statement_to_symbol(&line_index, stmt))
+        .filter_map(|stmt| statement_to_symbol(&analysis.line_index, stmt))
         .collect();
 
     if symbols.is_empty() {
@@ -127,10 +122,14 @@ fn span_to_lsp_range(line_index: &LineIndex, start: u32, end: u32) -> lsp_types:
 mod tests {
     use super::*;
 
+    fn make_analysis(source: &str) -> DocumentAnalysis {
+        DocumentAnalysis::new(source)
+    }
+
     #[test]
     fn test_create_table_symbol() {
-        let source = "CREATE TABLE users (id INT, name VARCHAR(100))";
-        let result = document_symbols(source);
+        let analysis = make_analysis("CREATE TABLE users (id INT, name VARCHAR(100))");
+        let result = document_symbols_with_analysis(&analysis);
         assert!(result.is_some());
         if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
             assert_eq!(symbols.len(), 1);
@@ -141,8 +140,8 @@ mod tests {
 
     #[test]
     fn test_select_symbol() {
-        let source = "SELECT * FROM users";
-        let result = document_symbols(source);
+        let analysis = make_analysis("SELECT * FROM users");
+        let result = document_symbols_with_analysis(&analysis);
         assert!(result.is_some());
         if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
             assert_eq!(symbols.len(), 1);
@@ -152,8 +151,8 @@ mod tests {
 
     #[test]
     fn test_multiple_symbols() {
-        let source = "CREATE TABLE t1 (id INT); SELECT * FROM t1";
-        let result = document_symbols(source);
+        let analysis = make_analysis("CREATE TABLE t1 (id INT); SELECT * FROM t1");
+        let result = document_symbols_with_analysis(&analysis);
         assert!(result.is_some());
         if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
             assert_eq!(symbols.len(), 2);
@@ -162,8 +161,8 @@ mod tests {
 
     #[test]
     fn test_no_symbols_for_invalid() {
-        let source = "INVALID SQL !!!";
-        let result = document_symbols(source);
+        let analysis = make_analysis("INVALID SQL !!!");
+        let result = document_symbols_with_analysis(&analysis);
         assert!(
             result.is_none()
                 || matches!(result, Some(DocumentSymbolResponse::Nested(s)) if s.is_empty())
@@ -172,8 +171,8 @@ mod tests {
 
     #[test]
     fn test_insert_symbol() {
-        let source = "CREATE TABLE t (id INT)\nINSERT INTO t VALUES (1)";
-        let result = document_symbols(source);
+        let analysis = make_analysis("CREATE TABLE t (id INT)\nINSERT INTO t VALUES (1)");
+        let result = document_symbols_with_analysis(&analysis);
         assert!(result.is_some());
         if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
             let insert_sym = symbols.iter().find(|s| s.name.starts_with("INSERT"));
@@ -188,8 +187,8 @@ mod tests {
 
     #[test]
     fn test_update_symbol() {
-        let source = "CREATE TABLE t (id INT)\nUPDATE t SET id = 1";
-        let result = document_symbols(source);
+        let analysis = make_analysis("CREATE TABLE t (id INT)\nUPDATE t SET id = 1");
+        let result = document_symbols_with_analysis(&analysis);
         assert!(result.is_some());
         if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
             let update_sym = symbols.iter().find(|s| s.name.starts_with("UPDATE"));
@@ -204,8 +203,8 @@ mod tests {
 
     #[test]
     fn test_delete_symbol() {
-        let source = "CREATE TABLE t (id INT)\nDELETE FROM t WHERE id = 1";
-        let result = document_symbols(source);
+        let analysis = make_analysis("CREATE TABLE t (id INT)\nDELETE FROM t WHERE id = 1");
+        let result = document_symbols_with_analysis(&analysis);
         assert!(result.is_some());
         if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
             let delete_sym = symbols.iter().find(|s| s.name.starts_with("DELETE"));
@@ -220,8 +219,8 @@ mod tests {
 
     #[test]
     fn test_declare_symbol() {
-        let source = "DECLARE @count INT, @name VARCHAR(50)";
-        let result = document_symbols(source);
+        let analysis = make_analysis("DECLARE @count INT, @name VARCHAR(50)");
+        let result = document_symbols_with_analysis(&analysis);
         assert!(result.is_some());
         if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
             assert_eq!(symbols.len(), 1);
@@ -232,8 +231,8 @@ mod tests {
 
     #[test]
     fn test_create_procedure_symbol() {
-        let source = "CREATE PROCEDURE my_proc AS BEGIN SELECT 1 END";
-        let result = document_symbols(source);
+        let analysis = make_analysis("CREATE PROCEDURE my_proc AS BEGIN SELECT 1 END");
+        let result = document_symbols_with_analysis(&analysis);
         assert!(result.is_some());
         if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
             assert_eq!(symbols.len(), 1);
@@ -244,8 +243,8 @@ mod tests {
 
     #[test]
     fn test_create_view_symbol() {
-        let source = "CREATE VIEW my_view AS SELECT * FROM t";
-        let result = document_symbols(source);
+        let analysis = make_analysis("CREATE VIEW my_view AS SELECT * FROM t");
+        let result = document_symbols_with_analysis(&analysis);
         assert!(result.is_some());
         if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
             assert_eq!(symbols.len(), 1);
@@ -256,8 +255,8 @@ mod tests {
 
     #[test]
     fn test_create_index_symbol() {
-        let source = "CREATE TABLE t (id INT)\nCREATE INDEX idx_t ON t (id)";
-        let result = document_symbols(source);
+        let analysis = make_analysis("CREATE TABLE t (id INT)\nCREATE INDEX idx_t ON t (id)");
+        let result = document_symbols_with_analysis(&analysis);
         assert!(result.is_some());
         if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
             let idx_sym = symbols.iter().find(|s| s.name == "idx_t");
@@ -272,8 +271,8 @@ mod tests {
 
     #[test]
     fn test_create_trigger_symbol() {
-        let source = "CREATE TABLE t (id INT)\nCREATE TRIGGER trg_t ON t FOR INSERT AS BEGIN END";
-        let result = document_symbols(source);
+        let analysis = make_analysis("CREATE TABLE t (id INT)\nCREATE TRIGGER trg_t ON t FOR INSERT AS BEGIN END");
+        let result = document_symbols_with_analysis(&analysis);
         assert!(result.is_some());
         if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
             let trig_sym = symbols.iter().find(|s| s.name == "trg_t");
@@ -288,8 +287,8 @@ mod tests {
 
     #[test]
     fn test_update_with_alias() {
-        let source = "CREATE TABLE t (id INT)\nUPDATE t SET id = 1 WHERE id > 0";
-        let result = document_symbols(source);
+        let analysis = make_analysis("CREATE TABLE t (id INT)\nUPDATE t SET id = 1 WHERE id > 0");
+        let result = document_symbols_with_analysis(&analysis);
         assert!(result.is_some());
         if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
             let update_sym = symbols.iter().find(|s| s.name.starts_with("UPDATE"));
@@ -303,7 +302,8 @@ mod tests {
 
     #[test]
     fn test_empty_source_no_symbols() {
-        let result = document_symbols("");
+        let analysis = make_analysis("");
+        let result = document_symbols_with_analysis(&analysis);
         assert!(result.is_none());
     }
 }
