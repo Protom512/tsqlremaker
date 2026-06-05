@@ -1932,10 +1932,11 @@ mod tests {
 
     // === Coverage gap tests ===
 
-    /// String-based `code_actions()` API for INSERT skeleton generation
+    /// INSERT skeleton generation via code_actions_with_analysis
     #[test]
-    fn test_string_based_insert_skeleton() {
+    fn test_analysis_insert_skeleton() {
         let source = "CREATE TABLE users (id INT, name VARCHAR(100))\nINSERT INTO users";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
         let range = Range {
             start: Position {
                 line: 1,
@@ -1946,20 +1947,21 @@ mod tests {
                 character: 20,
             },
         };
-        let actions = code_actions(source, range, &test_uri());
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
         let insert_action = actions.iter().find(
             |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("INSERT")),
         );
         assert!(
             insert_action.is_some(),
-            "String-based code_actions should offer INSERT skeleton"
+            "code_actions_with_analysis should offer INSERT skeleton"
         );
     }
 
-    /// `code_actions()` returns empty for empty line
+    /// code_actions_with_analysis returns empty for empty line
     #[test]
-    fn test_string_based_empty_line_no_actions() {
+    fn test_analysis_empty_line_no_actions() {
         let source = "CREATE TABLE t (a INT)\n\nSELECT * FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
         let range = Range {
             start: Position {
                 line: 1,
@@ -1970,24 +1972,25 @@ mod tests {
                 character: 0,
             },
         };
-        let actions = code_actions(source, range, &test_uri());
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
         assert!(
             actions.is_empty(),
-            "Empty line should produce no actions via string-based path"
+            "Empty line should produce no actions"
         );
     }
 
-    /// `build_fallback_symbol_table` fallback: DDL before parse errors
+    /// Symbol table fallback: DDL before parse errors
     /// When the full source fails to produce tables via build_tolerant,
     /// the fallback progressively shortens the source to find DDL definitions.
     #[test]
     fn test_fallback_symbol_table_with_parse_errors() {
-        // Use SELECT * which triggers expand via string-based path
+        // Use SELECT * which triggers expand
         let source = concat!(
             "CREATE TABLE t (a INT, b INT)\n",
             "GO\n",
             "SELECT * FROM t\n",
         );
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
         let range = Range {
             start: Position {
                 line: 2,
@@ -1998,14 +2001,14 @@ mod tests {
                 character: 20,
             },
         };
-        let actions = code_actions(source, range, &test_uri());
-        // The string-based expand should find the table and offer SELECT * expansion
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
+        // The expand should find the table and offer SELECT * expansion
         let expand_action = actions.iter().find(
             |a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("Expand")),
         );
         assert!(
             expand_action.is_some(),
-            "Fallback symbol table should find table definition and offer SELECT * expansion"
+            "Symbol table should find table definition and offer SELECT * expansion"
         );
     }
 
@@ -2087,13 +2090,15 @@ mod tests {
         );
     }
 
-    /// `get_line_at` utility: out-of-range line returns empty string
+    /// DocumentAnalysis::get_line utility: out-of-range line returns empty string
     #[test]
-    fn test_get_line_at_out_of_range() {
-        assert_eq!(get_line_at("hello\nworld", 0), "hello");
-        assert_eq!(get_line_at("hello\nworld", 1), "world");
-        assert_eq!(get_line_at("hello\nworld", 5), "");
-        assert_eq!(get_line_at("", 0), "");
+    fn test_get_line_out_of_range() {
+        let analysis = crate::analysis::DocumentAnalysis::new("hello\nworld");
+        assert_eq!(analysis.get_line(0), "hello");
+        assert_eq!(analysis.get_line(1), "world");
+        assert_eq!(analysis.get_line(5), "");
+        let empty_analysis = crate::analysis::DocumentAnalysis::new("");
+        assert_eq!(empty_analysis.get_line(0), "");
     }
 
     /// `find_values_token_start`: no VALUES token in range returns None
@@ -2123,11 +2128,12 @@ mod tests {
         );
     }
 
-    /// String-based `try_wrap_try_catch` via `code_actions()`:
+    /// TRY...CATCH wrap via code_actions_with_analysis:
     /// BEGIN on current line should trigger TRY...CATCH wrap
     #[test]
-    fn test_string_based_try_catch() {
+    fn test_analysis_try_catch() {
         let source = "BEGIN\n    SELECT 1\nEND";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
         let range = Range {
             start: Position {
                 line: 0,
@@ -2138,13 +2144,13 @@ mod tests {
                 character: 5,
             },
         };
-        let actions = code_actions(source, range, &test_uri());
+        let actions = code_actions_with_analysis(&analysis, range, &test_uri());
         let try_action = actions
             .iter()
             .find(|a| matches!(a, CodeActionOrCommand::CodeAction(ca) if ca.title.contains("TRY")));
         assert!(
             try_action.is_some(),
-            "String-based code_actions should offer TRY...CATCH for BEGIN"
+            "code_actions_with_analysis should offer TRY...CATCH for BEGIN"
         );
     }
 
@@ -2404,22 +2410,22 @@ mod tests {
         );
     }
 
-    /// `build_fallback_symbol_table`: when build_tolerant succeeds, returns early
+    /// SymbolTableBuilder::build_tolerant: when it succeeds, returns tables
     #[test]
-    fn test_build_fallback_returns_early_when_tolerant_works() {
+    fn test_symbol_table_build_tolerant_works() {
         let source = "CREATE TABLE fb_t (a INT, b INT)\nSELECT * FROM fb_t";
-        let table = build_fallback_symbol_table(source);
+        let table = crate::symbol_table::SymbolTableBuilder::build_tolerant(source);
         assert!(
             !table.tables.is_empty(),
             "build_tolerant should find at least one table from valid DDL"
         );
     }
 
-    /// `build_fallback_symbol_table`: verifies the function handles GO-separated batches
+    /// SymbolTableBuilder::build_tolerant: verifies it handles GO-separated batches
     #[test]
-    fn test_build_fallback_handles_go_batches() {
+    fn test_symbol_table_build_tolerant_go_batches() {
         let source = "CREATE TABLE trunc_t (x INT)\nGO\nSELECT * FROM trunc_t\nGO";
-        let table = build_fallback_symbol_table(source);
+        let table = crate::symbol_table::SymbolTableBuilder::build_tolerant(source);
         assert!(
             !table.tables.is_empty(),
             "Should find table (build_tolerant handles GO batches)"
