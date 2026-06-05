@@ -57,11 +57,9 @@ fn build_column_hover(
     offset: usize,
     ident_text: &str,
 ) -> Option<String> {
-    let upper_ident = ident_text.to_uppercase();
-
     for stmt in &analysis.statements {
         if let Some(result) =
-            resolve_column_in_statement(stmt, &analysis.symbol_table, offset, &upper_ident)
+            resolve_column_in_statement(stmt, &analysis.symbol_table, offset, ident_text)
         {
             return Some(result);
         }
