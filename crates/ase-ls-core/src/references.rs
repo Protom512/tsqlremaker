@@ -26,13 +26,12 @@ pub fn reference_ranges_with_analysis(
         None => return Vec::new(),
     };
 
-    let search_name = target_text.to_uppercase();
     let is_var = target_kind == TokenKind::LocalVar;
 
     let mut refs = Vec::new();
 
     for token in &analysis.tokens {
-        if token_matches_symbol(token.kind, &token.text, &search_name, is_var) {
+        if token_matches_symbol(token.kind, &token.text, &target_text, is_var) {
             let range = analysis
                 .line_index
                 .offset_to_range(token.span.start, token.span.end);

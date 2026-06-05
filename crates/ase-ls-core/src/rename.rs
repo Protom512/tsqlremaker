@@ -27,7 +27,6 @@ pub fn rename_with_analysis(
         None => return None,
     };
 
-    let search_upper = target_text.to_uppercase();
     let is_var = target_kind == TokenKind::LocalVar;
 
     if is_var && !new_name.starts_with('@') {
@@ -40,7 +39,7 @@ pub fn rename_with_analysis(
     let mut edits = Vec::new();
 
     for token in &analysis.tokens {
-        if token_matches_symbol(token.kind, &token.text, &search_upper, is_var) {
+        if token_matches_symbol(token.kind, &token.text, &target_text, is_var) {
             edits.push(TextEdit {
                 range: analysis
                     .line_index
