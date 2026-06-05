@@ -270,6 +270,7 @@ fn try_generate_insert_skeleton_ast(
 
 /// Find a case-insensitive ASCII substring, returning the byte offset.
 /// Returns None if the needle is not found.
+#[inline]
 fn find_ignore_ascii_case(haystack: &str, needle: &str) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
@@ -291,6 +292,7 @@ fn find_ignore_ascii_case(haystack: &str, needle: &str) -> Option<usize> {
 }
 
 /// Check if haystack contains needle (case-insensitive ASCII) without allocation.
+#[inline]
 fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
     find_ignore_ascii_case(haystack, needle).is_some()
 }

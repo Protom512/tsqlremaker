@@ -50,6 +50,7 @@ pub fn reference_ranges_with_analysis(
 }
 
 /// Check if `haystack` ends with `suffix`, comparing ASCII characters case-insensitively.
+#[inline]
 fn ends_with_ignore_ascii_case(haystack: &str, suffix: &str) -> bool {
     if suffix.len() > haystack.len() {
         return false;

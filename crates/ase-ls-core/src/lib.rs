@@ -47,6 +47,7 @@ pub use tsql_parser::Parser;
 /// - オブジェクト種別: `TABLE`, `VIEW`, `INDEX`
 ///
 /// `kind.is_keyword()` は残りのキーワードのフォールバックとして機能する。
+#[inline]
 pub(crate) fn token_matches_symbol(
     kind: tsql_token::TokenKind,
     text: &str,

@@ -352,4 +352,48 @@ mod tests {
         };
         assert!(tokens.data.is_empty());
     }
+
+    #[test]
+    fn test_view_name_gets_class_token() {
+        let source = "CREATE VIEW my_view AS SELECT 1";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = semantic_tokens_full_with_analysis(&analysis);
+        let tokens = match result {
+            SemanticTokensResult::Tokens(t) => t,
+            _ => panic!("Expected Tokens"),
+        };
+        // "my_view" should get CLASS token (index 9)
+        assert!(
+            tokens.data.iter().any(|t| t.token_type == 9),
+            "View name should get CLASS semantic token"
+        );
+    }
+
+    #[test]
+    fn test_keyword_tokens_present() {
+        let source = "SELECT * FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = semantic_tokens_full_with_analysis(&analysis);
+        let tokens = match result {
+            SemanticTokensResult::Tokens(t) => t,
+            _ => panic!("Expected Tokens"),
+        };
+        // SELECT and FROM should be keyword tokens (type 0)
+        assert!(
+            tokens.data.iter().any(|t| t.token_type == 0),
+            "Keywords should get KEYWORD semantic token"
+        );
+    }
+
+    #[test]
+    fn test_empty_source_no_tokens() {
+        let source = "";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = semantic_tokens_full_with_analysis(&analysis);
+        let tokens = match result {
+            SemanticTokensResult::Tokens(t) => t,
+            _ => panic!("Expected Tokens"),
+        };
+        assert!(tokens.data.is_empty());
+    }
 }
