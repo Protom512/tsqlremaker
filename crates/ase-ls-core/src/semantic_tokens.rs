@@ -128,6 +128,7 @@ fn resolve_ident_type(analysis: &DocumentAnalysis, text: &str) -> Option<u32> {
 }
 
 /// ソースコードから Semantic Tokens を生成する（DocumentAnalysis利用）
+#[must_use]
 pub fn semantic_tokens_full_with_analysis(analysis: &DocumentAnalysis) -> SemanticTokensResult {
     let mut tokens = Vec::new();
     let mut prev_line = 0u32;
@@ -174,6 +175,7 @@ pub fn semantic_tokens_full_with_analysis(analysis: &DocumentAnalysis) -> Semant
 
 /// Generate Semantic Tokens for a specific range using DocumentAnalysis.
 /// Only tokens whose start position falls within [range.start, range.end] are included.
+#[must_use]
 pub fn semantic_tokens_range_with_analysis(
     analysis: &DocumentAnalysis,
     range: Range,

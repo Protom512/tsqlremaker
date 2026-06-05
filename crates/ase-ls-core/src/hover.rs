@@ -113,6 +113,7 @@ fn collect_table_names(tables: &[TableReference]) -> Vec<String> {
     names
 }
 
+/// Resolve column information for a table reference within a statement at the given offset.
 fn resolve_column_in_statement(
     stmt: &Statement,
     symbol_table: &crate::symbol_table::SymbolTable,

@@ -232,4 +232,61 @@ mod tests {
         );
         assert!(result.is_none());
     }
+
+    #[test]
+    fn test_analysis_signature_help_convert() {
+        let source = "SELECT CONVERT(";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 15,
+            },
+        );
+        assert!(result.is_some(), "CONVERT should have signature help");
+        let sig = result.unwrap();
+        assert!(sig.signatures.len() == 1);
+        let info = &sig.signatures[0];
+        assert!(
+            info.label.contains("CONVERT"),
+            "Label should contain CONVERT, got: {}",
+            info.label
+        );
+    }
+
+    #[test]
+    fn test_analysis_signature_help_getdate_no_params() {
+        let source = "SELECT GETDATE(";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 15,
+            },
+        );
+        assert!(result.is_some(), "GETDATE should have signature help");
+        let sig = result.unwrap();
+        assert!(sig.signatures.len() == 1);
+    }
+
+    #[test]
+    fn test_analysis_signature_help_substring_multiple_params() {
+        let source = "SELECT SUBSTRING('hello', 2,";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 28,
+            },
+        );
+        assert!(
+            result.is_some(),
+            "SUBSTRING should have signature help at 3rd param"
+        );
+        let sig = result.unwrap();
+        assert_eq!(sig.signatures[0].active_parameter, Some(2));
+    }
 }

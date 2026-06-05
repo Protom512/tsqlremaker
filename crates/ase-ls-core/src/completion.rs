@@ -12,6 +12,9 @@ static COMPLETE_ALL_CACHE: LazyLock<CompletionResponse> = LazyLock::new(build_co
 static COMPLETE_KEYWORDS_CACHE: LazyLock<CompletionResponse> =
     LazyLock::new(build_complete_keywords);
 
+/// Label shown in the detail field for T-SQL keyword completion items.
+const KEYWORD_DETAIL: &str = "T-SQL Keyword";
+
 /// 関数名とパラメータリストからLSP snippet形式のinsert_textを生成する
 ///
 /// `DocEntry.params`（クリーンなパラメータ名配列）を直接使用し、
@@ -66,7 +69,7 @@ fn build_complete_all() -> CompletionResponse {
         items.push(CompletionItem {
             label: entry.name.to_string(),
             kind: Some(CompletionItemKind::KEYWORD),
-            detail: Some("T-SQL Keyword".to_string()),
+            detail: Some(KEYWORD_DETAIL.to_string()),
             ..CompletionItem::default()
         });
     }
@@ -136,7 +139,7 @@ fn build_complete_keywords() -> CompletionResponse {
         .map(|entry| CompletionItem {
             label: entry.name.to_string(),
             kind: Some(CompletionItemKind::KEYWORD),
-            detail: Some("T-SQL Keyword".to_string()),
+            detail: Some(KEYWORD_DETAIL.to_string()),
             ..CompletionItem::default()
         })
         .collect();

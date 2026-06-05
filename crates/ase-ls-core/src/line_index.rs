@@ -28,6 +28,7 @@ impl LineIndex {
     }
 
     /// Convert a byte offset to (line, character), both 0-indexed. O(log n).
+    #[must_use]
     pub fn offset_to_position(&self, offset: u32) -> (u32, u32) {
         let line = self.line_number(offset);
         let line_start = self.line_offsets[line as usize];
@@ -36,6 +37,7 @@ impl LineIndex {
     }
 
     /// Convert an LSP Position to a byte offset. O(log n) + O(line_length).
+    #[must_use]
     pub fn position_to_offset(&self, source: &str, position: Position) -> usize {
         let line = position.line as usize;
         if line >= self.line_offsets.len() {
@@ -60,16 +62,19 @@ impl LineIndex {
     }
 
     /// Get the number of lines.
+    #[must_use]
     pub fn line_count(&self) -> usize {
         self.line_offsets.len()
     }
 
     /// Get the byte offset of the start of a line. O(1).
+    #[must_use]
     pub fn line_offset(&self, line: usize) -> usize {
         self.line_offsets.get(line).copied().unwrap_or(0) as usize
     }
 
     /// Convert two byte offsets to an LSP Range. O(log n).
+    #[must_use]
     pub fn offset_to_range(&self, start_offset: u32, end_offset: u32) -> Range {
         let (start_line, start_char) = self.offset_to_position(start_offset);
         let (end_line, end_char) = self.offset_to_position(end_offset);

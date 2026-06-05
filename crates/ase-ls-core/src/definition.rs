@@ -167,4 +167,34 @@ mod tests {
         );
         assert_eq!(ranges.len(), 1);
     }
+
+    #[test]
+    fn test_definition_with_analysis_index() {
+        let analysis =
+            crate::analysis::DocumentAnalysis::new("CREATE INDEX idx_name ON users (id)");
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 14,
+            },
+        );
+        assert_eq!(ranges.len(), 1);
+    }
+
+    #[test]
+    fn test_definition_with_analysis_variable_in_while() {
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "DECLARE @count INT\nWHILE @count < 10 BEGIN\n  SET @count = @count + 1\nEND",
+        );
+        // Click on @count inside WHILE condition
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 7,
+            },
+        );
+        assert_eq!(ranges.len(), 1);
+    }
 }

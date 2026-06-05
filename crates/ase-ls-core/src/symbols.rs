@@ -8,7 +8,9 @@ use lsp_types::{DocumentSymbol, DocumentSymbolResponse, SymbolKind};
 use tsql_parser::ast::{Statement, TableReference};
 
 /// DocumentAnalysisから Document Symbols を生成する（キャッシュ利用）
-pub fn document_symbols_with_analysis(analysis: &DocumentAnalysis) -> Option<DocumentSymbolResponse> {
+pub fn document_symbols_with_analysis(
+    analysis: &DocumentAnalysis,
+) -> Option<DocumentSymbolResponse> {
     let symbols: Vec<DocumentSymbol> = analysis
         .statements
         .iter()
@@ -271,7 +273,9 @@ mod tests {
 
     #[test]
     fn test_create_trigger_symbol() {
-        let analysis = make_analysis("CREATE TABLE t (id INT)\nCREATE TRIGGER trg_t ON t FOR INSERT AS BEGIN END");
+        let analysis = make_analysis(
+            "CREATE TABLE t (id INT)\nCREATE TRIGGER trg_t ON t FOR INSERT AS BEGIN END",
+        );
         let result = document_symbols_with_analysis(&analysis);
         assert!(result.is_some());
         if let Some(DocumentSymbolResponse::Nested(symbols)) = result {

@@ -14,6 +14,7 @@ const DIAGNOSTIC_SOURCE: &str = "ase-ls";
 use tsql_token::TokenKind;
 
 /// DocumentAnalysisから診断を生成する（キャッシュ利用）
+#[must_use]
 pub fn diagnose(analysis: &DocumentAnalysis) -> Vec<Diagnostic> {
     let mut diags: Vec<Diagnostic> = analysis
         .parse_errors
@@ -245,7 +246,10 @@ mod tests {
     fn test_valid_sql_no_parse_errors() {
         let analysis = crate::analysis::DocumentAnalysis::new("SELECT id, name FROM users");
         let diags = diagnose(&analysis);
-        let parse_errors: Vec<_> = diags.iter().filter(|d| d.severity == Some(DiagnosticSeverity::ERROR)).collect();
+        let parse_errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+            .collect();
         assert!(parse_errors.is_empty());
     }
 
@@ -253,7 +257,10 @@ mod tests {
     fn test_invalid_sql_has_diagnostics() {
         let analysis = crate::analysis::DocumentAnalysis::new("SELCT * FROM users");
         let diags = diagnose(&analysis);
-        let parse_errors: Vec<_> = diags.iter().filter(|d| d.severity == Some(DiagnosticSeverity::ERROR)).collect();
+        let parse_errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+            .collect();
         assert!(!parse_errors.is_empty());
         assert_eq!(parse_errors[0].source.as_deref(), Some("ase-ls"));
     }
@@ -262,7 +269,10 @@ mod tests {
     fn test_diagnostic_range() {
         let analysis = crate::analysis::DocumentAnalysis::new("SELCT * FROM users");
         let diags = diagnose(&analysis);
-        let parse_errors: Vec<_> = diags.iter().filter(|d| d.severity == Some(DiagnosticSeverity::ERROR)).collect();
+        let parse_errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+            .collect();
         assert!(!parse_errors.is_empty());
         // Error should be at position 0
         assert_eq!(parse_errors[0].range.start.line, 0);
@@ -273,7 +283,10 @@ mod tests {
     fn test_diagnostic_has_message() {
         let analysis = crate::analysis::DocumentAnalysis::new("SELCT * FROM users");
         let diags = diagnose(&analysis);
-        let parse_errors: Vec<_> = diags.iter().filter(|d| d.severity == Some(DiagnosticSeverity::ERROR)).collect();
+        let parse_errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+            .collect();
         assert!(!parse_errors.is_empty());
         assert!(!parse_errors[0].message.is_empty());
     }
@@ -282,7 +295,10 @@ mod tests {
     fn test_diagnostic_range_not_default() {
         let analysis = crate::analysis::DocumentAnalysis::new("SELCT * FROM users");
         let diags = diagnose(&analysis);
-        let parse_errors: Vec<_> = diags.iter().filter(|d| d.severity == Some(DiagnosticSeverity::ERROR)).collect();
+        let parse_errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+            .collect();
         assert!(!parse_errors.is_empty());
         let range = parse_errors[0].range;
         assert!(
@@ -296,7 +312,10 @@ mod tests {
     fn test_diagnostic_end_after_start() {
         let analysis = crate::analysis::DocumentAnalysis::new("SELCT * FROM users");
         let diags = diagnose(&analysis);
-        let parse_errors: Vec<_> = diags.iter().filter(|d| d.severity == Some(DiagnosticSeverity::ERROR)).collect();
+        let parse_errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+            .collect();
         assert!(!parse_errors.is_empty());
         let range = parse_errors[0].range;
         assert!(range.end.line >= range.start.line);
@@ -309,7 +328,10 @@ mod tests {
     fn test_parse_errors_converts_all() {
         let analysis = crate::analysis::DocumentAnalysis::new("SELCT FRO users");
         let diags = diagnose(&analysis);
-        let parse_errors: Vec<_> = diags.iter().filter(|d| d.severity == Some(DiagnosticSeverity::ERROR)).collect();
+        let parse_errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+            .collect();
         assert!(!parse_errors.is_empty());
     }
 
@@ -318,7 +340,10 @@ mod tests {
         let source = "CREATE TABLE t (id INT)\nINSERT INTO t (id) VALUES (1)\nSELECT * FROM t";
         let analysis = crate::analysis::DocumentAnalysis::new(source);
         let diags = diagnose(&analysis);
-        let parse_errors: Vec<_> = diags.iter().filter(|d| d.severity == Some(DiagnosticSeverity::ERROR)).collect();
+        let parse_errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+            .collect();
         assert!(parse_errors.is_empty());
     }
 
@@ -329,7 +354,10 @@ mod tests {
             let analysis = crate::analysis::DocumentAnalysis::new(source);
             let diags = diagnose(&analysis);
             // diagnose() should include parse errors
-            let parse_errors: Vec<_> = diags.iter().filter(|d| d.severity == Some(DiagnosticSeverity::ERROR)).collect();
+            let parse_errors: Vec<_> = diags
+                .iter()
+                .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+                .collect();
             if !source.is_empty() {
                 assert!(
                     !parse_errors.is_empty() || !diags.is_empty(),
@@ -589,7 +617,10 @@ mod tests {
         // ParseError uses 1-indexed position; diagnostics should convert to 0-indexed
         let analysis = crate::analysis::DocumentAnalysis::new("SELCT * FROM");
         let diags = diagnose(&analysis);
-        let parse_errors: Vec<_> = diags.iter().filter(|d| d.severity == Some(DiagnosticSeverity::ERROR)).collect();
+        let parse_errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+            .collect();
         assert!(!parse_errors.is_empty());
         // Position should be 0-indexed (not 1-indexed)
         assert_eq!(parse_errors[0].range.start.line, 0);

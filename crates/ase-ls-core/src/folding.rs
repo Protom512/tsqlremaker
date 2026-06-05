@@ -114,6 +114,7 @@ fn collect_ast_folds(
     }
 }
 
+/// Add a folding range if the span covers more than one line.
 fn add_fold_if_multiline(
     start_offset: usize,
     end_offset: usize,

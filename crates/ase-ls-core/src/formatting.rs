@@ -9,6 +9,7 @@ use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
 
 /// SQL文をフォーマットし、TextEditのリストを返す
+#[must_use]
 pub fn format(source: &str) -> Vec<TextEdit> {
     let formatted = format_sql(source);
     if formatted == source {

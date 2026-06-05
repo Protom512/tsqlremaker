@@ -15,6 +15,9 @@ use tsql_parser::ast::{SelectItem, Statement, TableReference};
 use tsql_parser::AstNode;
 use tsql_token::TokenKind;
 
+/// Label for the "Wrap with TRY...CATCH" code action.
+const TRY_CATCH_LABEL: &str = "Wrap with TRY...CATCH";
+
 /// Code Actionsを生成する（DocumentAnalysis利用）
 pub fn code_actions_with_analysis(
     analysis: &DocumentAnalysis,
@@ -33,9 +36,9 @@ pub fn code_actions_with_analysis(
     } else {
         // Fallback: incomplete INSERT (no VALUES) isn't parsed as Statement::Insert,
         // so fall back to line-level string matching for INSERT skeleton generation.
-        let line_text = analysis.get_line(range.start.line).to_string();
+        let line_text = analysis.get_line(range.start.line);
         if let Some(action) =
-            try_generate_insert_skeleton(&analysis.symbol_table, &line_text, range.start, uri)
+            try_generate_insert_skeleton(&analysis.symbol_table, line_text, range.start, uri)
         {
             actions.push(CodeActionOrCommand::CodeAction(action));
         }
@@ -45,8 +48,8 @@ pub fn code_actions_with_analysis(
     if let Some(action) = try_wrap_try_catch_ast(analysis, range.start, uri) {
         actions.push(CodeActionOrCommand::CodeAction(action));
     } else {
-        let line_text = analysis.get_line(range.start.line).to_string();
-        if let Some(action) = try_wrap_try_catch(&analysis.source, &line_text, range.start, uri) {
+        let line_text = analysis.get_line(range.start.line);
+        if let Some(action) = try_wrap_try_catch(&analysis.source, line_text, range.start, uri) {
             actions.push(CodeActionOrCommand::CodeAction(action));
         }
     }
@@ -379,7 +382,7 @@ fn try_wrap_try_catch(
         new_text,
     );
 
-    Some(make_refactor("Wrap with TRY...CATCH".to_string(), edit))
+    Some(make_refactor(TRY_CATCH_LABEL.to_string(), edit))
 }
 
 /// 指定行のBEGINに対応するEND行を見つける
@@ -472,7 +475,7 @@ fn try_wrap_try_catch_ast(
         new_text,
     );
 
-    Some(make_refactor("Wrap with TRY...CATCH".to_string(), edit))
+    Some(make_refactor(TRY_CATCH_LABEL.to_string(), edit))
 }
 
 /// Find the innermost Statement::Block containing the given offset.

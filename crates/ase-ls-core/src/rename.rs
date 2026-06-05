@@ -336,4 +336,50 @@ mod tests {
         );
         assert!(placeholder.is_none());
     }
+
+    #[test]
+    fn test_rename_with_analysis_table_case_insensitive() {
+        // CREATE TABLE with mixed case, reference in different case
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TABLE Users (id INT)\nSELECT * FROM users\n",
+        );
+        let result = rename_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 14,
+            }, // "Users"
+            "customers",
+            &test_uri(),
+        );
+        let ws_edit = result.expect("should produce WorkspaceEdit");
+        let changes = ws_edit.changes.expect("should have changes");
+        let edits = changes.values().next().unwrap();
+        // Should rename both "Users" and "users"
+        assert!(
+            edits.len() >= 2,
+            "Expected at least 2 edits for case-insensitive table rename, got {}",
+            edits.len()
+        );
+    }
+
+    #[test]
+    fn test_rename_with_analysis_variable_multiple_references() {
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "DECLARE @count INT\nSET @count = 1\nSELECT @count\n",
+        );
+        let result = rename_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 9,
+            }, // @count in DECLARE
+            "@total",
+            &test_uri(),
+        );
+        let ws_edit = result.expect("should produce WorkspaceEdit");
+        let changes = ws_edit.changes.expect("should have changes");
+        let edits = changes.values().next().unwrap();
+        assert_eq!(edits.len(), 3, "Should rename all 3 occurrences of @count");
+    }
 }
