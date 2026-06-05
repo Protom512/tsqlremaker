@@ -10,9 +10,7 @@ use tsql_parser::ast::{SelectItem, Statement};
 use tsql_parser::ParseError;
 
 /// Diagnostic source identifier shared across all diagnostic constructors.
-fn diagnostic_source() -> String {
-    String::from("ase-ls")
-}
+const DIAGNOSTIC_SOURCE: &str = "ase-ls";
 use tsql_token::TokenKind;
 
 /// DocumentAnalysisから診断を生成する（キャッシュ利用）
@@ -149,7 +147,7 @@ fn make_star_diagnostic(
     Some(Diagnostic {
         range: analysis.line_index.offset_to_range(star_u32, end_u32),
         severity: Some(DiagnosticSeverity::WARNING),
-        source: Some(diagnostic_source()),
+        source: Some(DIAGNOSTIC_SOURCE.to_string()),
         message: "SELECT *: consider specifying explicit columns for better performance and maintainability".to_string(),
         ..Diagnostic::default()
     })
@@ -211,7 +209,7 @@ fn parse_error_to_diagnostic(line_index: &LineIndex, error: &ParseError) -> Diag
     Diagnostic {
         range,
         severity: Some(DiagnosticSeverity::ERROR),
-        source: Some(diagnostic_source()),
+        source: Some(DIAGNOSTIC_SOURCE.to_string()),
         message,
         ..Diagnostic::default()
     }

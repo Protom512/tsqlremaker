@@ -135,7 +135,7 @@ fn resolve_column_in_statement(
                     crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, table_name)
                 {
                     for col in &tbl.columns {
-                        if col.name.to_uppercase() == upper_ident {
+                        if col.name.eq_ignore_ascii_case(upper_ident) {
                             return Some(format_column_hover(col, &tbl.name));
                         }
                     }
@@ -154,7 +154,7 @@ fn resolve_column_in_statement(
                 crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, &table_name)
             {
                 for col in &tbl.columns {
-                    if col.name.to_uppercase() == upper_ident {
+                    if col.name.eq_ignore_ascii_case(upper_ident) {
                         return Some(format_column_hover(col, &tbl.name));
                     }
                 }
@@ -180,7 +180,7 @@ fn resolve_column_in_statement(
                     crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, tbl_name)
                 {
                     for col in &tbl.columns {
-                        if col.name.to_uppercase() == upper_ident {
+                        if col.name.eq_ignore_ascii_case(upper_ident) {
                             return Some(format_column_hover(col, &tbl.name));
                         }
                     }
@@ -249,7 +249,7 @@ fn build_schema_hover(
             // プロシージャボディ内変数
             for proc in symbol_table.procedures.values() {
                 for body_var in &proc.body_variables {
-                    if body_var.name.to_uppercase() == upper {
+                    if body_var.name.eq_ignore_ascii_case(&upper) {
                         return Some(format!(
                             "```tsql\n{}: {}\n```\n\n**Variable** in `{}` — `DECLARE {} {}`",
                             text, body_var.data_type, proc.name, body_var.name, body_var.data_type
@@ -257,7 +257,7 @@ fn build_schema_hover(
                     }
                 }
                 for param in &proc.parameters {
-                    if param.name.to_uppercase() == upper {
+                    if param.name.eq_ignore_ascii_case(&upper) {
                         let output_marker = if param.is_output { " OUTPUT" } else { "" };
                         return Some(format!(
                             "```tsql\n{}: {}{}\n```\n\n**Parameter** of `{}`",

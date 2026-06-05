@@ -50,13 +50,13 @@ fn find_variable_definition(table: &SymbolTable, name: &str) -> Vec<Range> {
     // プロシージャボディ内の変数
     for proc in table.procedures.values() {
         for var in &proc.body_variables {
-            if var.name.to_uppercase() == name {
+            if var.name.eq_ignore_ascii_case(name) {
                 results.push(var.range);
             }
         }
         // パラメータも検索
         for param in &proc.parameters {
-            if param.name.to_uppercase() == name {
+            if param.name.eq_ignore_ascii_case(name) {
                 results.push(param.range);
             }
         }
