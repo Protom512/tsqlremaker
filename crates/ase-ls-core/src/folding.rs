@@ -8,21 +8,7 @@ use tsql_lexer::Lexer;
 use tsql_parser::ast::Statement;
 use tsql_token::TokenKind;
 
-/// ソースコードから Folding Ranges を生成する
-pub fn folding_ranges(source: &str) -> Vec<FoldingRange> {
-    let line_index = LineIndex::new(source);
-    let mut ranges = Vec::new();
-
-    // 1. ブロックコメントの折りたたみ
-    ranges.extend(fold_comments(&line_index, source));
-
-    // 2. BEGIN...END ブロックの折りたたみ
-    ranges.extend(fold_begin_end(&line_index, source));
-
-    ranges
-}
-
-/// Folding Ranges を DocumentAnalysis から生成する（AST対応版）
+/// Folding Ranges を DocumentAnalysis から生成する
 pub fn folding_ranges_with_analysis(
     analysis: &crate::analysis::DocumentAnalysis,
 ) -> Vec<FoldingRange> {
@@ -195,42 +181,6 @@ fn fold_comments(line_index: &LineIndex, source: &str) -> Vec<FoldingRange> {
     ranges
 }
 
-/// BEGIN...END ブロックの折りたたみ範囲を検出
-fn fold_begin_end(line_index: &LineIndex, source: &str) -> Vec<FoldingRange> {
-    let mut ranges = Vec::new();
-    let lexer = Lexer::new(source);
-    let tokens: Vec<_> = lexer.filter_map(Result::ok).collect();
-
-    let mut begin_stack: Vec<(u32, u32)> = Vec::new(); // (line, offset)
-
-    for token in &tokens {
-        match token.kind {
-            TokenKind::Begin => {
-                let (line, _) = line_index.offset_to_position(token.span.start);
-                begin_stack.push((line, token.span.start));
-            }
-            TokenKind::End => {
-                if let Some((start_line, _)) = begin_stack.pop() {
-                    let (end_line, _) = line_index.offset_to_position(token.span.end);
-                    if start_line < end_line {
-                        ranges.push(FoldingRange {
-                            start_line,
-                            start_character: None,
-                            end_line,
-                            end_character: None,
-                            kind: Some(FoldingRangeKind::Region),
-                            collapsed_text: None,
-                        });
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    ranges
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -238,14 +188,16 @@ mod tests {
 
     #[test]
     fn test_no_folds_single_line() {
-        let ranges = folding_ranges("SELECT * FROM users");
+        let analysis = make_analysis("SELECT * FROM users");
+        let ranges = folding_ranges_with_analysis(&analysis);
         assert!(ranges.is_empty());
     }
 
     #[test]
     fn test_begin_end_fold() {
         let source = "BEGIN\n  SELECT 1;\n  SELECT 2;\nEND";
-        let ranges = folding_ranges(source);
+        let analysis = make_analysis(source);
+        let ranges = folding_ranges_with_analysis(&analysis);
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].start_line, 0);
         assert_eq!(ranges[0].end_line, 3);
@@ -255,7 +207,8 @@ mod tests {
     #[test]
     fn test_nested_begin_end() {
         let source = "BEGIN\n  BEGIN\n    SELECT 1;\n  END\nEND";
-        let ranges = folding_ranges(source);
+        let analysis = make_analysis(source);
+        let ranges = folding_ranges_with_analysis(&analysis);
         // Inner BEGIN...END spans lines 1-3, outer spans 0-4
         assert_eq!(ranges.len(), 2);
     }
@@ -263,7 +216,8 @@ mod tests {
     #[test]
     fn test_comment_fold() {
         let source = "/* This is a\n   multi-line comment */\nSELECT 1";
-        let ranges = folding_ranges(source);
+        let analysis = make_analysis(source);
+        let ranges = folding_ranges_with_analysis(&analysis);
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].kind, Some(FoldingRangeKind::Comment));
     }
@@ -271,7 +225,8 @@ mod tests {
     #[test]
     fn test_single_line_comment_no_fold() {
         let source = "/* single line */ SELECT 1";
-        let ranges = folding_ranges(source);
+        let analysis = make_analysis(source);
+        let ranges = folding_ranges_with_analysis(&analysis);
         // Single line comment should not produce a fold
         let comment_folds: Vec<_> = ranges
             .iter()
@@ -397,7 +352,8 @@ mod tests {
     fn test_unmatched_begin_no_panic() {
         // BEGIN without END should not panic
         let source = "BEGIN\n  SELECT 1\n  SELECT 2";
-        let ranges = folding_ranges(source);
+        let analysis = make_analysis(source);
+        let ranges = folding_ranges_with_analysis(&analysis);
         // No fold produced since END is missing — but should not panic
         let region_folds = count_region_folds(&ranges);
         assert_eq!(region_folds, 0, "Unmatched BEGIN should produce no folds");
@@ -406,7 +362,8 @@ mod tests {
     #[test]
     fn test_multiple_block_comments() {
         let source = "/* block one\n   line 2\n   line 3 */\nSELECT 1;\n/* block two\n   line 2 */";
-        let ranges = folding_ranges(source);
+        let analysis = make_analysis(source);
+        let ranges = folding_ranges_with_analysis(&analysis);
         let comment_folds: Vec<_> = ranges
             .iter()
             .filter(|r| r.kind == Some(FoldingRangeKind::Comment))
@@ -432,7 +389,8 @@ mod tests {
 
     #[test]
     fn test_empty_source_no_folds() {
-        let ranges = folding_ranges("");
+        let analysis = make_analysis("");
+        let ranges = folding_ranges_with_analysis(&analysis);
         assert!(ranges.is_empty(), "Empty source should produce no folds");
     }
 

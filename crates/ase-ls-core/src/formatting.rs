@@ -103,7 +103,9 @@ fn format_sql(source: &str) -> String {
 /// コピーにのみ `Cow::Owned` を使用する。
 fn format_token<'a>(kind: &TokenKind, text: &'a str) -> Cow<'a, str> {
     match kind {
-        TokenKind::String | TokenKind::NString | TokenKind::HexString => Cow::Owned(text.to_owned()),
+        TokenKind::String | TokenKind::NString | TokenKind::HexString => {
+            Cow::Owned(text.to_owned())
+        }
         TokenKind::LineComment | TokenKind::BlockComment => Cow::Owned(text.to_owned()),
         _ => {
             if kind.is_keyword() {

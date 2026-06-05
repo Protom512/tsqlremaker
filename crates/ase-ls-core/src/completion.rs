@@ -9,7 +9,8 @@ use std::sync::LazyLock;
 static COMPLETE_ALL_CACHE: LazyLock<CompletionResponse> = LazyLock::new(build_complete_all);
 
 /// キーワード補完のグローバルキャッシュ。
-static COMPLETE_KEYWORDS_CACHE: LazyLock<CompletionResponse> = LazyLock::new(build_complete_keywords);
+static COMPLETE_KEYWORDS_CACHE: LazyLock<CompletionResponse> =
+    LazyLock::new(build_complete_keywords);
 
 /// 関数名とパラメータリストからLSP snippet形式のinsert_textを生成する
 ///

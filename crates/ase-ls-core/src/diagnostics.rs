@@ -229,9 +229,7 @@ fn parse_error_to_diagnostic(line_index: &LineIndex, error: &ParseError) -> Diag
 /// ParseError から Range を取得する
 fn error_range(line_index: &LineIndex, error: &ParseError) -> Range {
     match error.span() {
-        Some(span) => {
-            line_index.offset_to_range(span.start, span.end.max(span.start + 1))
-        }
+        Some(span) => line_index.offset_to_range(span.start, span.end.max(span.start + 1)),
         None => {
             let pos = error.position();
             Range {
