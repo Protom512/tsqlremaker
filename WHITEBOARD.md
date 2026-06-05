@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-05 / Session 20 (legacy function removal + PR rebase)
+**最終更新:** 2026-06-06 / Session 21 (code quality improvements + zero-alloc optimizations)
 
 ---
 
@@ -10,12 +10,41 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1043 passed, 2 skipped (master) / 1077 passed, 2 skipped (PR #123) |
+| **テスト** | 1054 passed, 2 skipped (branch refactor/session-21-code-quality) |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
-| **Open Issues** | 11 |
-| **Open PRs** | 1 (#123, rebased onto latest master) |
-| **ブランチ** | master + feat/insert-column-list-v2 (#123) |
+| **Open Issues** | 12 |
+| **Open PRs** | 2 (#123 INSERT column list, #124 code quality) |
+| **ブランチ** | master + feat/insert-column-list-v2 (#123) + refactor/session-21-code-quality (#124) |
+
+---
+
+## 🔄 Session 21 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `f077159` | refactor(core): extract constants, add #[must_use], remove allocations, add tests |
+| `d3ece94` | perf(core): replace to_uppercase() with zero-allocation case-insensitive search |
+| `dbaa091` | perf(references): replace to_uppercase() with zero-alloc ends_with_ignore_ascii_case |
+
+### 変更内容
+- **code_actions.rs**: `TRY_CATCH_LABEL` const, `find_ignore_ascii_case`/`contains_ignore_ascii_case` utilities, removed 2x `get_line().to_string()` allocations
+- **completion.rs**: `KEYWORD_DETAIL` const for repeated "T-SQL Keyword" literal
+- **workspace_symbols.rs**: Use `CaseInsensitiveKey.as_str()` instead of per-symbol `name.to_uppercase().contains()`. Macro-based iteration
+- **symbol_table/mod.rs**: `as_str()` accessor on `CaseInsensitiveKey`
+- **references.rs**: `ends_with_ignore_ascii_case()` replaces `trimmed.to_uppercase()` allocation
+- **line_index.rs**: `#[must_use]` on 5 methods
+- **diagnostics.rs**: `#[must_use]` on `diagnose()`
+- **formatting.rs**: `#[must_use]` on `format()`
+- **semantic_tokens.rs**: `#[must_use]` on 2 functions
+- **folding.rs/hover.rs**: doc comments on private functions
+- **+7 tests**: definition (INDEX, variable in WHILE), rename (case-insensitive table, multi-reference), signature_help (CONVERT, GETDATE, SUBSTRING)
+
+### 削減効果
+- 6箇所の不要な `.to_uppercase()` / `.to_string()` アロケーションを除去
+- 12箇所の `#[must_use]` 追加で意図しない戻り値破棄を防止
+- 1050 tests (+7 from 1043)
 
 ---
 
