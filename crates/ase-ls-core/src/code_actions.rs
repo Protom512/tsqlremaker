@@ -389,12 +389,11 @@ fn find_matching_end(source: &str, begin_line: u32) -> Option<u32> {
     let start = (begin_line + 1) as usize;
 
     for (line_idx, line) in lines.iter().enumerate().skip(start) {
-        let trimmed = line.trim().to_uppercase();
-        let words: Vec<&str> = trimmed.split_whitespace().collect();
-        for word in &words {
-            if *word == "BEGIN" {
+        for word in line.split_whitespace() {
+            let w = word.trim_end_matches(';');
+            if w.eq_ignore_ascii_case("BEGIN") {
                 depth += 1;
-            } else if *word == "END" {
+            } else if w.eq_ignore_ascii_case("END") {
                 depth -= 1;
                 if depth == 0 {
                     return Some(line_idx as u32);
@@ -560,10 +559,9 @@ fn resolve_span_end_fallback(start_offset: usize, analysis: &DocumentAnalysis) -
             continue;
         }
         if found_begin {
-            let text = t.text.to_uppercase();
-            if text == "BEGIN" {
+            if t.text.eq_ignore_ascii_case("BEGIN") {
                 depth += 1;
-            } else if text == "END" {
+            } else if t.text.eq_ignore_ascii_case("END") {
                 depth -= 1;
                 if depth == 0 {
                     return Some(te);
