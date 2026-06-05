@@ -31,6 +31,12 @@ impl CaseInsensitiveKey {
             upper: name.to_uppercase(),
         }
     }
+
+    /// Returns the uppercase-normalized key as a string slice.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.upper
+    }
 }
 
 impl Borrow<str> for CaseInsensitiveKey {

@@ -268,6 +268,33 @@ fn try_generate_insert_skeleton_ast(
     ))
 }
 
+/// Find a case-insensitive ASCII substring, returning the byte offset.
+/// Returns None if the needle is not found.
+fn find_ignore_ascii_case(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    let needle_bytes = needle.as_bytes();
+    let first = needle_bytes[0];
+    let haystack_bytes = haystack.as_bytes();
+    for i in 0..haystack.len().saturating_sub(needle.len() - 1) {
+        if haystack_bytes[i].eq_ignore_ascii_case(&first)
+            && haystack_bytes[i..]
+                .iter()
+                .zip(needle_bytes)
+                .all(|(a, b)| a.eq_ignore_ascii_case(b))
+        {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Check if haystack contains needle (case-insensitive ASCII) without allocation.
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    find_ignore_ascii_case(haystack, needle).is_some()
+}
+
 /// INSERT INTO table → VALUES骨組み生成クイックフィックス
 fn try_generate_insert_skeleton(
     symbol_table: &crate::symbol_table::SymbolTable,
@@ -275,8 +302,7 @@ fn try_generate_insert_skeleton(
     position: Position,
     uri: &lsp_types::Url,
 ) -> Option<CodeAction> {
-    let upper = line_text.to_uppercase();
-    let insert_pos = upper.find("INSERT INTO")?;
+    let insert_pos = find_ignore_ascii_case(line_text, "INSERT INTO")?;
 
     // テーブル名を抽出
     let after_insert = line_text[insert_pos + 11..].trim();
@@ -292,7 +318,9 @@ fn try_generate_insert_skeleton(
     }
 
     // 既にカラムリストやVALUESがある場合はスキップ
-    if upper.contains("VALUES") || upper.contains("SELECT") {
+    if contains_ignore_ascii_case(line_text, "VALUES")
+        || contains_ignore_ascii_case(line_text, "SELECT")
+    {
         return None;
     }
 

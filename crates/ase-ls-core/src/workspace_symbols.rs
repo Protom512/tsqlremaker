@@ -7,35 +7,11 @@
 use crate::analysis::DocumentAnalysis;
 use lsp_types::{Location, SymbolInformation, SymbolKind, Url};
 
-/// Append symbols whose name matches `query_upper` (case-insensitive substring).
+/// Collect all matching symbols from a symbol table into results.
+/// Uses pre-normalized upper keys from the HashMap to avoid per-symbol `.to_uppercase()` allocation.
 // SymbolInformation.deprecated field is #[deprecated] in lsp-types 0.94.
 // tower-lsp 0.20 requires this type — cannot migrate until tower-lsp upgrades.
 #[allow(deprecated)]
-fn push_matching(
-    results: &mut Vec<SymbolInformation>,
-    symbols: impl Iterator<Item = (String, lsp_types::Range, Option<String>)>,
-    query_upper: &str,
-    uri: &Url,
-    kind: SymbolKind,
-) {
-    for (name, range, container_name) in symbols {
-        if name.to_uppercase().contains(query_upper) {
-            results.push(SymbolInformation {
-                name,
-                kind,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: uri.clone(),
-                    range,
-                },
-                container_name,
-            });
-        }
-    }
-}
-
-/// Collect all matching symbols from a symbol table into results.
 fn collect_symbols(
     table: &crate::symbol_table::SymbolTable,
     query_upper: &str,
@@ -43,70 +19,40 @@ fn collect_symbols(
 ) -> Vec<SymbolInformation> {
     let mut results = Vec::new();
 
-    push_matching(
-        &mut results,
-        table
-            .tables
-            .values()
-            .map(|s| (s.name.clone(), s.range, None)),
-        query_upper,
-        uri,
-        SymbolKind::CLASS,
-    );
+    // Macro to avoid repeating the push pattern for each symbol category
+    macro_rules! match_category {
+        ($map:expr, $kind:expr, $container:expr) => {
+            for (key, sym) in &$map {
+                if key.as_str().contains(query_upper) {
+                    results.push(SymbolInformation {
+                        name: sym.name.clone(),
+                        kind: $kind,
+                        tags: None,
+                        deprecated: None,
+                        location: Location {
+                            uri: uri.clone(),
+                            range: sym.range,
+                        },
+                        container_name: $container(sym),
+                    });
+                }
+            }
+        };
+    }
 
-    push_matching(
-        &mut results,
-        table
-            .procedures
-            .values()
-            .map(|s| (s.name.clone(), s.range, None)),
-        query_upper,
-        uri,
-        SymbolKind::FUNCTION,
-    );
-
-    push_matching(
-        &mut results,
-        table
-            .views
-            .values()
-            .map(|s| (s.name.clone(), s.range, None)),
-        query_upper,
-        uri,
-        SymbolKind::INTERFACE,
-    );
-
-    push_matching(
-        &mut results,
-        table
-            .indexes
-            .values()
-            .map(|s| (s.name.clone(), s.range, Some(s.table_name.clone()))),
-        query_upper,
-        uri,
+    match_category!(table.tables, SymbolKind::CLASS, |_| None);
+    match_category!(table.procedures, SymbolKind::FUNCTION, |_| None);
+    match_category!(table.views, SymbolKind::INTERFACE, |_| None);
+    match_category!(
+        table.indexes,
         SymbolKind::PROPERTY,
+        |s: &crate::symbol_table::IndexSymbol| Some(s.table_name.clone())
     );
-
-    push_matching(
-        &mut results,
-        table
-            .variables
-            .values()
-            .map(|s| (s.name.clone(), s.range, None)),
-        query_upper,
-        uri,
-        SymbolKind::VARIABLE,
-    );
-
-    push_matching(
-        &mut results,
-        table
-            .triggers
-            .values()
-            .map(|s| (s.name.clone(), s.range, Some(s.table_name.clone()))),
-        query_upper,
-        uri,
+    match_category!(table.variables, SymbolKind::VARIABLE, |_| None);
+    match_category!(
+        table.triggers,
         SymbolKind::EVENT,
+        |s: &crate::symbol_table::TriggerSymbol| Some(s.table_name.clone())
     );
 
     results
