@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-06 / Session 21 (code quality improvements + zero-alloc optimizations)
+**最終更新:** 2026-06-06 / Session 21 (code quality + zero-alloc + emitter tests)
 
 ---
 
@@ -10,7 +10,7 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1054 passed, 2 skipped (branch refactor/session-21-code-quality) |
+| **テスト** | 1069 passed, 2 skipped (branch refactor/session-21-code-quality) |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Open Issues** | 12 |
