@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-04 / Session 19 (formatting Cow optimization)
+**最終更新:** 2026-06-05 / Session 20 (legacy function removal + PR rebase)
 
 ---
 
@@ -10,13 +10,52 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1146 passed, 2 skipped |
+| **テスト** | 1043 passed, 2 skipped (master) / 1077 passed, 2 skipped (PR #123) |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Open Issues** | 11 |
-| **Open PRs** | 1 (#123, rebased) |
+| **Open PRs** | 1 (#123, rebased onto latest master) |
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) |
-| **依存** | once_cell 依存を完全除去（std::sync::LazyLockに移行） |
+
+---
+
+## 🔄 Session 20 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `b0c8e2c` | refactor(core): remove legacy definition_ranges and folding_ranges functions |
+| `6611168` | refactor(core): remove legacy document_symbols and diagnose_source functions |
+| `d3144fe` | perf(core): replace .to_uppercase() comparisons with eq_ignore_ascii_case |
+
+### 変更内容
+- **definition.rs**: `definition_ranges()` + 14 legacy tests removed (all migrated to `_with_analysis`)
+- **folding.rs**: `folding_ranges()` + `fold_begin_end()` + 8 legacy tests removed
+- **symbols.rs**: `document_symbols()` removed → `document_symbols_with_analysis()`. 13 tests migrated
+- **diagnostics.rs**: `diagnose_source()` + `parse_errors_to_diagnostics()` removed. 10 tests migrated. `DIAGNOSTIC_SOURCE` const
+- **server.rs**: Updated to use `document_symbols_with_analysis()`
+- **hover.rs**: 6 `.to_uppercase()` == comparisons → `eq_ignore_ascii_case()` (hot path optimization)
+- **definition.rs**: 2 `.to_uppercase()` == comparisons → `eq_ignore_ascii_case()`
+
+### PR #123 リベース
+- masterの10コミット分をリベース（コンフリクトなし）
+- テスト修正: 6テストを旧API(`code_actions`, `get_line_at`, `build_fallback_symbol_table`)から新APIに移行
+- 1077 tests passed, clippy clean
+
+### レガシー関数削除完了状況
+全モジュールの再パース/再トークナイズ関数を除去完了:
+- ✅ completion.rs (Session 19)
+- ✅ definition.rs (Session 20)
+- ✅ diagnostics.rs (Session 20)
+- ✅ folding.rs (Session 20)
+- ✅ hover.rs (Session 17-19)
+- ✅ references.rs (Session 19)
+- ✅ rename.rs (Session 19)
+- ✅ symbols.rs (Session 20)
+- ✅ semantic_tokens.rs — 常にAnalysis版のみ
+- ✅ signature_help.rs — 常にAnalysis版のみ
+- 🔒 formatting.rs — 再トークナイズが必要（with_comments(true)＋ゼロコピーToken利用）
+- 🔒 folding.rs fold_comments — 再トークナイズが必要（with_comments(true)）
 
 ---
 
