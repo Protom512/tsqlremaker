@@ -1270,4 +1270,40 @@ mod tests {
             "TRY...CATCH wrap should be offered for BEGIN block inside CREATE TRIGGER"
         );
     }
+
+    #[test]
+    fn test_find_ignore_ascii_case_basic() {
+        assert_eq!(
+            find_ignore_ascii_case("insert into t", "INSERT INTO"),
+            Some(0)
+        );
+        assert_eq!(
+            find_ignore_ascii_case("INSERT INTO t", "insert into"),
+            Some(0)
+        );
+        assert_eq!(
+            find_ignore_ascii_case("  insert into t", "INSERT INTO"),
+            Some(2)
+        );
+        assert_eq!(
+            find_ignore_ascii_case("select * from t", "INSERT INTO"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_find_ignore_ascii_case_edge_cases() {
+        assert_eq!(find_ignore_ascii_case("", ""), Some(0));
+        assert_eq!(find_ignore_ascii_case("abc", ""), Some(0));
+        assert_eq!(find_ignore_ascii_case("", "abc"), None);
+        assert_eq!(find_ignore_ascii_case("ab", "abc"), None);
+    }
+
+    #[test]
+    fn test_contains_ignore_ascii_case() {
+        assert!(contains_ignore_ascii_case("insert into t values", "VALUES"));
+        assert!(contains_ignore_ascii_case("insert into t Values", "VALUES"));
+        assert!(contains_ignore_ascii_case("insert into t select", "SELECT"));
+        assert!(!contains_ignore_ascii_case("insert into t", "VALUES"));
+    }
 }

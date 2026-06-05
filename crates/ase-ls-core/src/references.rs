@@ -224,4 +224,14 @@ mod tests {
             true
         ));
     }
+
+    #[test]
+    fn test_ends_with_ignore_ascii_case() {
+        assert!(ends_with_ignore_ascii_case("CREATE TABLE", "TABLE"));
+        assert!(ends_with_ignore_ascii_case("create table", "TABLE"));
+        assert!(ends_with_ignore_ascii_case("CREATE table", "CREATE TABLE"));
+        assert!(!ends_with_ignore_ascii_case("CREATE", "CREATE TABLE"));
+        assert!(ends_with_ignore_ascii_case("DECLARE", "DECLARE"));
+        assert!(!ends_with_ignore_ascii_case("DECLARE @x", "DECLARE"));
+    }
 }
