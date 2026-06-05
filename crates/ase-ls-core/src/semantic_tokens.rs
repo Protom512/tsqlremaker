@@ -10,6 +10,7 @@ use lsp_types::{
 use tsql_token::TokenKind;
 
 /// カスタムセマンティックトークンタイプの定義
+#[must_use]
 pub fn semantic_tokens_legend() -> SemanticTokensLegend {
     SemanticTokensLegend {
         token_types: vec![

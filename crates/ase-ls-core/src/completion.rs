@@ -52,6 +52,7 @@ fn is_comma_separated_syntax(syntax: &str) -> bool {
 ///
 /// 内部の `Lazy` static から参照を返す。呼び出し元で所有権が必要な場合は
 /// `.clone()` すること。
+#[must_use]
 pub fn complete_all() -> &'static CompletionResponse {
     &COMPLETE_ALL_CACHE
 }
@@ -123,6 +124,7 @@ fn build_complete_all() -> CompletionResponse {
 /// キーワード補完のみを返す（キャッシュ済み）
 ///
 /// `complete_all()` と同様に `&'static` 参照を返し、不要な clone を回避する。
+#[must_use]
 pub fn complete_keywords() -> &'static CompletionResponse {
     &COMPLETE_KEYWORDS_CACHE
 }
