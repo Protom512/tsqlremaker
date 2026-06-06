@@ -81,6 +81,7 @@ pub use tsql_lexer::Token;
 /// let statements = parse(sql).unwrap();
 /// assert_eq!(statements.len(), 1);
 /// ```
+#[must_use = "parsing result should be used"]
 pub fn parse(input: &str) -> ParseResult<Vec<Statement>> {
     let mut parser = Parser::new(input);
     parser.parse()
@@ -104,6 +105,7 @@ pub fn parse(input: &str) -> ParseResult<Vec<Statement>> {
 /// let sql = "SELECT * FROM users";
 /// let stmt = parse_one(sql).unwrap();
 /// ```
+#[must_use = "parsing result should be used"]
 pub fn parse_one(input: &str) -> ParseResult<Statement> {
     let mut parser = Parser::new(input).with_mode(ParserMode::SingleStatement);
     parser.parse_statement()
@@ -140,6 +142,7 @@ pub fn parse_one(input: &str) -> ParseResult<Statement> {
 /// let result = parse_with_errors(sql);
 /// assert!(result.is_err());
 /// ```
+#[must_use = "parsing result should be used"]
 pub fn parse_with_errors(input: &str) -> Result<(Vec<Statement>, Vec<ParseError>), ParseErrors> {
     let mut parser = Parser::new(input);
     parser.parse_with_errors()

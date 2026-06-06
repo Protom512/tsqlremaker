@@ -60,6 +60,7 @@ impl<'src> Parser<'src> {
     /// # Arguments
     ///
     /// * `mode` - パーサーモード
+    #[must_use]
     pub const fn with_mode(mut self, mode: ParserMode) -> Self {
         self.mode = mode;
         self
