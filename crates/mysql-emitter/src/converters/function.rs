@@ -65,7 +65,7 @@ impl FunctionConverter {
                     .collect::<Result<Vec<_>, _>>()?
                     .join(", ");
 
-                return Ok(format!("{}({})", mapped_name, args_str));
+                return Ok(format!("{mapped_name}({args_str})"));
             }
             _ => {
                 // 名前マッピングを試みる
@@ -76,7 +76,7 @@ impl FunctionConverter {
                         .collect::<Result<Vec<_>, _>>()?
                         .join(", ");
 
-                    return Ok(format!("{}({})", mapped, args_str));
+                    return Ok(format!("{mapped}({args_str})"));
                 }
             }
         }
@@ -134,7 +134,7 @@ impl FunctionConverter {
         // datepart の文字列を解析
         let part = Self::convert_datepart(&datepart);
 
-        Ok(format!("DATE_ADD({}, INTERVAL {} {})", date, number, part))
+        Ok(format!("DATE_ADD({date}, INTERVAL {number} {part})"))
     }
 
     /// DATEDIFF を変換
@@ -155,7 +155,7 @@ impl FunctionConverter {
         let start = emitter.visit_expression(&args[1])?;
         let end = emitter.visit_expression(&args[2])?;
 
-        Ok(format!("DATEDIFF({}, {})", end, start))
+        Ok(format!("DATEDIFF({end}, {start})"))
     }
 
     /// T-SQL の datepart を MySQL の interval に変換

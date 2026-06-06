@@ -249,10 +249,7 @@ fn try_generate_insert_skeleton_ast(
     let placeholders = vec!["?"; columns.len()];
     let values_list = placeholders.join(", ");
 
-    let new_text = format!(
-        "INSERT INTO {} ({}) VALUES ({})",
-        table_name, col_list, values_list
-    );
+    let new_text = format!("INSERT INTO {table_name} ({col_list}) VALUES ({values_list})");
 
     // Replace the entire INSERT statement span
     let edit = make_text_edit(
@@ -347,10 +344,7 @@ fn try_generate_insert_skeleton(
     let placeholders = vec!["?"; columns.len()];
     let values_list = placeholders.join(", ");
 
-    let new_text = format!(
-        "INSERT INTO {} ({}) VALUES ({})",
-        table_name, col_list, values_list
-    );
+    let new_text = format!("INSERT INTO {table_name} ({col_list}) VALUES ({values_list})");
 
     let edit = make_text_edit(
         uri,

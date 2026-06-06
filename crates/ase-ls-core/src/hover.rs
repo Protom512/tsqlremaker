@@ -305,7 +305,7 @@ fn build_schema_hover(
             }
             // ビュー情報を表示
             if let Some(_view) = SymbolTableBuilder::find_view(symbol_table, text) {
-                return Some(format!("**`{}`** — View", text));
+                return Some(format!("**`{text}`** — View"));
             }
             // インデックス情報を表示
             if let Some(idx) = SymbolTableBuilder::find_index(symbol_table, text) {

@@ -668,9 +668,9 @@ impl SqliteEmitter {
 
         // SQLiteの修飾子を生成
         let modifier = if adjusted_number >= 0 {
-            format!("+{} {}", adjusted_number, modifier_unit)
+            format!("+{adjusted_number} {modifier_unit}")
         } else {
-            format!("{} {}", adjusted_number, modifier_unit)
+            format!("{adjusted_number} {modifier_unit}")
         };
 
         // 第3引数: date (式)
@@ -685,14 +685,14 @@ impl SqliteEmitter {
         if is_getdate {
             // GETDATE/GETUTCDATE: datetime('now', modifier) または date('now', modifier)
             if use_datetime {
-                self.write(&format!("datetime('now', '{}')", modifier));
+                self.write(&format!("datetime('now', '{modifier}')"));
             } else {
-                self.write(&format!("date('now', '{}')", modifier));
+                self.write(&format!("date('now', '{modifier}')"));
             }
         } else {
             // その他の式: date(base_expr, modifier) または datetime(base_expr, modifier)
             let base_expr = match &func.args[2] {
-                CommonExpression::Literal(CommonLiteral::String(s)) => format!("'{}'", s),
+                CommonExpression::Literal(CommonLiteral::String(s)) => format!("'{s}'"),
                 CommonExpression::Literal(CommonLiteral::Integer(n)) => n.to_string(),
                 CommonExpression::Identifier(ident) => ident.name.clone(),
                 CommonExpression::ColumnReference(col) => {
@@ -714,9 +714,9 @@ impl SqliteEmitter {
 
             // SQLite形式の式を生成
             if use_datetime {
-                self.write(&format!("datetime({}, '{}')", base_expr, modifier));
+                self.write(&format!("datetime({base_expr}, '{modifier}')"));
             } else {
-                self.write(&format!("date({}, '{}')", base_expr, modifier));
+                self.write(&format!("date({base_expr}, '{modifier}')"));
             }
         }
 
@@ -763,8 +763,7 @@ impl SqliteEmitter {
 
         // SQLite形式の式を生成
         self.write(&format!(
-            "(julianday({}) - julianday({}))",
-            end_date, start_date
+            "(julianday({end_date}) - julianday({start_date}))"
         ));
 
         Ok(())
@@ -775,7 +774,7 @@ impl SqliteEmitter {
         use tsql_parser::common::{CommonExpression, CommonLiteral};
 
         match expr {
-            CommonExpression::Literal(CommonLiteral::String(s)) => Ok(format!("'{}'", s)),
+            CommonExpression::Literal(CommonLiteral::String(s)) => Ok(format!("'{s}'")),
             CommonExpression::Literal(CommonLiteral::Integer(n)) => Ok(n.to_string()),
             CommonExpression::Identifier(ident) => Ok(ident.name.clone()),
             CommonExpression::ColumnReference(col) => {
@@ -887,7 +886,7 @@ impl SqliteEmitter {
         // ESCAPE句を出力
         if let Some(esc) = escape {
             let escape_str = self.visit_expression(esc)?;
-            self.write(&format!(" ESCAPE {}", escape_str));
+            self.write(&format!(" ESCAPE {escape_str}"));
         }
 
         Ok(())

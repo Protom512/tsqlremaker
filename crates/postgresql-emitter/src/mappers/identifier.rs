@@ -460,7 +460,7 @@ impl IdentifierQuoter {
         if Self::needs_quoting(identifier) {
             // ダブルクォートを二重にエスケープ
             let escaped = identifier.replace('"', "\"\"");
-            format!("\"{}\"", escaped)
+            format!("\"{escaped}\"")
         } else {
             // クォート不要（PostgreSQL は自動的に小文字に変換）
             identifier.to_string()

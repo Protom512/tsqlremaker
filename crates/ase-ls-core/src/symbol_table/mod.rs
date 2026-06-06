@@ -577,7 +577,7 @@ impl SymbolTableBuilder {
         let search_name = if name.starts_with('@') {
             CaseInsensitiveKey::new(name)
         } else {
-            CaseInsensitiveKey::new(&format!("@{}", name))
+            CaseInsensitiveKey::new(&format!("@{name}"))
         };
         table.variables.get::<str>(search_name.borrow())
     }

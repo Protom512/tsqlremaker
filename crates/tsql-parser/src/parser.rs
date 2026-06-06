@@ -1448,7 +1448,7 @@ impl<'src> Parser<'src> {
                         let num_str = token.text;
                         let n = num_str.parse::<u32>().map_err(|_| {
                             ParseError::invalid_syntax(
-                                format!("Invalid number for VARCHAR length: {}", num_str),
+                                format!("Invalid number for VARCHAR length: {num_str}"),
                                 token.position,
                             )
                         })?;
@@ -1480,7 +1480,7 @@ impl<'src> Parser<'src> {
                         let num_str = token.text;
                         let parsed = num_str.parse::<u32>().map_err(|_| {
                             ParseError::invalid_syntax(
-                                format!("Invalid number for CHAR length: {}", num_str),
+                                format!("Invalid number for CHAR length: {num_str}"),
                                 token.position,
                             )
                         })?;
@@ -1511,7 +1511,7 @@ impl<'src> Parser<'src> {
                         let num_str = token.text;
                         let parsed = num_str.parse::<u8>().map_err(|_| {
                             ParseError::invalid_syntax(
-                                format!("Invalid number for DECIMAL precision: {}", num_str),
+                                format!("Invalid number for DECIMAL precision: {num_str}"),
                                 token.position,
                             )
                         })?;
@@ -1527,7 +1527,7 @@ impl<'src> Parser<'src> {
                             let num_str = token.text;
                             let parsed = num_str.parse::<u8>().map_err(|_| {
                                 ParseError::invalid_syntax(
-                                    format!("Invalid number for DECIMAL scale: {}", num_str),
+                                    format!("Invalid number for DECIMAL scale: {num_str}"),
                                     token.position,
                                 )
                             })?;

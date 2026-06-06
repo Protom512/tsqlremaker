@@ -170,7 +170,7 @@ impl FunctionMapper {
             _ => part,
         };
 
-        Ok(format!("{} + INTERVAL '{} {}'", date, n, postgres_part))
+        Ok(format!("{date} + INTERVAL '{n} {postgres_part}'"))
     }
 
     /// DATEDIFF を変換
@@ -204,10 +204,7 @@ impl FunctionMapper {
             _ => part,
         };
 
-        Ok(format!(
-            "DATE_PART('{}', {} - {})",
-            postgres_part, end, start
-        ))
+        Ok(format!("DATE_PART('{postgres_part}', {end} - {start})"))
     }
 }
 

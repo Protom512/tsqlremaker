@@ -131,9 +131,9 @@ impl fmt::Display for ParseError {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{:?}", kind)?;
+                    write!(f, "{kind:?}")?;
                 }
-                write!(f, ", found {:?}", found)
+                write!(f, ", found {found:?}")
             }
             Self::UnexpectedEof { expected, position } => write!(
                 f,
@@ -155,7 +155,7 @@ impl fmt::Display for ParseError {
             Self::BatchError {
                 batch_number,
                 error,
-            } => write!(f, "error in batch {}: {}", batch_number, error),
+            } => write!(f, "error in batch {batch_number}: {error}"),
         }
     }
 }

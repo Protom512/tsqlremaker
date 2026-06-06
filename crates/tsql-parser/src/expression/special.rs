@@ -117,10 +117,7 @@ impl super::ExpressionParser<'_, '_> {
                 "UNKNOWN" => IsValue::Unknown,
                 _ => {
                     return Err(ParseError::invalid_syntax(
-                        format!(
-                            "Expected NULL, TRUE, FALSE, or UNKNOWN after IS, found '{}'",
-                            text
-                        ),
+                        format!("Expected NULL, TRUE, FALSE, or UNKNOWN after IS, found '{text}'"),
                         position,
                     ))
                 }

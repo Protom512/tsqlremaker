@@ -116,7 +116,7 @@ impl SelectStatementRenderer {
                         IdentifierQuoter::quote(alias_name)
                     )
                 } else {
-                    format!("({})", subquery_str)
+                    format!("({subquery_str})")
                 }
             }
         }
@@ -126,9 +126,9 @@ impl SelectStatementRenderer {
     fn emit_order_by_item(item: &CommonOrderByItem) -> String {
         let expr_str = ExpressionEmitter::emit(&item.expr);
         if item.asc {
-            format!("{} ASC", expr_str)
+            format!("{expr_str} ASC")
         } else {
-            format!("{} DESC", expr_str)
+            format!("{expr_str} DESC")
         }
     }
 
@@ -137,9 +137,9 @@ impl SelectStatementRenderer {
         let limit_str = ExpressionEmitter::emit(&limit.limit);
         if let Some(offset) = &limit.offset {
             let offset_str = ExpressionEmitter::emit(offset);
-            format!("LIMIT {} OFFSET {}", limit_str, offset_str)
+            format!("LIMIT {limit_str} OFFSET {offset_str}")
         } else {
-            format!("LIMIT {}", limit_str)
+            format!("LIMIT {limit_str}")
         }
     }
 }

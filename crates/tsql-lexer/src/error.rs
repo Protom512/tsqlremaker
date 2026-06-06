@@ -106,7 +106,7 @@ impl LexError {
             Self::UnterminatedBlockComment { .. } => "Unterminated block comment".to_string(),
             Self::UnterminatedIdentifier { .. } => "Unterminated quoted identifier".to_string(),
             Self::InvalidCharacter { ch, .. } => {
-                format!("Invalid character in SQL: '{}'", ch)
+                format!("Invalid character in SQL: '{ch}'")
             }
             Self::UnexpectedEof { .. } => "Unexpected end of file".to_string(),
         }
@@ -160,7 +160,7 @@ impl LexError {
             self.position().column
         );
         if let Some(excerpt) = self.source_excerpt() {
-            msg.push_str(&format!("\n  | {}", excerpt));
+            msg.push_str(&format!("\n  | {excerpt}"));
         }
         msg
     }
