@@ -423,16 +423,10 @@ fn try_add_insert_columns_in_stmt(
                 format!("({col_list}) "),
             );
 
-            Some(CodeAction {
-                title: format!("Add column list to INSERT for {table_name}"),
-                kind: Some(CodeActionKind::QUICKFIX),
-                diagnostics: None,
-                edit: Some(edit),
-                command: None,
-                is_preferred: Some(true),
-                disabled: None,
-                data: None,
-            })
+            Some(make_quickfix(
+                format!("Add column list to INSERT for {table_name}"),
+                edit,
+            ))
         }
         Statement::Block(block) => block
             .statements
