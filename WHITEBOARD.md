@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-07 / Session 24 (Arc<str> borrow, delta dedup, find_token_at_position)
+**最終更新:** 2026-06-07 / Session 25 (parser #[must_use], format arg inlining)
 
 ---
 
@@ -27,6 +27,7 @@
 | `5c71e83` | perf(hover): use entry.name instead of allocated upper in build_hover_content |
 | `e6938a6` | fix(parser): return ParseError for invalid BINARY length instead of silent default |
 | `e91b0d2` | refactor(parser): add #[must_use] to public parse functions and with_mode |
+| `13da0c8` | style: inline format args across 17 files (clippy uninlined_format_args) |
 
 ### 変更内容
 - **hover/definition/references/rename**: `Arc<str>.clone()` → `&str` 借用に置換（ホットパスでのアトミック参照カウント操作を回避）
@@ -41,6 +42,7 @@
 - **symbol_table**: デッドコード `find_identifier_at` とそのテストを削除（Session 19以降未使用）
 - **parser**: `BINARY(abc)` のような無効な長さ指定がサイレントにデフォルト値1になっていた問題を修正。VARCHAR/DECIMALと同様に `InvalidSyntax` エラーを返すよう変更
 - **parser**: `parse`, `parse_one`, `parse_with_errors`, `with_mode` に `#[must_use]` 追加
+- **全17ファイル**: `format!("{}", var)` → `format!("{var}")` にインライン化（clippy uninlined_format_args）
 - **1089 tests passed** (-1 from find_identifier_at test removal)
 
 ## 🔄 Session 23 成果
