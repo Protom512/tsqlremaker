@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-06 / Session 22 (symbol lookup unification + must_use + tests)
+**最終更新:** 2026-06-06 / Session 22 final (all code quality tasks completed)
 
 ---
 
@@ -13,9 +13,37 @@
 | **テスト** | 1083 passed, 2 skipped (branch refactor/session-21-code-quality) |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
-| **Open Issues** | 12 |
+| **Coupling** | Grade D (0.39) — emitter→parser依存は構造的、db_docs→DocEntryは同一crate内 |
+| **Open Issues** | 12 (全てLarge機能、コード品質改善なし) |
 | **Open PRs** | 2 (#123 INSERT column list, #124 code quality) |
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) + refactor/session-21-code-quality (#124) |
+
+## ✅ コード品質改善 完了状況
+
+### アロケーション除去
+- ✅ `.to_uppercase()` 11箇所除去（Session 17-22）
+- ✅ `.to_string()` 不要箇所除去（Session 14-15）
+- ✅ `Vec<String>` → `Vec<&str>`（collect_table_names）
+- ✅ `buffer.clone()` → `mem::take`（3 emitter）
+
+### API品質
+- ✅ 全28公開純粋関数に `#[must_use]`（Session 21-22）
+- ✅ 全公開struct field/enum variantにdoc comment（Session 14）
+- ✅ `Debug` derive 追加（DocumentAnalysis, LineIndex）
+- ✅ `find_*` helper 統一（table/procedure/variable/view/index/trigger）
+- ✅ `resolve_semantic_type` メソッド追加
+
+### テストカバレッジ
+- ✅ 1043 → 1083 テスト（+40 over Sessions 7-22）
+- ✅ find_* helper テスト 5件
+- ✅ resolve_semantic_type テスト 6件
+- ✅ definition テスト 4件（view, trigger, case-insensitive, multi-object）
+- ✅ emitter integration テスト追加
+
+### 残る改善は大規模リファクタリングのみ
+- レガシー関数削除（50+テスト移行が必要）→ 別PRで対応
+- 結合度Grade D改善 → アーキテクチャ変更（trait導入等）が必要
+- 残りのOpen Issues → 全てLarge規模の新機能追加
 
 ---
 
