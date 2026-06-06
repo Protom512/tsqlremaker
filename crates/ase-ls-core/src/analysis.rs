@@ -5,6 +5,7 @@
 
 use crate::line_index::LineIndex;
 use crate::symbol_table::{SymbolTable, SymbolTableBuilder};
+use std::sync::Arc;
 use tsql_token::{Span, TokenKind};
 
 /// Owned copy of a lexer token, without lifetime dependency on source.
@@ -12,8 +13,8 @@ use tsql_token::{Span, TokenKind};
 pub struct OwnedToken {
     /// Token kind (keyword, identifier, operator, etc.)
     pub kind: TokenKind,
-    /// Token text (cloned from source).
-    pub text: String,
+    /// Token text (Arc<str> for O(1) clone on hot-path handler access).
+    pub text: Arc<str>,
     /// Byte span in source.
     pub span: Span,
 }
@@ -47,7 +48,7 @@ impl DocumentAnalysis {
             .filter_map(|r| r.ok())
             .map(|t| OwnedToken {
                 kind: t.kind,
-                text: t.text.to_string(),
+                text: Arc::from(t.text),
                 span: t.span,
             })
             .collect();
@@ -196,7 +197,7 @@ mod tests {
         assert!(!analysis.tokens.is_empty());
         // First token should be SELECT
         assert_eq!(analysis.tokens[0].kind, TokenKind::Select);
-        assert_eq!(analysis.tokens[0].text, "SELECT");
+        assert_eq!(&*analysis.tokens[0].text, "SELECT");
     }
 
     #[test]
@@ -240,14 +241,14 @@ mod tests {
         let analysis = DocumentAnalysis::new("SELECT * FROM users");
         let (token, _) = analysis.find_token_at(0).unwrap();
         assert_eq!(token.kind, TokenKind::Select);
-        assert_eq!(token.text, "SELECT");
+        assert_eq!(&*token.text, "SELECT");
     }
 
     #[test]
     fn test_find_token_at_mid() {
         let analysis = DocumentAnalysis::new("SELECT * FROM users");
         let (token, _) = analysis.find_token_at(3).unwrap();
-        assert_eq!(token.text, "SELECT");
+        assert_eq!(&*token.text, "SELECT");
     }
 
     #[test]
@@ -268,7 +269,7 @@ mod tests {
         let analysis = DocumentAnalysis::new("DECLARE @count INT");
         let (token, _) = analysis.find_token_at(8).unwrap();
         assert_eq!(token.kind, TokenKind::LocalVar);
-        assert_eq!(token.text, "@count");
+        assert_eq!(&*token.text, "@count");
     }
 
     // --- get_line() tests (Phase 2-C: O(1) line lookup) ---

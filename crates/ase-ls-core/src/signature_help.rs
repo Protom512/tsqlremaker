@@ -114,7 +114,7 @@ pub fn signature_help_with_analysis(
         analysis
             .tokens
             .iter()
-            .map(|t| (t.kind, t.text.as_str(), t.span.start as usize)),
+            .map(|t| (t.kind, &*t.text, t.span.start as usize)),
         offset,
     )?;
 

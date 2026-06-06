@@ -76,7 +76,7 @@ pub fn get_rename_placeholder_with_analysis(
         .line_index
         .position_to_offset(&analysis.source, position);
     let (token, _) = analysis.find_token_at(offset)?;
-    Some(token.text.clone())
+    Some(token.text.to_string())
 }
 
 /// カーソル位置がリネーム可能か検証する（DocumentAnalysis利用）
@@ -107,7 +107,7 @@ pub fn prepare_rename_with_analysis(
         range: analysis
             .line_index
             .offset_to_range(token.span.start, token.span.end),
-        placeholder: token.text.clone(),
+        placeholder: token.text.to_string(),
     })
 }
 
