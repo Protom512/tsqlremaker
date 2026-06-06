@@ -26,6 +26,7 @@
 | `1c09cf3` | perf(server): wrap DocumentAnalysis in Arc to avoid clone-on-read |
 | `8267468` | refactor: add const fn to 29 pure functions across 4 crates |
 | `7114367` | perf(core): add #[inline] to hot-path LineIndex and DocumentAnalysis accessors |
+| `3c9ec2b` | perf(core): change OwnedToken.text from String to Arc<str> |
 
 ### 変更内容
 - **server.rs**: `DocumentStore`が`Arc<DocumentAnalysis>`を格納。`get_analysis()`が`Option<Arc<DocumentAnalysis>>`を返す。Deref coercionで呼び出し元は`&DocumentAnalysis`を透過的に取得
@@ -39,6 +40,7 @@
 - `Arc<DocumentAnalysis>`: リクエストごとのclone（~50KB DocumentAnalysis）を`Arc::clone`（8バイトポインタコピー）に削減
 - `const fn` 29箇所: コンパイラの最適化ヒント + 純粋性の型レベル表明
 - `#[inline]` 7箇所: ホットパスの関数呼び出しオーバーヘッドを除去
+- `Arc<str>` for OwnedToken.text: 4ハンドラの`.clone()`がO(n)→O(1)に
 
 ## ✅ コード品質改善 完了状況
 
