@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-06 / Session 22 final (all code quality tasks completed)
+**最終更新:** 2026-06-06 / Session 23 (Arc + const fn + inline optimizations)
 
 ---
 
@@ -17,6 +17,28 @@
 | **Open Issues** | 12 (全てLarge機能、コード品質改善なし) |
 | **Open PRs** | 2 (#123 INSERT column list, #124 code quality) |
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) + refactor/session-21-code-quality (#124) |
+
+## 🔄 Session 23 成果
+
+### コミット（PR #124 ブランチ）
+| コミット | 内容 |
+|---------|------|
+| `1c09cf3` | perf(server): wrap DocumentAnalysis in Arc to avoid clone-on-read |
+| `8267468` | refactor: add const fn to 29 pure functions across 4 crates |
+| `7114367` | perf(core): add #[inline] to hot-path LineIndex and DocumentAnalysis accessors |
+
+### 変更内容
+- **server.rs**: `DocumentStore`が`Arc<DocumentAnalysis>`を格納。`get_analysis()`が`Option<Arc<DocumentAnalysis>>`を返す。Deref coercionで呼び出し元は`&DocumentAnalysis`を透過的に取得
+- **tsql-lexer** (5箇所): `is_eof`, `set_tab_width`, `position`, `with_comments`, `has_errors` → `const fn`
+- **tsql-parser** (15箇所): `Literal::span`, `position_at_eof`, `ParseError::unexpected_token/unexpected_eof/invalid_syntax/recursion_limit`, `ParseErrors::new/is_empty/len`, `get_infix_binding_power`, `span_for_binary`, `can_keyword_be_identifier`, `with_max_depth`, `with_mode`, `has_errors` → `const fn`
+- **ase-ls-core** (9箇所): `make_quickfix`, `make_refactor`, `should_newline_before`, `needs_space_before`, `should_decrease_indent`, `in_span`, `line_count`, `token_kind_to_type_index`, `make_symbol` → `const fn`
+- **line_index.rs** (5箇所): `offset_to_position`, `position_to_offset`, `line_number`, `line_offset`, `offset_to_range` → `#[inline]`
+- **analysis.rs** (2箇所): `find_token_at`, `get_line` → `#[inline]`
+
+### 削減効果
+- `Arc<DocumentAnalysis>`: リクエストごとのclone（~50KB DocumentAnalysis）を`Arc::clone`（8バイトポインタコピー）に削減
+- `const fn` 29箇所: コンパイラの最適化ヒント + 純粋性の型レベル表明
+- `#[inline]` 7箇所: ホットパスの関数呼び出しオーバーヘッドを除去
 
 ## ✅ コード品質改善 完了状況
 
