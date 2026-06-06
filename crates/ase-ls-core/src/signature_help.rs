@@ -101,6 +101,7 @@ fn scan_for_call_frame<'a>(
 }
 
 /// SignatureHelp情報を生成する（DocumentAnalysis利用）
+#[must_use]
 pub fn signature_help_with_analysis(
     analysis: &DocumentAnalysis,
     position: Position,

@@ -9,6 +9,7 @@ use tsql_parser::ast::{Statement, TableReference};
 use tsql_token::TokenKind;
 
 /// Hover情報を生成する（DocumentAnalysis利用）
+#[must_use]
 pub fn hover_with_analysis(analysis: &DocumentAnalysis, position: Position) -> Option<Hover> {
     let offset = analysis
         .line_index

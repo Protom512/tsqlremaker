@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use tsql_token::TokenKind;
 
 /// カーソル位置のシンボルをリネームする（DocumentAnalysis利用）
+#[must_use]
 pub fn rename_with_analysis(
     analysis: &DocumentAnalysis,
     position: Position,
@@ -66,6 +67,7 @@ pub fn rename_with_analysis(
 }
 
 /// リネームプレースホルダーを取得する（DocumentAnalysis利用）
+#[must_use]
 pub fn get_rename_placeholder_with_analysis(
     analysis: &DocumentAnalysis,
     position: Position,
@@ -81,6 +83,7 @@ pub fn get_rename_placeholder_with_analysis(
 ///
 /// リネーム可能なトークン種別のみ許可し、キーワード・文字列・空白は拒否する。
 /// prepareRename LSPリクエストのハンドラとして使用する。
+#[must_use]
 pub fn prepare_rename_with_analysis(
     analysis: &DocumentAnalysis,
     position: Position,

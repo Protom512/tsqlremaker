@@ -19,6 +19,7 @@ use tsql_token::TokenKind;
 const TRY_CATCH_LABEL: &str = "Wrap with TRY...CATCH";
 
 /// Code Actionsを生成する（DocumentAnalysis利用）
+#[must_use]
 pub fn code_actions_with_analysis(
     analysis: &DocumentAnalysis,
     range: Range,

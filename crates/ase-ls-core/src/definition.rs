@@ -15,6 +15,7 @@ use lsp_types::{Position, Range};
 use tsql_token::TokenKind;
 
 /// カーソル位置のシンボルの定義箇所を検索する（DocumentAnalysis利用）
+#[must_use]
 pub fn definition_ranges_with_analysis(
     analysis: &DocumentAnalysis,
     position: Position,
