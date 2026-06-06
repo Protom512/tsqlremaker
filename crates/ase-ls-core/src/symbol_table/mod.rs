@@ -68,6 +68,30 @@ pub struct SymbolTable {
     pub variables: HashMap<CaseInsensitiveKey, VariableSymbol>,
 }
 
+impl SymbolTable {
+    /// Resolve the semantic token type for an identifier name.
+    ///
+    /// Returns `Some(9)` (CLASS) for tables, views, and indexes,
+    /// `Some(2)` (FUNCTION) for procedures,
+    /// or `None` if the name is not a known object.
+    ///
+    /// Uses a single `CaseInsensitiveKey` allocation to check all maps.
+    #[must_use]
+    pub fn resolve_semantic_type(&self, name: &str) -> Option<u32> {
+        let key = CaseInsensitiveKey::new(name);
+        if self.tables.contains_key(&key)
+            || self.views.contains_key(&key)
+            || self.indexes.contains_key(&key)
+        {
+            return Some(9); // CLASS
+        }
+        if self.procedures.contains_key(&key) {
+            return Some(2); // FUNCTION
+        }
+        None
+    }
+}
+
 /// Table symbol extracted from `CREATE TABLE`.
 #[derive(Debug, Clone)]
 pub struct TableSymbol {
@@ -515,6 +539,27 @@ impl SymbolTableBuilder {
     pub fn find_procedure<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a ProcedureSymbol> {
         let key = CaseInsensitiveKey::new(name);
         table.procedures.get::<str>(key.borrow())
+    }
+
+    /// ビュー名でビューを検索 (case-insensitive)
+    #[must_use]
+    pub fn find_view<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a ViewSymbol> {
+        let key = CaseInsensitiveKey::new(name);
+        table.views.get::<str>(key.borrow())
+    }
+
+    /// インデックス名でインデックスを検索 (case-insensitive)
+    #[must_use]
+    pub fn find_index<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a IndexSymbol> {
+        let key = CaseInsensitiveKey::new(name);
+        table.indexes.get::<str>(key.borrow())
+    }
+
+    /// トリガー名でトリガーを検索 (case-insensitive)
+    #[must_use]
+    pub fn find_trigger<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a TriggerSymbol> {
+        let key = CaseInsensitiveKey::new(name);
+        table.triggers.get::<str>(key.borrow())
     }
 
     /// 変数名で変数を検索 (case-insensitive, @prefix auto-added)

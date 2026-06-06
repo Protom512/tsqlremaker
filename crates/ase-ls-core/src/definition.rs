@@ -9,7 +9,7 @@
 //! - インデックス参照 → CREATE INDEX定義
 
 use crate::analysis::DocumentAnalysis;
-use crate::symbol_table::SymbolTable;
+use crate::symbol_table::SymbolTableBuilder;
 
 use lsp_types::{Position, Range};
 use tsql_token::TokenKind;
@@ -28,22 +28,19 @@ pub fn definition_ranges_with_analysis(
         None => return Vec::new(),
     };
 
-    let search_name = target_text.to_uppercase();
-
     if target_kind == TokenKind::LocalVar {
-        find_variable_definition(&analysis.symbol_table, &search_name)
+        find_variable_definition(&analysis.symbol_table, &target_text)
     } else {
-        find_object_definition(&analysis.symbol_table, &search_name)
+        find_object_definition(&analysis.symbol_table, &target_text)
     }
 }
 
 /// 変数定義を検索する
-fn find_variable_definition(table: &SymbolTable, name: &str) -> Vec<Range> {
-    // プロシージャ内変数を含めて検索
+fn find_variable_definition(table: &crate::symbol_table::SymbolTable, name: &str) -> Vec<Range> {
     let mut results = Vec::new();
 
     // トップレベル変数
-    if let Some(var) = table.variables.get(name) {
+    if let Some(var) = SymbolTableBuilder::find_variable(table, name) {
         results.push(var.range);
     }
 
@@ -66,22 +63,22 @@ fn find_variable_definition(table: &SymbolTable, name: &str) -> Vec<Range> {
 }
 
 /// オブジェクト定義（テーブル、プロシージャ、ビュー、インデックス、トリガー）を検索する
-fn find_object_definition(table: &SymbolTable, name: &str) -> Vec<Range> {
+fn find_object_definition(table: &crate::symbol_table::SymbolTable, name: &str) -> Vec<Range> {
     let mut results = Vec::new();
 
-    if let Some(tbl) = table.tables.get(name) {
+    if let Some(tbl) = SymbolTableBuilder::find_table(table, name) {
         results.push(tbl.range);
     }
-    if let Some(proc) = table.procedures.get(name) {
+    if let Some(proc) = SymbolTableBuilder::find_procedure(table, name) {
         results.push(proc.range);
     }
-    if let Some(view) = table.views.get(name) {
+    if let Some(view) = SymbolTableBuilder::find_view(table, name) {
         results.push(view.range);
     }
-    if let Some(idx) = table.indexes.get(name) {
+    if let Some(idx) = SymbolTableBuilder::find_index(table, name) {
         results.push(idx.range);
     }
-    if let Some(trigger) = table.triggers.get(name) {
+    if let Some(trigger) = SymbolTableBuilder::find_trigger(table, name) {
         results.push(trigger.range);
     }
 

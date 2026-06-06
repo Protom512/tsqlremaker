@@ -111,20 +111,7 @@ fn token_kind_to_type_index(kind: TokenKind) -> Option<u32> {
 
 /// Resolve an identifier token's semantic type using the symbol table.
 fn resolve_ident_type(analysis: &DocumentAnalysis, text: &str) -> Option<u32> {
-    let upper = text.to_uppercase();
-    if analysis.symbol_table.tables.contains_key(&upper) {
-        return Some(9); // CLASS
-    }
-    if analysis.symbol_table.procedures.contains_key(&upper) {
-        return Some(2); // FUNCTION
-    }
-    if analysis.symbol_table.views.contains_key(&upper) {
-        return Some(9); // CLASS — views are table-like
-    }
-    if analysis.symbol_table.indexes.contains_key(&upper) {
-        return Some(9); // CLASS — indexes are objects
-    }
-    None
+    analysis.symbol_table.resolve_semantic_type(text)
 }
 
 /// ソースコードから Semantic Tokens を生成する（DocumentAnalysis利用）

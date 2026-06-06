@@ -93,12 +93,15 @@ fn in_span(offset: usize, span_start: usize, span_end: u32) -> bool {
 }
 
 /// Collect table names from a list of TableReference, including JOINed tables.
-fn collect_table_names(tables: &[TableReference]) -> Vec<String> {
+///
+/// Returns borrowed `&str` references to avoid allocation — the caller passes
+/// them to `SymbolTableBuilder::find_table` which handles case-insensitivity.
+fn collect_table_names(tables: &[TableReference]) -> Vec<&str> {
     let mut names = Vec::new();
     for tr in tables {
         match tr {
             TableReference::Table { name, .. } => {
-                names.push(name.name.to_uppercase());
+                names.push(name.name.as_str());
             }
             TableReference::Joined { joins, .. } => {
                 for join in joins {
@@ -148,9 +151,8 @@ fn resolve_column_in_statement(
             }
 
             // Check inserted columns
-            let table_name = insert.table.name.to_uppercase();
             if let Some(tbl) =
-                crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, &table_name)
+                crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, &insert.table.name)
             {
                 for col in &tbl.columns {
                     if col.name.eq_ignore_ascii_case(upper_ident) {
@@ -166,11 +168,11 @@ fn resolve_column_in_statement(
             }
 
             let table_name = match &update.table {
-                TableReference::Table { name, .. } => name.name.to_uppercase(),
+                TableReference::Table { name, .. } => name.name.as_str(),
                 _ => return None,
             };
             // Collect tables from both the UPDATE target and FROM clause
-            let mut all_tables = vec![table_name.clone()];
+            let mut all_tables: Vec<&str> = vec![table_name];
             if let Some(from_clause) = &update.from_clause {
                 all_tables.extend(collect_table_names(&from_clause.tables));
             }
@@ -232,14 +234,12 @@ fn build_schema_hover(
     kind: &TokenKind,
     text: &str,
 ) -> Option<String> {
-    let upper = text.to_uppercase();
+    use crate::symbol_table::SymbolTableBuilder;
 
     match kind {
         TokenKind::LocalVar => {
             // 変数の型情報を表示
-            if let Some(var) =
-                crate::symbol_table::SymbolTableBuilder::find_variable(symbol_table, text)
-            {
+            if let Some(var) = SymbolTableBuilder::find_variable(symbol_table, text) {
                 return Some(format!(
                     "```tsql\n{}: {}\n```\n\n**Variable** — Declared with `DECLARE {} {}`",
                     text, var.data_type, var.name, var.data_type
@@ -248,7 +248,7 @@ fn build_schema_hover(
             // プロシージャボディ内変数
             for proc in symbol_table.procedures.values() {
                 for body_var in &proc.body_variables {
-                    if body_var.name.eq_ignore_ascii_case(&upper) {
+                    if body_var.name.eq_ignore_ascii_case(text) {
                         return Some(format!(
                             "```tsql\n{}: {}\n```\n\n**Variable** in `{}` — `DECLARE {} {}`",
                             text, body_var.data_type, proc.name, body_var.name, body_var.data_type
@@ -256,7 +256,7 @@ fn build_schema_hover(
                     }
                 }
                 for param in &proc.parameters {
-                    if param.name.eq_ignore_ascii_case(&upper) {
+                    if param.name.eq_ignore_ascii_case(text) {
                         let output_marker = if param.is_output { " OUTPUT" } else { "" };
                         return Some(format!(
                             "```tsql\n{}: {}{}\n```\n\n**Parameter** of `{}`",
@@ -269,7 +269,7 @@ fn build_schema_hover(
         }
         TokenKind::Ident => {
             // テーブルのカラム情報を表示
-            if let Some(table) = symbol_table.tables.get(&upper) {
+            if let Some(table) = SymbolTableBuilder::find_table(symbol_table, text) {
                 let mut cols = String::new();
                 for col in &table.columns {
                     let nullable = match col.nullable {
@@ -292,7 +292,7 @@ fn build_schema_hover(
                 ));
             }
             // プロシージャ情報を表示
-            if let Some(proc) = symbol_table.procedures.get(&upper) {
+            if let Some(proc) = SymbolTableBuilder::find_procedure(symbol_table, text) {
                 let mut params = String::new();
                 for p in &proc.parameters {
                     let output = if p.is_output { " OUTPUT" } else { "" };
@@ -307,11 +307,11 @@ fn build_schema_hover(
                 ));
             }
             // ビュー情報を表示
-            if let Some(_view) = symbol_table.views.get(&upper) {
+            if let Some(_view) = SymbolTableBuilder::find_view(symbol_table, text) {
                 return Some(format!("**`{}`** — View", text));
             }
             // インデックス情報を表示
-            if let Some(idx) = symbol_table.indexes.get(&upper) {
+            if let Some(idx) = SymbolTableBuilder::find_index(symbol_table, text) {
                 let unique = if idx.is_unique { "UNIQUE " } else { "" };
                 let cols = idx.columns.join(", ");
                 return Some(format!(
@@ -326,7 +326,7 @@ fn build_schema_hover(
                 ));
             }
             // トリガー情報を表示
-            if let Some(trigger) = symbol_table.triggers.get(&upper) {
+            if let Some(trigger) = SymbolTableBuilder::find_trigger(symbol_table, text) {
                 let events = trigger.events.join(", ");
                 return Some(format!(
                     "```tsql\nCREATE TRIGGER {} ON {} FOR {}\n```\n\n**Trigger** — on `{}`",
