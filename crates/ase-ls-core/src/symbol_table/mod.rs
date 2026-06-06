@@ -947,4 +947,142 @@ mod tests {
             "Go to Definition should find trigger definition"
         );
     }
+
+    // --- find_* helper tests ---
+
+    #[test]
+    fn test_find_view() {
+        let source = "CREATE VIEW active_users AS SELECT * FROM users";
+        let table = SymbolTableBuilder::build(source);
+        assert!(
+            SymbolTableBuilder::find_view(&table, "active_users").is_some(),
+            "Should find view with original case"
+        );
+        assert!(
+            SymbolTableBuilder::find_view(&table, "ACTIVE_USERS").is_some(),
+            "Should find view with uppercase"
+        );
+        assert!(
+            SymbolTableBuilder::find_view(&table, "Active_Users").is_some(),
+            "Should find view with mixed case"
+        );
+        assert!(
+            SymbolTableBuilder::find_view(&table, "nonexistent").is_none(),
+            "Should not find nonexistent view"
+        );
+    }
+
+    #[test]
+    fn test_find_index() {
+        let source = "CREATE INDEX idx_name ON users (id)";
+        let table = SymbolTableBuilder::build(source);
+        assert!(
+            SymbolTableBuilder::find_index(&table, "idx_name").is_some(),
+            "Should find index with original case"
+        );
+        assert!(
+            SymbolTableBuilder::find_index(&table, "IDX_NAME").is_some(),
+            "Should find index with uppercase"
+        );
+        assert!(
+            SymbolTableBuilder::find_index(&table, "nonexistent").is_none(),
+            "Should not find nonexistent index"
+        );
+        let idx = SymbolTableBuilder::find_index(&table, "IDX_NAME").expect("found");
+        assert_eq!(idx.columns, vec!["id"]);
+    }
+
+    #[test]
+    fn test_find_trigger() {
+        let source = "CREATE TRIGGER tr_test ON users FOR INSERT AS BEGIN SELECT 1 END";
+        let table = SymbolTableBuilder::build(source);
+        assert!(
+            SymbolTableBuilder::find_trigger(&table, "tr_test").is_some(),
+            "Should find trigger with original case"
+        );
+        assert!(
+            SymbolTableBuilder::find_trigger(&table, "TR_TEST").is_some(),
+            "Should find trigger with uppercase"
+        );
+        assert!(
+            SymbolTableBuilder::find_trigger(&table, "nonexistent").is_none(),
+            "Should not find nonexistent trigger"
+        );
+        let trigger = SymbolTableBuilder::find_trigger(&table, "TR_TEST").expect("found");
+        assert_eq!(trigger.table_name, "users");
+    }
+
+    #[test]
+    fn test_find_index_unique() {
+        let source = "CREATE UNIQUE INDEX idx_unique_email ON users (email)";
+        let table = SymbolTableBuilder::build_tolerant(source);
+        let idx = SymbolTableBuilder::find_index(&table, "idx_unique_email").expect("found");
+        assert!(idx.is_unique, "Should detect UNIQUE index");
+    }
+
+    // --- resolve_semantic_type tests ---
+
+    #[test]
+    fn test_resolve_semantic_type_table() {
+        let source = "CREATE TABLE users (id INT)";
+        let table = SymbolTableBuilder::build(source);
+        assert_eq!(
+            table.resolve_semantic_type("users"),
+            Some(9),
+            "Table should resolve to CLASS (9)"
+        );
+    }
+
+    #[test]
+    fn test_resolve_semantic_type_procedure() {
+        let source = "CREATE PROCEDURE my_proc AS BEGIN RETURN 1 END";
+        let table = SymbolTableBuilder::build(source);
+        assert_eq!(
+            table.resolve_semantic_type("my_proc"),
+            Some(2),
+            "Procedure should resolve to FUNCTION (2)"
+        );
+    }
+
+    #[test]
+    fn test_resolve_semantic_type_view() {
+        let source = "CREATE VIEW my_view AS SELECT 1";
+        let table = SymbolTableBuilder::build(source);
+        assert_eq!(
+            table.resolve_semantic_type("my_view"),
+            Some(9),
+            "View should resolve to CLASS (9)"
+        );
+    }
+
+    #[test]
+    fn test_resolve_semantic_type_index() {
+        let source = "CREATE INDEX idx_name ON users (id)";
+        let table = SymbolTableBuilder::build(source);
+        assert_eq!(
+            table.resolve_semantic_type("idx_name"),
+            Some(9),
+            "Index should resolve to CLASS (9)"
+        );
+    }
+
+    #[test]
+    fn test_resolve_semantic_type_unknown() {
+        let source = "CREATE TABLE users (id INT)";
+        let table = SymbolTableBuilder::build(source);
+        assert_eq!(
+            table.resolve_semantic_type("nonexistent"),
+            None,
+            "Unknown name should resolve to None"
+        );
+    }
+
+    #[test]
+    fn test_resolve_semantic_type_case_insensitive() {
+        let source = "CREATE TABLE MyTable (id INT)";
+        let table = SymbolTableBuilder::build(source);
+        assert_eq!(table.resolve_semantic_type("mytable"), Some(9));
+        assert_eq!(table.resolve_semantic_type("MYTABLE"), Some(9));
+        assert_eq!(table.resolve_semantic_type("MyTable"), Some(9));
+    }
 }

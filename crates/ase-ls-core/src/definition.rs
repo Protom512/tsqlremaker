@@ -194,4 +194,78 @@ mod tests {
         );
         assert_eq!(ranges.len(), 1);
     }
+
+    #[test]
+    fn test_definition_with_analysis_view() {
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE VIEW active_users AS SELECT * FROM users\nSELECT * FROM active_users",
+        );
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 17,
+            },
+        );
+        assert_eq!(ranges.len(), 1, "Should find view definition");
+        assert_eq!(ranges[0].start.line, 0, "View definition should be on line 0");
+    }
+
+    #[test]
+    fn test_definition_with_analysis_trigger() {
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TRIGGER tr_test ON users FOR INSERT AS BEGIN SELECT 1 END",
+        );
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 18,
+            },
+        );
+        assert_eq!(ranges.len(), 1, "Should find trigger definition");
+    }
+
+    #[test]
+    fn test_definition_case_insensitive() {
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TABLE Users (id INT)\nSELECT * FROM users",
+        );
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 15,
+            },
+        );
+        assert_eq!(ranges.len(), 1, "Case-insensitive table lookup should work");
+    }
+
+    #[test]
+    fn test_definition_multiple_object_types() {
+        let source =
+            "CREATE TABLE t (id INT)\nCREATE VIEW v AS SELECT * FROM t\nCREATE INDEX idx ON t (id)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // Table definition from line 1 "FROM t" — 't' is at char 31
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 31,
+            },
+        );
+        assert!(
+            !ranges.is_empty(),
+            "Should find table definition from view's FROM clause"
+        );
+        // View definition — 'v' is at line 1, char 12
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 12,
+            },
+        );
+        assert!(!ranges.is_empty(), "Should find view definition");
+    }
 }
