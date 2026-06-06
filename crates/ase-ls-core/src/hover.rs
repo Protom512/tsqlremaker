@@ -120,7 +120,7 @@ fn resolve_column_in_statement(
     stmt: &Statement,
     symbol_table: &crate::symbol_table::SymbolTable,
     offset: usize,
-    upper_ident: &str,
+    ident_text: &str,
 ) -> Option<String> {
     match stmt {
         Statement::Select(sel) => {
@@ -138,7 +138,7 @@ fn resolve_column_in_statement(
                     crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, table_name)
                 {
                     for col in &tbl.columns {
-                        if col.name.eq_ignore_ascii_case(upper_ident) {
+                        if col.name.eq_ignore_ascii_case(ident_text) {
                             return Some(format_column_hover(col, &tbl.name));
                         }
                     }
@@ -156,7 +156,7 @@ fn resolve_column_in_statement(
                 crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, &insert.table.name)
             {
                 for col in &tbl.columns {
-                    if col.name.eq_ignore_ascii_case(upper_ident) {
+                    if col.name.eq_ignore_ascii_case(ident_text) {
                         return Some(format_column_hover(col, &tbl.name));
                     }
                 }
@@ -182,7 +182,7 @@ fn resolve_column_in_statement(
                     crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, tbl_name)
                 {
                     for col in &tbl.columns {
-                        if col.name.eq_ignore_ascii_case(upper_ident) {
+                        if col.name.eq_ignore_ascii_case(ident_text) {
                             return Some(format_column_hover(col, &tbl.name));
                         }
                     }
@@ -191,18 +191,18 @@ fn resolve_column_in_statement(
             None
         }
         Statement::Block(block) => block.statements.iter().find_map(|child| {
-            resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+            resolve_column_in_statement(child, symbol_table, offset, ident_text)
         }),
         Statement::If(if_stmt) => {
-            resolve_column_in_statement(&if_stmt.then_branch, symbol_table, offset, upper_ident)
+            resolve_column_in_statement(&if_stmt.then_branch, symbol_table, offset, ident_text)
                 .or_else(|| {
                     if_stmt.else_branch.as_ref().and_then(|else_b| {
-                        resolve_column_in_statement(else_b, symbol_table, offset, upper_ident)
+                        resolve_column_in_statement(else_b, symbol_table, offset, ident_text)
                     })
                 })
         }
         Statement::While(while_stmt) => {
-            resolve_column_in_statement(&while_stmt.body, symbol_table, offset, upper_ident)
+            resolve_column_in_statement(&while_stmt.body, symbol_table, offset, ident_text)
         }
         Statement::TryCatch(tc) => tc
             .try_block
@@ -210,17 +210,17 @@ fn resolve_column_in_statement(
             .iter()
             .chain(tc.catch_block.statements.iter())
             .find_map(|child| {
-                resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+                resolve_column_in_statement(child, symbol_table, offset, ident_text)
             }),
         Statement::Create(create) => match &**create {
             tsql_parser::ast::CreateStatement::Procedure(proc) => {
                 proc.body.iter().find_map(|child| {
-                    resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+                    resolve_column_in_statement(child, symbol_table, offset, ident_text)
                 })
             }
             tsql_parser::ast::CreateStatement::Trigger(trigger) => {
                 trigger.body.iter().find_map(|child| {
-                    resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+                    resolve_column_in_statement(child, symbol_table, offset, ident_text)
                 })
             }
             _ => None,
