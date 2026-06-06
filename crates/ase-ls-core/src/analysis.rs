@@ -98,6 +98,7 @@ impl DocumentAnalysis {
 
     /// Find the token at a given byte offset using binary search. O(log n).
     #[must_use]
+    #[inline]
     pub fn find_token_at(&self, offset: usize) -> Option<(&OwnedToken, usize)> {
         let idx = self
             .tokens
@@ -116,6 +117,7 @@ impl DocumentAnalysis {
 
     /// Get the text of a specific line. O(1) line lookup via LineIndex.
     #[must_use]
+    #[inline]
     pub fn get_line(&self, line: u32) -> &str {
         let line_count = self.line_index.line_count();
         let line = line as usize;
