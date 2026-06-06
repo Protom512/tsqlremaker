@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-06 / Session 21 (code quality + zero-alloc + emitter tests)
+**最終更新:** 2026-06-06 / Session 22 (symbol lookup unification + must_use + tests)
 
 ---
 
@@ -10,12 +10,43 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1069 passed, 2 skipped (branch refactor/session-21-code-quality) |
+| **テスト** | 1083 passed, 2 skipped (branch refactor/session-21-code-quality) |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Open Issues** | 12 |
 | **Open PRs** | 2 (#123 INSERT column list, #124 code quality) |
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) + refactor/session-21-code-quality (#124) |
+
+---
+
+## 🔄 Session 22 成果
+
+### コミット（PR #124 ブランチ）
+| コミット | 内容 |
+|---------|------|
+| `e08845e` | refactor(core): add #[must_use] to all remaining pure LSP handler functions |
+| `b7416f4` | test(core): add tests for new find_* helpers and resolve_semantic_type |
+| `b7b8015` | refactor(core): unify symbol lookups, eliminate to_uppercase() in definition/hover/semantic_tokens |
+
+### コミット（PR #123 ブランチ）
+| コミット | 内容 |
+|---------|------|
+| `0cd82a1` | refactor(code_actions): use make_quickfix helper for INSERT column list action |
+
+### 変更内容
+- **symbol_table/mod.rs**: `find_view`, `find_index`, `find_trigger` helpers, `SymbolTable::resolve_semantic_type` method
+- **definition.rs**: Replace direct HashMap::get with case-insensitive find_* helpers, eliminate `.to_uppercase()`, add `#[must_use]`
+- **hover.rs**: `collect_table_names` returns `Vec<&str>` (zero-alloc borrows), use `find_*` + `eq_ignore_ascii_case` throughout, add `#[must_use]`
+- **semantic_tokens.rs**: Delegate to `SymbolTable::resolve_semantic_type` (single allocation), add `#[must_use]`
+- **references.rs, rename.rs, folding.rs, symbols.rs, workspace_symbols.rs, signature_help.rs, code_actions.rs**: `#[must_use]` on all public pure functions
+- **db_docs/mod.rs**: `#[must_use]` on all 6 lookup/accessor functions
+- **code_actions.rs (PR #123)**: Use `make_quickfix` helper for INSERT column list action (CodeRabbit review feedback)
+
+### 削減効果
+- 5箇所の `.to_uppercase()` アロケーションを除去（definition + hover）
+- `collect_table_names` の `Vec<String>` → `Vec<&str>` でテーブル名ごとのアロケーション除去
+- 全28の公開純粋関数に `#[must_use]` 追加完了
+- +14テスト（find_view/index/trigger 5件, resolve_semantic_type 6件, definition 4件, CodeRabbit指摘対応既存）
 
 ---
 
