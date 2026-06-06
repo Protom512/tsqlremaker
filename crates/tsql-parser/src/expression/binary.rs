@@ -28,7 +28,7 @@ pub enum BindingPower {
 
 impl super::ExpressionParser<'_, '_> {
     /// 中置演算子の結合力を取得
-    pub(super) fn get_infix_binding_power(
+    pub(super) const fn get_infix_binding_power(
         kind: TokenKind,
     ) -> Option<(BindingPower, BinaryOperator)> {
         Some(match kind {
@@ -63,7 +63,7 @@ impl super::ExpressionParser<'_, '_> {
     }
 
     /// 二項演算子のspanを作成
-    pub(super) fn span_for_binary(&self, left: Span, right: Span) -> Span {
+    pub(super) const fn span_for_binary(&self, left: Span, right: Span) -> Span {
         Span {
             start: left.start,
             end: right.end,

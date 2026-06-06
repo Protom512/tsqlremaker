@@ -60,7 +60,7 @@ impl<'src> Parser<'src> {
     /// # Arguments
     ///
     /// * `mode` - パーサーモード
-    pub fn with_mode(mut self, mode: ParserMode) -> Self {
+    pub const fn with_mode(mut self, mode: ParserMode) -> Self {
         self.mode = mode;
         self
     }
@@ -153,7 +153,7 @@ impl<'src> Parser<'src> {
     ///
     /// エラーがある場合はtrue
     #[must_use]
-    pub fn has_errors(&self) -> bool {
+    pub const fn has_errors(&self) -> bool {
         !self.errors.is_empty()
     }
 

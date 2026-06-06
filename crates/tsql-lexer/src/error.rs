@@ -114,7 +114,7 @@ impl LexError {
 
     /// エラー位置を取得する
     #[must_use]
-    pub fn position(&self) -> Position {
+    pub const fn position(&self) -> Position {
         match self {
             Self::UnterminatedString { start, .. } => *start,
             Self::UnterminatedBlockComment { start, .. } => *start,

@@ -103,7 +103,7 @@ impl<'src> Lexer<'src> {
     /// # Arguments
     ///
     /// * `preserve` - true の場合、コメントトークンを保持する
-    pub fn with_comments(mut self, preserve: bool) -> Self {
+    pub const fn with_comments(mut self, preserve: bool) -> Self {
         self.preserve_comments = preserve;
         self
     }
@@ -786,7 +786,7 @@ impl<'src> Lexer<'src> {
     ///
     /// エラーが1つ以上記録されている場合は `true`
     #[must_use]
-    pub fn has_errors(&self) -> bool {
+    pub const fn has_errors(&self) -> bool {
         !self.errors.is_empty()
     }
 

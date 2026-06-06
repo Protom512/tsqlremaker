@@ -209,7 +209,10 @@ mod tests {
             },
         );
         assert_eq!(ranges.len(), 1, "Should find view definition");
-        assert_eq!(ranges[0].start.line, 0, "View definition should be on line 0");
+        assert_eq!(
+            ranges[0].start.line, 0,
+            "View definition should be on line 0"
+        );
     }
 
     #[test]

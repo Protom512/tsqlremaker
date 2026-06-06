@@ -63,7 +63,7 @@ impl LineIndex {
 
     /// Get the number of lines.
     #[must_use]
-    pub fn line_count(&self) -> usize {
+    pub const fn line_count(&self) -> usize {
         self.line_offsets.len()
     }
 

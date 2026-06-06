@@ -31,7 +31,7 @@ pub fn semantic_tokens_legend() -> SemanticTokensLegend {
 }
 
 /// TokenKind → セマンティックトークンタイプインデックスのマッピング
-fn token_kind_to_type_index(kind: TokenKind) -> Option<u32> {
+const fn token_kind_to_type_index(kind: TokenKind) -> Option<u32> {
     match kind {
         // キーワード (0)
         _ if kind.is_keyword() => Some(0),

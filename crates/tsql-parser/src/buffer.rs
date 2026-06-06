@@ -213,7 +213,7 @@ impl<'src> TokenBuffer<'src> {
 /// 注意: TokenBufferはEOF時の正確な位置情報を追跡していないため、
 /// デフォルト位置（1行目、1列目、オフセット0）を返す。
 /// 改善にはLexerの最終位置を追跡する必要がある。
-fn position_at_eof() -> tsql_token::Position {
+const fn position_at_eof() -> tsql_token::Position {
     tsql_token::Position {
         line: 1,
         column: 1,

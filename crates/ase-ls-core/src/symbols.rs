@@ -100,7 +100,7 @@ fn table_ref_name(tr: &TableReference) -> String {
 
 /// DocumentSymbol を構築するヘルパー
 #[allow(deprecated)]
-fn make_symbol(name: String, kind: SymbolKind, range: lsp_types::Range) -> DocumentSymbol {
+const fn make_symbol(name: String, kind: SymbolKind, range: lsp_types::Range) -> DocumentSymbol {
     DocumentSymbol {
         name,
         kind,

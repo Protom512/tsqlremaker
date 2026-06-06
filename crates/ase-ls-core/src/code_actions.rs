@@ -637,7 +637,7 @@ fn make_text_edit(uri: &lsp_types::Url, range: Range, new_text: String) -> Works
 }
 
 /// Create a quick-fix CodeAction with standard fields.
-fn make_quickfix(title: String, edit: WorkspaceEdit) -> CodeAction {
+const fn make_quickfix(title: String, edit: WorkspaceEdit) -> CodeAction {
     CodeAction {
         title,
         kind: Some(CodeActionKind::QUICKFIX),
@@ -651,7 +651,7 @@ fn make_quickfix(title: String, edit: WorkspaceEdit) -> CodeAction {
 }
 
 /// Create a refactor CodeAction with standard fields.
-fn make_refactor(title: String, edit: WorkspaceEdit) -> CodeAction {
+const fn make_refactor(title: String, edit: WorkspaceEdit) -> CodeAction {
     CodeAction {
         title,
         kind: Some(CodeActionKind::REFACTOR),

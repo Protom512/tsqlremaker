@@ -84,7 +84,7 @@ fn format_column_hover(col: &crate::symbol_table::ColumnSymbol, table_name: &str
 
 /// Check whether `offset` falls within `[span_start, span_end]`.
 /// When `span_end <= span_start` (broken span), uses a fallback window.
-fn in_span(offset: usize, span_start: usize, span_end: u32) -> bool {
+const fn in_span(offset: usize, span_start: usize, span_end: u32) -> bool {
     let span_end = if span_end as usize > span_start {
         span_end as usize
     } else {
@@ -152,9 +152,10 @@ fn resolve_column_in_statement(
             }
 
             // Check inserted columns
-            if let Some(tbl) =
-                crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, &insert.table.name)
-            {
+            if let Some(tbl) = crate::symbol_table::SymbolTableBuilder::find_table(
+                symbol_table,
+                &insert.table.name,
+            ) {
                 for col in &tbl.columns {
                     if col.name.eq_ignore_ascii_case(ident_text) {
                         return Some(format_column_hover(col, &tbl.name));
@@ -190,9 +191,10 @@ fn resolve_column_in_statement(
             }
             None
         }
-        Statement::Block(block) => block.statements.iter().find_map(|child| {
-            resolve_column_in_statement(child, symbol_table, offset, ident_text)
-        }),
+        Statement::Block(block) => block
+            .statements
+            .iter()
+            .find_map(|child| resolve_column_in_statement(child, symbol_table, offset, ident_text)),
         Statement::If(if_stmt) => {
             resolve_column_in_statement(&if_stmt.then_branch, symbol_table, offset, ident_text)
                 .or_else(|| {
@@ -209,9 +211,7 @@ fn resolve_column_in_statement(
             .statements
             .iter()
             .chain(tc.catch_block.statements.iter())
-            .find_map(|child| {
-                resolve_column_in_statement(child, symbol_table, offset, ident_text)
-            }),
+            .find_map(|child| resolve_column_in_statement(child, symbol_table, offset, ident_text)),
         Statement::Create(create) => match &**create {
             tsql_parser::ast::CreateStatement::Procedure(proc) => {
                 proc.body.iter().find_map(|child| {

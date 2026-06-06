@@ -187,7 +187,7 @@ impl super::ExpressionParser<'_, '_> {
     }
 
     /// キーワードを識別子として解析可能かチェック
-    fn can_keyword_be_identifier(kind: TokenKind) -> bool {
+    const fn can_keyword_be_identifier(kind: TokenKind) -> bool {
         matches!(
             kind,
             // 型名

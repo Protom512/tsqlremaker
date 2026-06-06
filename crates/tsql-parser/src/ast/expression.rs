@@ -133,7 +133,7 @@ pub enum Literal {
 
 impl Literal {
     /// リテラルのspanを返す
-    pub fn span(&self) -> Span {
+    pub const fn span(&self) -> Span {
         match self {
             Literal::String(_, s) => *s,
             Literal::Number(_, s) => *s,
