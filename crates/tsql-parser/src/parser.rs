@@ -1569,7 +1569,14 @@ impl<'src> Parser<'src> {
                 let len = if self.buffer.check(TokenKind::LParen) {
                     self.buffer.consume()?;
                     let n = if self.buffer.check(TokenKind::Number) {
-                        let n = self.buffer.current()?.text.parse().unwrap_or(1);
+                        let token = self.buffer.current()?;
+                        let num_str = token.text;
+                        let n = num_str.parse::<u32>().map_err(|_| {
+                            ParseError::invalid_syntax(
+                                format!("Invalid number for BINARY length: {num_str}"),
+                                token.position,
+                            )
+                        })?;
                         self.buffer.consume()?;
                         n
                     } else {
