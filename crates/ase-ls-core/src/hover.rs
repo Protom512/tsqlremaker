@@ -11,25 +11,21 @@ use tsql_token::TokenKind;
 /// Hover情報を生成する（DocumentAnalysis利用）
 #[must_use]
 pub fn hover_with_analysis(analysis: &DocumentAnalysis, position: Position) -> Option<Hover> {
-    let offset = analysis
-        .line_index
-        .position_to_offset(&analysis.source, position);
-
-    let (token, _idx) = match analysis.find_token_at(offset) {
+    let (token, _idx) = match analysis.find_token_at_position(position) {
         Some(t) => t,
         None => {
-            tracing::debug!("hover: no token found at offset {offset}");
+            tracing::debug!("hover: no token found at position {:?}", position);
             return None;
         }
     };
     let kind = token.kind;
-    let text = token.text.clone();
+    let text: &str = &token.text;
     let start = token.span.start as usize;
     let end = token.span.end as usize;
 
-    let content = build_schema_hover(&analysis.symbol_table, &kind, &text)
-        .or_else(|| build_column_hover(analysis, offset, &text))
-        .or_else(|| build_hover_content(&kind, &text));
+    let content = build_schema_hover(&analysis.symbol_table, &kind, text)
+        .or_else(|| build_column_hover(analysis, start, text))
+        .or_else(|| build_hover_content(&kind, text));
     let content = match content {
         Some(c) => c,
         None => {

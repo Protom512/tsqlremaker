@@ -6,7 +6,7 @@
 //! - ビュー定義（CREATE VIEW）とインデックス定義（CREATE INDEX）を抽出
 //! - 変数宣言（DECLARE）から変数情報を抽出
 
-use lsp_types::{Position, Range};
+use lsp_types::Range;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use tsql_parser::ast::{CreateStatement, DataType, DeclareStatement, Statement};
@@ -77,6 +77,7 @@ impl SymbolTable {
     ///
     /// Uses a single `CaseInsensitiveKey` allocation to check all maps.
     #[must_use]
+    #[inline]
     pub fn resolve_semantic_type(&self, name: &str) -> Option<u32> {
         let key = CaseInsensitiveKey::new(name);
         if self.tables.contains_key(&key)
@@ -236,6 +237,7 @@ pub struct SymbolTableBuilder;
 
 impl SymbolTableBuilder {
     /// ソースコードからシンボルテーブルを構築する
+    #[must_use]
     pub fn build(source: &str) -> SymbolTable {
         let mut table = SymbolTable::default();
         let line_index = LineIndex::new(source);
@@ -253,6 +255,7 @@ impl SymbolTableBuilder {
     }
 
     /// ソースコードからシンボルテーブルを構築（エラー許容）
+    #[must_use]
     pub fn build_tolerant(source: &str) -> SymbolTable {
         let mut table = SymbolTable::default();
         let line_index = LineIndex::new(source);
@@ -529,6 +532,7 @@ impl SymbolTableBuilder {
 
     /// テーブル名でテーブルを検索 (case-insensitive)
     #[must_use]
+    #[inline]
     pub fn find_table<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a TableSymbol> {
         let key = CaseInsensitiveKey::new(name);
         table.tables.get::<str>(key.borrow())
@@ -536,6 +540,7 @@ impl SymbolTableBuilder {
 
     /// プロシージャ名でプロシージャを検索 (case-insensitive)
     #[must_use]
+    #[inline]
     pub fn find_procedure<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a ProcedureSymbol> {
         let key = CaseInsensitiveKey::new(name);
         table.procedures.get::<str>(key.borrow())
@@ -543,6 +548,7 @@ impl SymbolTableBuilder {
 
     /// ビュー名でビューを検索 (case-insensitive)
     #[must_use]
+    #[inline]
     pub fn find_view<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a ViewSymbol> {
         let key = CaseInsensitiveKey::new(name);
         table.views.get::<str>(key.borrow())
@@ -550,6 +556,7 @@ impl SymbolTableBuilder {
 
     /// インデックス名でインデックスを検索 (case-insensitive)
     #[must_use]
+    #[inline]
     pub fn find_index<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a IndexSymbol> {
         let key = CaseInsensitiveKey::new(name);
         table.indexes.get::<str>(key.borrow())
@@ -557,6 +564,7 @@ impl SymbolTableBuilder {
 
     /// トリガー名でトリガーを検索 (case-insensitive)
     #[must_use]
+    #[inline]
     pub fn find_trigger<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a TriggerSymbol> {
         let key = CaseInsensitiveKey::new(name);
         table.triggers.get::<str>(key.borrow())
@@ -564,6 +572,7 @@ impl SymbolTableBuilder {
 
     /// 変数名で変数を検索 (case-insensitive, @prefix auto-added)
     #[must_use]
+    #[inline]
     pub fn find_variable<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a VariableSymbol> {
         let search_name = if name.starts_with('@') {
             CaseInsensitiveKey::new(name)
@@ -571,40 +580,6 @@ impl SymbolTableBuilder {
             CaseInsensitiveKey::new(&format!("@{}", name))
         };
         table.variables.get::<str>(search_name.borrow())
-    }
-
-    /// カーソル位置の識別子を特定
-    pub fn find_identifier_at(
-        source: &str,
-        position: Position,
-    ) -> Option<(String, lsp_types::Range)> {
-        let line_index = LineIndex::new(source);
-        let offset = line_index.position_to_offset(source, position);
-
-        for token_result in tsql_lexer::Lexer::new(source) {
-            let token = match token_result {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            let start = token.span.start as usize;
-            let end = token.span.end as usize;
-            if offset >= start && offset < end {
-                if matches!(
-                    token.kind,
-                    tsql_token::TokenKind::Ident | tsql_token::TokenKind::LocalVar
-                ) {
-                    return Some((
-                        token.text.to_string(),
-                        span_to_range(&line_index, token.span),
-                    ));
-                }
-                return None;
-            }
-            if start > offset {
-                break;
-            }
-        }
-        None
     }
 }
 
@@ -619,6 +594,7 @@ fn span_to_range(line_index: &LineIndex, span: Span) -> Range {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+    use lsp_types::Position;
 
     #[test]
     fn test_case_insensitive_key_equality() {
@@ -784,21 +760,6 @@ mod tests {
         assert!(table.tables.is_empty());
         assert!(table.procedures.is_empty());
         assert!(table.views.is_empty());
-    }
-
-    #[test]
-    fn test_find_identifier_at() {
-        let source = "SELECT * FROM users";
-        let result = SymbolTableBuilder::find_identifier_at(
-            source,
-            Position {
-                line: 0,
-                character: 15,
-            },
-        );
-        assert!(result.is_some());
-        let (name, _range) = result.unwrap();
-        assert_eq!(name, "users");
     }
 
     // --- Explicit variant coverage tests (#56) ---

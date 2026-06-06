@@ -19,12 +19,8 @@ pub fn rename_with_analysis(
     new_name: &str,
     uri: &Url,
 ) -> Option<WorkspaceEdit> {
-    let offset = analysis
-        .line_index
-        .position_to_offset(&analysis.source, position);
-
-    let (target_kind, target_text) = match analysis.find_token_at(offset) {
-        Some((t, _)) => (t.kind, t.text.clone()),
+    let (target_kind, target_text) = match analysis.find_token_at_position(position) {
+        Some((t, _)) => (t.kind, &*t.text),
         None => return None,
     };
 
@@ -40,7 +36,7 @@ pub fn rename_with_analysis(
     let mut edits = Vec::new();
 
     for token in &analysis.tokens {
-        if token_matches_symbol(token.kind, &token.text, &target_text, is_var) {
+        if token_matches_symbol(token.kind, &token.text, target_text, is_var) {
             edits.push(TextEdit {
                 range: analysis
                     .line_index
@@ -72,10 +68,7 @@ pub fn get_rename_placeholder_with_analysis(
     analysis: &DocumentAnalysis,
     position: Position,
 ) -> Option<String> {
-    let offset = analysis
-        .line_index
-        .position_to_offset(&analysis.source, position);
-    let (token, _) = analysis.find_token_at(offset)?;
+    let (token, _) = analysis.find_token_at_position(position)?;
     Some(token.text.to_string())
 }
 
@@ -88,11 +81,7 @@ pub fn prepare_rename_with_analysis(
     analysis: &DocumentAnalysis,
     position: Position,
 ) -> Option<PrepareRenameResponse> {
-    let offset = analysis
-        .line_index
-        .position_to_offset(&analysis.source, position);
-
-    let (token, _) = analysis.find_token_at(offset)?;
+    let (token, _) = analysis.find_token_at_position(position)?;
 
     let is_renamable = matches!(
         token.kind,

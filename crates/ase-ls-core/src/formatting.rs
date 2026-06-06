@@ -119,6 +119,7 @@ fn format_token<'a>(kind: &TokenKind, text: &'a str) -> Cow<'a, str> {
 }
 
 /// トークン前に改行を入れるべきか
+#[inline]
 const fn should_newline_before(kind: &TokenKind, prev: Option<&TokenKind>) -> bool {
     let prev = match prev {
         Some(p) => p,
@@ -181,6 +182,7 @@ const fn should_newline_before(kind: &TokenKind, prev: Option<&TokenKind>) -> bo
 }
 
 /// トークン前にスペースを入れるべきか
+#[inline]
 const fn needs_space_before(kind: &TokenKind, prev: Option<&TokenKind>) -> bool {
     let prev = match prev {
         Some(p) => p,
@@ -206,6 +208,7 @@ const fn needs_space_before(kind: &TokenKind, prev: Option<&TokenKind>) -> bool 
 }
 
 /// トークン出力前にインデントを減らすべきか
+#[inline]
 const fn should_decrease_indent(kind: &TokenKind) -> bool {
     matches!(kind, TokenKind::End | TokenKind::End_)
 }

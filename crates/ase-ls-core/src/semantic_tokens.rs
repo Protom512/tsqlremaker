@@ -109,47 +109,71 @@ const fn token_kind_to_type_index(kind: TokenKind) -> Option<u32> {
     }
 }
 
-/// Resolve an identifier token's semantic type using the symbol table.
-fn resolve_ident_type(analysis: &DocumentAnalysis, text: &str) -> Option<u32> {
-    analysis.symbol_table.resolve_semantic_type(text)
+/// Resolve a token's semantic type index, handling both direct kinds and symbol-table identifiers.
+#[inline]
+fn resolve_token_type(analysis: &DocumentAnalysis, kind: TokenKind, text: &str) -> Option<u32> {
+    token_kind_to_type_index(kind).or_else(|| {
+        if kind == TokenKind::Ident {
+            analysis.symbol_table.resolve_semantic_type(text)
+        } else {
+            None
+        }
+    })
+}
+
+/// Accumulator for LSP semantic token delta encoding.
+struct DeltaEncoder {
+    prev_line: u32,
+    prev_char: u32,
+}
+
+impl DeltaEncoder {
+    const fn new() -> Self {
+        Self {
+            prev_line: 0,
+            prev_char: 0,
+        }
+    }
+
+    /// Push a delta-encoded semantic token.
+    fn push(
+        &mut self,
+        tokens: &mut Vec<SemanticToken>,
+        line: u32,
+        character: u32,
+        length: u32,
+        token_type: u32,
+    ) {
+        let delta_line = line.saturating_sub(self.prev_line);
+        let delta_start = if delta_line == 0 {
+            character.saturating_sub(self.prev_char)
+        } else {
+            character
+        };
+
+        tokens.push(SemanticToken {
+            delta_line,
+            delta_start,
+            length,
+            token_type,
+            token_modifiers_bitset: 0,
+        });
+
+        self.prev_line = line;
+        self.prev_char = character;
+    }
 }
 
 /// ソースコードから Semantic Tokens を生成する（DocumentAnalysis利用）
 #[must_use]
 pub fn semantic_tokens_full_with_analysis(analysis: &DocumentAnalysis) -> SemanticTokensResult {
     let mut tokens = Vec::new();
-    let mut prev_line = 0u32;
-    let mut prev_char = 0u32;
+    let mut encoder = DeltaEncoder::new();
 
     for token in &analysis.tokens {
-        let type_idx = token_kind_to_type_index(token.kind).or_else(|| {
-            if token.kind == TokenKind::Ident {
-                resolve_ident_type(analysis, &token.text)
-            } else {
-                None
-            }
-        });
-
-        if let Some(type_idx) = type_idx {
+        if let Some(type_idx) = resolve_token_type(analysis, token.kind, &token.text) {
             let (line, character) = analysis.line_index.offset_to_position(token.span.start);
-
-            let delta_line = line.saturating_sub(prev_line);
-            let delta_start = if delta_line == 0 {
-                character.saturating_sub(prev_char)
-            } else {
-                character
-            };
-
-            tokens.push(SemanticToken {
-                delta_line,
-                delta_start,
-                length: token.span.len(),
-                token_type: type_idx,
-                token_modifiers_bitset: 0,
-            });
-
-            prev_line = line;
-            prev_char = character;
+            encoder.push(&mut tokens, line, character, token.span.len(), type_idx);
         }
     }
 
@@ -168,8 +192,7 @@ pub fn semantic_tokens_range_with_analysis(
     range: Range,
 ) -> SemanticTokensRangeResult {
     let mut tokens = Vec::new();
-    let mut prev_line = 0u32;
-    let mut prev_char = 0u32;
+    let mut encoder = DeltaEncoder::new();
 
     for token in &analysis.tokens {
         let (line, character) = analysis.line_index.offset_to_position(token.span.start);
@@ -185,32 +208,8 @@ pub fn semantic_tokens_range_with_analysis(
             break;
         }
 
-        let type_idx = token_kind_to_type_index(token.kind).or_else(|| {
-            if token.kind == TokenKind::Ident {
-                resolve_ident_type(analysis, &token.text)
-            } else {
-                None
-            }
-        });
-
-        if let Some(type_idx) = type_idx {
-            let delta_line = line.saturating_sub(prev_line);
-            let delta_start = if delta_line == 0 {
-                character.saturating_sub(prev_char)
-            } else {
-                character
-            };
-
-            tokens.push(SemanticToken {
-                delta_line,
-                delta_start,
-                length: token.span.len(),
-                token_type: type_idx,
-                token_modifiers_bitset: 0,
-            });
-
-            prev_line = line;
-            prev_char = character;
+        if let Some(type_idx) = resolve_token_type(analysis, token.kind, &token.text) {
+            encoder.push(&mut tokens, line, character, token.span.len(), type_idx);
         }
     }
 
@@ -438,10 +437,7 @@ mod tests {
             _ => panic!("Expected Tokens"),
         };
         // Should include FROM keyword token and identifier t
-        assert!(
-            !tokens.data.is_empty(),
-            "FROM and t should be in the range"
-        );
+        assert!(!tokens.data.is_empty(), "FROM and t should be in the range");
         // At least one keyword (FROM) and optionally one identifier
         assert!(
             tokens.data.iter().any(|t| t.token_type == 0),

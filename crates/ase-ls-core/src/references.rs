@@ -18,12 +18,8 @@ pub fn reference_ranges_with_analysis(
     position: Position,
     include_declaration: bool,
 ) -> Vec<Range> {
-    let offset = analysis
-        .line_index
-        .position_to_offset(&analysis.source, position);
-
-    let (target_kind, target_text) = match analysis.find_token_at(offset) {
-        Some((t, _)) => (t.kind, t.text.clone()),
+    let (target_kind, target_text) = match analysis.find_token_at_position(position) {
+        Some((t, _)) => (t.kind, &*t.text),
         None => return Vec::new(),
     };
 
@@ -32,7 +28,7 @@ pub fn reference_ranges_with_analysis(
     let mut refs = Vec::new();
 
     for token in &analysis.tokens {
-        if token_matches_symbol(token.kind, &token.text, &target_text, is_var) {
+        if token_matches_symbol(token.kind, &token.text, target_text, is_var) {
             let range = analysis
                 .line_index
                 .offset_to_range(token.span.start, token.span.end);

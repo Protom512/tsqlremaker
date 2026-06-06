@@ -116,6 +116,20 @@ impl DocumentAnalysis {
         }
     }
 
+    /// Convert an LSP Position to a byte offset, then find the token at that offset.
+    ///
+    /// Convenience method that combines `LineIndex::position_to_offset` and
+    /// `find_token_at`, eliminating a repeated pattern across LSP handlers.
+    #[must_use]
+    #[inline]
+    pub fn find_token_at_position(
+        &self,
+        position: lsp_types::Position,
+    ) -> Option<(&OwnedToken, usize)> {
+        let offset = self.line_index.position_to_offset(&self.source, position);
+        self.find_token_at(offset)
+    }
+
     /// Get the text of a specific line. O(1) line lookup via LineIndex.
     #[must_use]
     #[inline]

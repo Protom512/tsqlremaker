@@ -34,8 +34,10 @@ fn scan_for_call_frame<'a>(
 ) -> Option<CallFrame> {
     let mut stack: Vec<CallFrame> = Vec::new();
     let mut paren_depth = 0i32;
-    // LParen の前に Ident/Keyword があった場合、その名前を保留する
-    let mut pending_name: Option<String> = None;
+    // LParen の前に Ident/Keyword があった場合、その名前を借用で保留する。
+    // .to_uppercase() は CallFrame プッシュ時のみ実行し、
+    // 関数呼び出しに続かないトークンでの不要なアロケーションを回避する。
+    let mut pending_name: Option<&'a str> = None;
 
     for (kind, text, span_start) in tokens {
         if span_start > offset {
@@ -43,21 +45,19 @@ fn scan_for_call_frame<'a>(
         }
 
         match kind {
-            TokenKind::Ident => {
-                pending_name = Some(text.to_uppercase());
+            TokenKind::Ident | TokenKind::LocalVar => {
+                pending_name = Some(text);
             }
             TokenKind::LParen => {
                 paren_depth += 1;
                 if let Some(name) = pending_name.take() {
                     stack.push(CallFrame {
-                        func_name: name,
+                        func_name: name.to_uppercase(),
                         active_param: 0,
                         open_depth: paren_depth,
                     });
-                } else {
-                    // 関数名なしの '(' — 純粋なグループ化
-                    pending_name = None;
                 }
+                // 関数名なしの '(' — 純粋なグループ化
             }
             TokenKind::RParen => {
                 paren_depth -= 1;
@@ -86,7 +86,7 @@ fn scan_for_call_frame<'a>(
             _ => {
                 // キーワードトークンも関数名候補として扱う
                 if kind.is_keyword() {
-                    pending_name = Some(text.to_uppercase());
+                    pending_name = Some(text);
                 }
             }
         }

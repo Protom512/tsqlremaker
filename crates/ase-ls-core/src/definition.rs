@@ -20,19 +20,15 @@ pub fn definition_ranges_with_analysis(
     analysis: &DocumentAnalysis,
     position: Position,
 ) -> Vec<Range> {
-    let offset = analysis
-        .line_index
-        .position_to_offset(&analysis.source, position);
-
-    let (target_kind, target_text) = match analysis.find_token_at(offset) {
-        Some((t, _)) => (t.kind, t.text.clone()),
+    let (target_kind, target_text) = match analysis.find_token_at_position(position) {
+        Some((t, _)) => (t.kind, &*t.text),
         None => return Vec::new(),
     };
 
     if target_kind == TokenKind::LocalVar {
-        find_variable_definition(&analysis.symbol_table, &target_text)
+        find_variable_definition(&analysis.symbol_table, target_text)
     } else {
-        find_object_definition(&analysis.symbol_table, &target_text)
+        find_object_definition(&analysis.symbol_table, target_text)
     }
 }
 
