@@ -10,7 +10,7 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1083 passed, 2 skipped (branch refactor/session-21-code-quality) |
+| **テスト** | 1090 passed, 2 skipped (branch refactor/session-21-code-quality) |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Coupling** | Grade D (0.39) — emitter→parser依存は構造的、db_docs→DocEntryは同一crate内 |
@@ -27,6 +27,7 @@
 | `8267468` | refactor: add const fn to 29 pure functions across 4 crates |
 | `7114367` | perf(core): add #[inline] to hot-path LineIndex and DocumentAnalysis accessors |
 | `3c9ec2b` | perf(core): change OwnedToken.text from String to Arc<str> |
+| `2c5005a` | test(core): add 7 edge-case tests for signature_help and semantic_tokens |
 
 ### 変更内容
 - **server.rs**: `DocumentStore`が`Arc<DocumentAnalysis>`を格納。`get_analysis()`が`Option<Arc<DocumentAnalysis>>`を返す。Deref coercionで呼び出し元は`&DocumentAnalysis`を透過的に取得
@@ -41,6 +42,7 @@
 - `const fn` 29箇所: コンパイラの最適化ヒント + 純粋性の型レベル表明
 - `#[inline]` 7箇所: ホットパスの関数呼び出しオーバーヘッドを除去
 - `Arc<str>` for OwnedToken.text: 4ハンドラの`.clone()`がO(n)→O(1)に
+- +7テスト: signature_help (4件: 空ソース/括弧外/グループ化/複数行), semantic_tokens (3件: 変数/データ型/範囲境界)
 
 ## ✅ コード品質改善 完了状況
 
