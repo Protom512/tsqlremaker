@@ -24,18 +24,21 @@
 | コミット | 内容 |
 |---------|------|
 | `cec4854` | refactor(core): eliminate Arc<str> clones, dedup semantic tokens, add find_token_at_position |
+| `5c71e83` | perf(hover): use entry.name instead of allocated upper in build_hover_content |
+| `e6938a6` | fix(parser): return ParseError for invalid BINARY length instead of silent default |
 
 ### 変更内容
 - **hover/definition/references/rename**: `Arc<str>.clone()` → `&str` 借用に置換（ホットパスでのアトミック参照カウント操作を回避）
 - **semantic_tokens**: `DeltaEncoder` 構造体を抽出し、`semantic_tokens_full_with_analysis` と `semantic_tokens_range_with_analysis` 間の約30行の重複コードを除去
 - **analysis.rs**: `find_token_at_position(position)` ヘルパーを追加。6ファイルのoffset→token検索ボイラープレートを統一
 - **signature_help**: `scan_for_call_frame` の `pending_name` を `Option<String>` → `Option<&str>` に変更し、CallFrameプッシュ時のみ `.to_uppercase()` を実行（非関数トークンでのアロケーション回避）
+- **hover.rs**: `build_hover_content` で `entry.name` を使用し、エントリ発見時の不要な `upper` 変数使用を回避
 - **symbol_table**: `find_*` 6関数 + `resolve_semantic_type` に `#[inline]` 追加。`build/build_tolerant` に `#[must_use]` 追加
 - **completion**: `build_function_snippet`, `is_comma_separated_syntax` に `#[must_use]` 追加
 - **code_actions**: `find_ignore_ascii_case`, `contains_ignore_ascii_case` に `#[must_use]` 追加
 - **formatting**: `should_newline_before`, `needs_space_before`, `should_decrease_indent` に `#[inline]` 追加
 - **symbol_table**: デッドコード `find_identifier_at` とそのテストを削除（Session 19以降未使用）
-- **-45行** (164行削除、119行追加、11ファイル変更)
+- **parser**: `BINARY(abc)` のような無効な長さ指定がサイレントにデフォルト値1になっていた問題を修正。VARCHAR/DECIMALと同様に `InvalidSyntax` エラーを返すよう変更
 - **1089 tests passed** (-1 from find_identifier_at test removal)
 
 ## 🔄 Session 23 成果
