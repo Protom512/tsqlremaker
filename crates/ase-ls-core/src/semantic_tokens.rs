@@ -383,4 +383,69 @@ mod tests {
         };
         assert!(tokens.data.is_empty());
     }
+
+    #[test]
+    fn test_variable_gets_variable_token() {
+        let source = "DECLARE @count INT\nSET @count = 1";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = semantic_tokens_full_with_analysis(&analysis);
+        let tokens = match result {
+            SemanticTokensResult::Tokens(t) => t,
+            _ => panic!("Expected Tokens"),
+        };
+        // VARIABLE = index 6 (see semantic_tokens_legend)
+        assert!(
+            tokens.data.iter().any(|t| t.token_type == 6),
+            "Local variable @count should get VARIABLE semantic token (type 6)"
+        );
+    }
+
+    #[test]
+    fn test_datatype_gets_type_token() {
+        let source = "DECLARE @x INT";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = semantic_tokens_full_with_analysis(&analysis);
+        let tokens = match result {
+            SemanticTokensResult::Tokens(t) => t,
+            _ => panic!("Expected Tokens"),
+        };
+        // TYPE = index 1 (see semantic_tokens_legend)
+        assert!(
+            tokens.data.iter().any(|t| t.token_type == 1),
+            "INT data type should get TYPE semantic token (type 1)"
+        );
+    }
+
+    #[test]
+    fn test_range_tokens_intersecting_boundary() {
+        use lsp_types::{Position, Range as LspRange};
+        let source = "SELECT * FROM t WHERE id = 1";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // Range covering FROM and t (char 9-15)
+        let range = LspRange {
+            start: Position {
+                line: 0,
+                character: 9,
+            },
+            end: Position {
+                line: 0,
+                character: 16,
+            },
+        };
+        let result = semantic_tokens_range_with_analysis(&analysis, range);
+        let tokens = match result {
+            SemanticTokensRangeResult::Tokens(t) => t,
+            _ => panic!("Expected Tokens"),
+        };
+        // Should include FROM keyword token and identifier t
+        assert!(
+            !tokens.data.is_empty(),
+            "FROM and t should be in the range"
+        );
+        // At least one keyword (FROM) and optionally one identifier
+        assert!(
+            tokens.data.iter().any(|t| t.token_type == 0),
+            "FROM keyword should get KEYWORD token in range"
+        );
+    }
 }

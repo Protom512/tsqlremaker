@@ -290,4 +290,67 @@ mod tests {
         let sig = result.unwrap();
         assert_eq!(sig.signatures[0].active_parameter, Some(2));
     }
+
+    #[test]
+    fn test_signature_help_empty_source() {
+        let analysis = crate::analysis::DocumentAnalysis::new("");
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_signature_help_cursor_after_closing_paren() {
+        let source = "SELECT SUBSTRING(col, 1, 3) FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // Cursor after the closing paren
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 30,
+            },
+        );
+        assert!(
+            result.is_none(),
+            "Should not show signature help outside function call"
+        );
+    }
+
+    #[test]
+    fn test_signature_help_nested_parens_not_function() {
+        let source = "SELECT (1 + 2) FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 10,
+            },
+        );
+        // Pure grouping parens without a function name → no help
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_signature_help_multiline_function() {
+        let source = "SELECT SUBSTRING(\n  col,\n  1,\n  3\n) FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // Cursor on 3rd param (line 3, char 2)
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 3,
+                character: 2,
+            },
+        );
+        assert!(result.is_some());
+        let sig = result.unwrap();
+        assert_eq!(sig.signatures[0].active_parameter, Some(2));
+    }
 }
