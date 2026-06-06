@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-06 / Session 23 (Arc + const fn + inline optimizations)
+**最終更新:** 2026-06-07 / Session 24 (Arc<str> borrow, delta dedup, find_token_at_position)
 
 ---
 
@@ -10,13 +10,33 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1090 passed, 2 skipped (branch refactor/session-21-code-quality) |
+| **テスト** | 1089 passed, 2 skipped (branch refactor/session-21-code-quality) |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
 | **Coupling** | Grade D (0.39) — emitter→parser依存は構造的、db_docs→DocEntryは同一crate内 |
 | **Open Issues** | 12 (全てLarge機能、コード品質改善なし) |
 | **Open PRs** | 2 (#123 INSERT column list, #124 code quality) |
 | **ブランチ** | master + feat/insert-column-list-v2 (#123) + refactor/session-21-code-quality (#124) |
+
+## 🔄 Session 24 成果
+
+### コミット（PR #124 ブランチ）
+| コミット | 内容 |
+|---------|------|
+| `cec4854` | refactor(core): eliminate Arc<str> clones, dedup semantic tokens, add find_token_at_position |
+
+### 変更内容
+- **hover/definition/references/rename**: `Arc<str>.clone()` → `&str` 借用に置換（ホットパスでのアトミック参照カウント操作を回避）
+- **semantic_tokens**: `DeltaEncoder` 構造体を抽出し、`semantic_tokens_full_with_analysis` と `semantic_tokens_range_with_analysis` 間の約30行の重複コードを除去
+- **analysis.rs**: `find_token_at_position(position)` ヘルパーを追加。6ファイルのoffset→token検索ボイラープレートを統一
+- **signature_help**: `scan_for_call_frame` の `pending_name` を `Option<String>` → `Option<&str>` に変更し、CallFrameプッシュ時のみ `.to_uppercase()` を実行（非関数トークンでのアロケーション回避）
+- **symbol_table**: `find_*` 6関数 + `resolve_semantic_type` に `#[inline]` 追加。`build/build_tolerant` に `#[must_use]` 追加
+- **completion**: `build_function_snippet`, `is_comma_separated_syntax` に `#[must_use]` 追加
+- **code_actions**: `find_ignore_ascii_case`, `contains_ignore_ascii_case` に `#[must_use]` 追加
+- **formatting**: `should_newline_before`, `needs_space_before`, `should_decrease_indent` に `#[inline]` 追加
+- **symbol_table**: デッドコード `find_identifier_at` とそのテストを削除（Session 19以降未使用）
+- **-45行** (164行削除、119行追加、11ファイル変更)
+- **1089 tests passed** (-1 from find_identifier_at test removal)
 
 ## 🔄 Session 23 成果
 
