@@ -340,17 +340,19 @@ fn build_schema_hover(
 ///
 /// [`crate::db_docs`] からエントリを検索し、マークダウン形式で返す。
 fn build_hover_content(kind: &TokenKind, text: &str) -> Option<String> {
-    let upper = text.to_uppercase();
-
     match kind {
         TokenKind::LocalVar => Some(format!(
             "```tsql\n{text}: VARIABLE\n```\n\nLocal variable — Declare with `DECLARE {text} TYPE`"
         )),
         _ => {
-            if let Some(entry) = crate::db_docs::lookup(upper.as_str()) {
+            // Fast path: lookup with uppercase conversion. Use entry.name
+            // (already uppercase &'static str) for display to avoid keeping
+            // the allocation when an entry is found.
+            let upper = text.to_uppercase();
+            if let Some(entry) = crate::db_docs::lookup(&upper) {
                 Some(format!(
                     "```tsql\n{}\n```\n\n**`{}`** — {}",
-                    entry.syntax, upper, entry.description
+                    entry.syntax, entry.name, entry.description
                 ))
             } else if kind.is_keyword() {
                 Some(format!("**`{upper}`** — T-SQL Keyword"))
