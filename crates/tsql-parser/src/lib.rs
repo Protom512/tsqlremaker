@@ -57,10 +57,6 @@ pub use common::{
 pub use error::{ParseError, ParseErrors, ParseResult};
 pub use expression::ExpressionParser;
 pub use parser::{Parser, ParserMode};
-pub use tsql_token::{Position, Span, TokenKind};
-
-// トークン構造体も再エクスポート
-pub use tsql_lexer::Token;
 
 /// SQL文を解析するヘルパー関数
 ///
