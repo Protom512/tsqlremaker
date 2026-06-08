@@ -11,7 +11,7 @@
 //!
 //! ```rust,ignore
 //! use mysql_emitter::{MySqlEmitter, EmitterConfig};
-//! use tsql_parser::common::{CommonStatement, CommonExpression};
+//! use common_sql::{CommonStatement, CommonExpression};
 //!
 //! let config = EmitterConfig::default();
 //! let mut emitter = MySqlEmitter::new(config);
@@ -40,11 +40,11 @@ mod error;
 pub use config::EmitterConfig;
 pub use error::EmitError;
 
-use converters::FunctionConverter;
-use tsql_parser::common::{
+use common_sql::{
     CommonBinaryOperator, CommonCaseExpression, CommonExpression, CommonFunctionCall,
     CommonIdentifier, CommonInList, CommonLiteral, CommonStatement, CommonUnaryOperator,
 };
+use converters::FunctionConverter;
 
 /// MySQL Emitter
 ///
@@ -94,7 +94,7 @@ impl MySqlEmitter {
     ///
     /// ```rust
     /// use mysql_emitter::{MySqlEmitter, EmitterConfig};
-    /// use tsql_parser::common::{CommonStatement, CommonSelectStatement, CommonSelectItem};
+    /// use common_sql::{CommonStatement, CommonSelectStatement, CommonSelectItem};
     /// use tsql_token::Span;
     ///
     /// let config = EmitterConfig::default();
@@ -160,7 +160,7 @@ impl MySqlEmitter {
     /// INSERT文を訪問
     fn visit_insert_statement(
         &mut self,
-        stmt: &tsql_parser::common::CommonInsertStatement,
+        stmt: &common_sql::CommonInsertStatement,
     ) -> Result<(), EmitError> {
         self.write("INSERT INTO `");
         self.write(&stmt.table);
@@ -180,7 +180,7 @@ impl MySqlEmitter {
 
         // VALUES
         match &stmt.source {
-            tsql_parser::common::CommonInsertSource::Values(rows) => {
+            common_sql::CommonInsertSource::Values(rows) => {
                 self.write(" VALUES ");
                 for (i, row) in rows.iter().enumerate() {
                     if i > 0 {
@@ -196,11 +196,11 @@ impl MySqlEmitter {
                     self.write(")");
                 }
             }
-            tsql_parser::common::CommonInsertSource::Select(select) => {
+            common_sql::CommonInsertSource::Select(select) => {
                 self.writeln();
                 self.visit_select_statement(select)?;
             }
-            tsql_parser::common::CommonInsertSource::DefaultValues => {
+            common_sql::CommonInsertSource::DefaultValues => {
                 self.write(" DEFAULT VALUES");
             }
         }
@@ -211,7 +211,7 @@ impl MySqlEmitter {
     /// UPDATE文を訪問
     fn visit_update_statement(
         &mut self,
-        stmt: &tsql_parser::common::CommonUpdateStatement,
+        stmt: &common_sql::CommonUpdateStatement,
     ) -> Result<(), EmitError> {
         self.write("UPDATE `");
         self.write(&stmt.table);
@@ -238,7 +238,7 @@ impl MySqlEmitter {
     /// DELETE文を訪問
     fn visit_delete_statement(
         &mut self,
-        stmt: &tsql_parser::common::CommonDeleteStatement,
+        stmt: &common_sql::CommonDeleteStatement,
     ) -> Result<(), EmitError> {
         self.write("DELETE FROM `");
         self.write(&stmt.table);
@@ -359,7 +359,7 @@ impl MySqlEmitter {
     /// SELECT文を訪問
     fn visit_select_statement(
         &mut self,
-        stmt: &tsql_parser::common::CommonSelectStatement,
+        stmt: &common_sql::CommonSelectStatement,
     ) -> Result<(), EmitError> {
         self.write("SELECT ");
         if stmt.distinct {
@@ -435,18 +435,15 @@ impl MySqlEmitter {
     }
 
     /// SELECTアイテムを訪問
-    fn visit_select_item(
-        &mut self,
-        item: &tsql_parser::common::CommonSelectItem,
-    ) -> Result<(), EmitError> {
+    fn visit_select_item(&mut self, item: &common_sql::CommonSelectItem) -> Result<(), EmitError> {
         match item {
-            tsql_parser::common::CommonSelectItem::Wildcard => {
+            common_sql::CommonSelectItem::Wildcard => {
                 self.write("*");
             }
-            tsql_parser::common::CommonSelectItem::QualifiedWildcard(table) => {
+            common_sql::CommonSelectItem::QualifiedWildcard(table) => {
                 self.write(&format!("`{table}`.*"));
             }
-            tsql_parser::common::CommonSelectItem::Expression(expr, alias) => {
+            common_sql::CommonSelectItem::Expression(expr, alias) => {
                 self.visit_expression(expr)?;
                 if let Some(a) = alias {
                     self.write(&format!(" AS `{a}`"));
@@ -459,16 +456,16 @@ impl MySqlEmitter {
     /// テーブル参照を訪問
     fn visit_table_reference(
         &mut self,
-        table: &tsql_parser::common::CommonTableReference,
+        table: &common_sql::CommonTableReference,
     ) -> Result<(), EmitError> {
         match table {
-            tsql_parser::common::CommonTableReference::Table { name, alias, .. } => {
+            common_sql::CommonTableReference::Table { name, alias, .. } => {
                 self.write(&format!("`{name}`"));
                 if let Some(a) = alias {
                     self.write(&format!(" AS `{a}`"));
                 }
             }
-            tsql_parser::common::CommonTableReference::Derived {
+            common_sql::CommonTableReference::Derived {
                 subquery, alias, ..
             } => {
                 self.write("(");
@@ -515,7 +512,7 @@ impl MySqlEmitter {
     /// カラム参照を訪問
     fn visit_column_reference(
         &mut self,
-        col: &tsql_parser::common::CommonColumnReference,
+        col: &common_sql::CommonColumnReference,
     ) -> Result<(), EmitError> {
         if let Some(table) = &col.table {
             self.write(&format!("`{}`.`{}`", table, col.column));
@@ -723,7 +720,7 @@ impl Default for MySqlEmitter {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use tsql_parser::common::{
+    use common_sql::{
         CommonBinaryOperator, CommonColumnReference, CommonExpression, CommonIdentifier,
         CommonInList, CommonLiteral, CommonUnaryOperator,
     };

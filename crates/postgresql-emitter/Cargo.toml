@@ -10,11 +10,13 @@ repository = "https://github.com/your-org/tsqlremaker"
 
 [dependencies]
 # Workspace dependencies
-tsql-parser = { path = "../tsql-parser" }
+common-sql = { path = "../common-sql" }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
+tsql-parser = { path = "../tsql-parser" }
+tsql-token = { path = "../tsql-token" }
 
 [lints]
 workspace = true

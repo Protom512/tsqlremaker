@@ -11,7 +11,7 @@
 //!
 //! ```rust,ignore
 //! use sqlite_emitter::{SqliteEmitter, EmitterConfig};
-//! use tsql_parser::common::{CommonStatement, CommonExpression};
+//! use common_sql::{CommonStatement, CommonExpression};
 //!
 //! let config = EmitterConfig::default();
 //! let mut emitter = SqliteEmitter::new(config);
@@ -40,7 +40,7 @@ mod function_mapper;
 pub use config::EmitterConfig;
 pub use error::EmitError;
 
-use tsql_parser::common::{
+use common_sql::{
     CommonBinaryOperator, CommonCaseExpression, CommonColumnReference, CommonExpression,
     CommonFunctionCall, CommonIdentifier, CommonInList, CommonLiteral, CommonStatement,
     CommonUnaryOperator,
@@ -94,7 +94,7 @@ impl SqliteEmitter {
     ///
     /// ```rust
     /// use sqlite_emitter::{SqliteEmitter, EmitterConfig};
-    /// use tsql_parser::common::{CommonStatement, CommonSelectStatement, CommonSelectItem};
+    /// use common_sql::{CommonStatement, CommonSelectStatement, CommonSelectItem};
     /// use tsql_token::Span;
     ///
     /// let config = EmitterConfig::default();
@@ -158,7 +158,7 @@ impl SqliteEmitter {
     /// SELECT文を訪問
     fn visit_select_statement(
         &mut self,
-        stmt: &tsql_parser::common::CommonSelectStatement,
+        stmt: &common_sql::CommonSelectStatement,
     ) -> Result<(), EmitError> {
         self.write("SELECT ");
 
@@ -238,22 +238,19 @@ impl SqliteEmitter {
     }
 
     /// SELECTアイテムを訪問
-    fn visit_select_item(
-        &mut self,
-        item: &tsql_parser::common::CommonSelectItem,
-    ) -> Result<(), EmitError> {
+    fn visit_select_item(&mut self, item: &common_sql::CommonSelectItem) -> Result<(), EmitError> {
         match item {
-            tsql_parser::common::CommonSelectItem::Expression(expr, alias) => {
+            common_sql::CommonSelectItem::Expression(expr, alias) => {
                 self.visit_expression(expr)?;
                 if let Some(alias_name) = alias {
                     self.write(" AS ");
                     self.write_identifier(alias_name);
                 }
             }
-            tsql_parser::common::CommonSelectItem::Wildcard => {
+            common_sql::CommonSelectItem::Wildcard => {
                 self.write("*");
             }
-            tsql_parser::common::CommonSelectItem::QualifiedWildcard(table) => {
+            common_sql::CommonSelectItem::QualifiedWildcard(table) => {
                 self.write_identifier(table);
                 self.write(".*");
             }
@@ -264,17 +261,17 @@ impl SqliteEmitter {
     /// テーブル参照を訪問
     fn visit_table_reference(
         &mut self,
-        table: &tsql_parser::common::CommonTableReference,
+        table: &common_sql::CommonTableReference,
     ) -> Result<(), EmitError> {
         match table {
-            tsql_parser::common::CommonTableReference::Table { name, alias, .. } => {
+            common_sql::CommonTableReference::Table { name, alias, .. } => {
                 self.write_identifier(name);
                 if let Some(alias_name) = alias {
                     self.write(" AS ");
                     self.write_identifier(alias_name);
                 }
             }
-            tsql_parser::common::CommonTableReference::Derived {
+            common_sql::CommonTableReference::Derived {
                 subquery, alias, ..
             } => {
                 self.write("(");
@@ -292,7 +289,7 @@ impl SqliteEmitter {
     /// INSERT文を訪問
     fn visit_insert_statement(
         &mut self,
-        stmt: &tsql_parser::common::CommonInsertStatement,
+        stmt: &common_sql::CommonInsertStatement,
     ) -> Result<(), EmitError> {
         self.write("INSERT INTO ");
         self.write_identifier(&stmt.table);
@@ -311,7 +308,7 @@ impl SqliteEmitter {
 
         // VALUES
         match &stmt.source {
-            tsql_parser::common::CommonInsertSource::Values(rows) => {
+            common_sql::CommonInsertSource::Values(rows) => {
                 self.write(" VALUES ");
                 for (i, row) in rows.iter().enumerate() {
                     if i > 0 {
@@ -327,11 +324,11 @@ impl SqliteEmitter {
                     self.write(")");
                 }
             }
-            tsql_parser::common::CommonInsertSource::Select(select) => {
+            common_sql::CommonInsertSource::Select(select) => {
                 self.writeln();
                 self.visit_select_statement(select)?;
             }
-            tsql_parser::common::CommonInsertSource::DefaultValues => {
+            common_sql::CommonInsertSource::DefaultValues => {
                 self.write(" DEFAULT VALUES");
             }
         }
@@ -342,7 +339,7 @@ impl SqliteEmitter {
     /// UPDATE文を訪問
     fn visit_update_statement(
         &mut self,
-        stmt: &tsql_parser::common::CommonUpdateStatement,
+        stmt: &common_sql::CommonUpdateStatement,
     ) -> Result<(), EmitError> {
         self.write("UPDATE ");
         self.write_identifier(&stmt.table);
@@ -370,7 +367,7 @@ impl SqliteEmitter {
     /// DELETE文を訪問
     fn visit_delete_statement(
         &mut self,
-        stmt: &tsql_parser::common::CommonDeleteStatement,
+        stmt: &common_sql::CommonDeleteStatement,
     ) -> Result<(), EmitError> {
         self.write("DELETE FROM ");
         self.write_identifier(&stmt.table);
@@ -619,7 +616,7 @@ impl SqliteEmitter {
     /// T-SQL: DATEADD(datepart, number, date)
     /// SQLite: date(date_expression, '+N days') または datetime(date_expression, '+N hours')
     fn emit_dateadd(&mut self, func: &CommonFunctionCall) -> Result<(), EmitError> {
-        use tsql_parser::common::{CommonExpression, CommonLiteral};
+        use common_sql::{CommonExpression, CommonLiteral};
 
         if func.args.len() != 3 {
             return Err(EmitError::UnsupportedFunction(format!(
@@ -728,7 +725,7 @@ impl SqliteEmitter {
     /// T-SQL: DATEDIFF(datepart, startdate, enddate)
     /// SQLite: julianday(enddate) - julianday(startdate)  (日数差分)
     fn emit_datediff(&mut self, func: &CommonFunctionCall) -> Result<(), EmitError> {
-        use tsql_parser::common::{CommonExpression, CommonLiteral};
+        use common_sql::{CommonExpression, CommonLiteral};
 
         if func.args.len() != 3 {
             return Err(EmitError::UnsupportedFunction(format!(
@@ -771,7 +768,7 @@ impl SqliteEmitter {
 
     /// 日付式を文字列表現として抽出
     fn extract_date_expression(&self, expr: &CommonExpression) -> Result<String, EmitError> {
-        use tsql_parser::common::{CommonExpression, CommonLiteral};
+        use common_sql::{CommonExpression, CommonLiteral};
 
         match expr {
             CommonExpression::Literal(CommonLiteral::String(s)) => Ok(format!("'{s}'")),
@@ -923,7 +920,7 @@ impl Default for SqliteEmitter {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use tsql_parser::common::{
+    use common_sql::{
         CommonBinaryOperator, CommonColumnReference, CommonExpression, CommonIdentifier,
         CommonInList, CommonLiteral, CommonUnaryOperator,
     };
@@ -1247,7 +1244,7 @@ mod tests {
 
     #[test]
     fn test_dateadd_day() {
-        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+        use common_sql::{CommonExpression, CommonFunctionCall, CommonLiteral};
 
         let mut emitter = SqliteEmitter::default();
 
@@ -1273,7 +1270,7 @@ mod tests {
 
     #[test]
     fn test_dateadd_month() {
-        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+        use common_sql::{CommonExpression, CommonFunctionCall, CommonLiteral};
 
         let mut emitter = SqliteEmitter::default();
 
@@ -1295,7 +1292,7 @@ mod tests {
 
     #[test]
     fn test_dateadd_hour() {
-        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+        use common_sql::{CommonExpression, CommonFunctionCall, CommonLiteral};
 
         let mut emitter = SqliteEmitter::default();
 
@@ -1321,7 +1318,7 @@ mod tests {
 
     #[test]
     fn test_dateadd_quarter() {
-        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+        use common_sql::{CommonExpression, CommonFunctionCall, CommonLiteral};
 
         let mut emitter = SqliteEmitter::default();
 
@@ -1347,7 +1344,7 @@ mod tests {
 
     #[test]
     fn test_dateadd_week() {
-        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+        use common_sql::{CommonExpression, CommonFunctionCall, CommonLiteral};
 
         let mut emitter = SqliteEmitter::default();
 
@@ -1373,7 +1370,7 @@ mod tests {
 
     #[test]
     fn test_datediff_day() {
-        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+        use common_sql::{CommonExpression, CommonFunctionCall, CommonLiteral};
 
         let mut emitter = SqliteEmitter::default();
 
@@ -1398,9 +1395,7 @@ mod tests {
 
     #[test]
     fn test_dateadd_with_identifier_datepart() {
-        use tsql_parser::common::{
-            CommonExpression, CommonFunctionCall, CommonIdentifier, CommonLiteral,
-        };
+        use common_sql::{CommonExpression, CommonFunctionCall, CommonIdentifier, CommonLiteral};
 
         let mut emitter = SqliteEmitter::default();
 
@@ -1426,7 +1421,7 @@ mod tests {
 
     #[test]
     fn test_dateadd_error_invalid_args() {
-        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+        use common_sql::{CommonExpression, CommonFunctionCall, CommonLiteral};
 
         let mut emitter = SqliteEmitter::default();
 
@@ -1450,7 +1445,7 @@ mod tests {
 
     #[test]
     fn test_dateadd_error_unsupported_datepart() {
-        use tsql_parser::common::{CommonExpression, CommonFunctionCall, CommonLiteral};
+        use common_sql::{CommonExpression, CommonFunctionCall, CommonLiteral};
 
         let mut emitter = SqliteEmitter::default();
 

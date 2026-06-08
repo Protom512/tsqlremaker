@@ -2,7 +2,7 @@
 //!
 //! Common SQL AST の式を PostgreSQL SQL に変換します。
 
-use tsql_parser::common::{
+use common_sql::{
     CommonBinaryOperator, CommonCaseExpression, CommonColumnReference, CommonExpression,
     CommonFunctionCall, CommonIdentifier, CommonInList, CommonLiteral, CommonUnaryOperator,
 };
@@ -249,7 +249,7 @@ impl ExpressionEmitter {
     }
 
     /// サブクエリを発行
-    fn emit_subquery(query: &tsql_parser::common::CommonSelectStatement) -> String {
+    fn emit_subquery(query: &common_sql::CommonSelectStatement) -> String {
         // SelectStatementRenderer を使用してサブクエリをレンダリング
         super::SelectStatementRenderer::emit(query)
     }
@@ -258,7 +258,7 @@ impl ExpressionEmitter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsql_parser::common::{CommonIdentifier, CommonLiteral};
+    use common_sql::{CommonIdentifier, CommonLiteral};
 
     #[test]
     fn test_emit_literal_string() {
@@ -395,8 +395,8 @@ mod tests {
 
     #[test]
     fn test_emit_subquery() {
-        use tsql_parser::common::{CommonSelectItem, CommonSelectStatement, CommonTableReference};
-        use tsql_parser::Span;
+        use common_sql::{CommonSelectItem, CommonSelectStatement, CommonTableReference};
+        use tsql_token::Span;
 
         // サブクエリ式
         let subquery = CommonSelectStatement {
@@ -426,8 +426,8 @@ mod tests {
 
     #[test]
     fn test_emit_exists_subquery() {
-        use tsql_parser::common::{CommonSelectItem, CommonSelectStatement, CommonTableReference};
-        use tsql_parser::Span;
+        use common_sql::{CommonSelectItem, CommonSelectStatement, CommonTableReference};
+        use tsql_token::Span;
 
         // EXISTS サブクエリ
         let subquery = CommonSelectStatement {

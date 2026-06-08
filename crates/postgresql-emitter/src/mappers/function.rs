@@ -4,7 +4,7 @@
 
 use crate::mappers::ExpressionEmitter;
 use crate::EmitError;
-use tsql_parser::common::{CommonExpression, CommonIdentifier};
+use common_sql::{CommonExpression, CommonIdentifier};
 
 /// PostgreSQL 関数マッパー
 #[derive(Debug, Clone, Copy)]
@@ -214,7 +214,7 @@ mod tests {
     #![allow(clippy::panic)]
 
     use super::*;
-    use tsql_parser::common::CommonLiteral;
+    use common_sql::CommonLiteral;
 
     #[test]
     fn test_map_getdate() {

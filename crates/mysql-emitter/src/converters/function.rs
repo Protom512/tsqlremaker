@@ -3,7 +3,7 @@
 //! T-SQL の関数を MySQL 関数に変換します。
 
 use crate::{EmitError, MySqlEmitter};
-use tsql_parser::common::{CommonExpression, CommonIdentifier};
+use common_sql::{CommonExpression, CommonIdentifier};
 
 /// 関数コンバーター
 ///

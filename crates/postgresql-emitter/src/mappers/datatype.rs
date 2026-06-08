@@ -3,7 +3,7 @@
 //! Common SQL DataType を PostgreSQL のデータ型文字列に変換します。
 
 use crate::EmitError;
-use tsql_parser::common::CommonDataType;
+use common_sql::CommonDataType;
 
 /// PostgreSQL データ型マッパー
 #[derive(Debug, Clone, Copy)]

@@ -4,7 +4,7 @@
 //!
 //! このモジュールは `PostgreSqlEmitter` と `ExpressionEmitter` から再利用される。
 
-use tsql_parser::common::{
+use common_sql::{
     CommonLimitClause, CommonOrderByItem, CommonSelectItem, CommonSelectStatement,
     CommonTableReference,
 };
@@ -147,11 +147,11 @@ impl SelectStatementRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsql_parser::common::{
+    use common_sql::{
         CommonExpression, CommonIdentifier, CommonLiteral, CommonSelectStatement,
         CommonTableReference,
     };
-    use tsql_parser::Span;
+    use tsql_token::Span;
 
     #[test]
     fn test_emit_simple_select() {

@@ -1,0 +1,14 @@
+[package]
+name = "common-sql"
+version = "0.1.0"
+edition = "2021"
+authors = ["TSQL Remaker Contributors"]
+description = "Dialect-agnostic Common SQL AST types"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Protom512/tsqlremaker"
+
+[dependencies]
+tsql-token = { path = "../tsql-token" }
+
+[lints]
+workspace = true

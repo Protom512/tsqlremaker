@@ -13,7 +13,7 @@
 //!
 //! ```rust
 //! use postgresql_emitter::{ExpressionEmitter, FunctionMapper};
-//! use tsql_parser::common::{CommonExpression, CommonLiteral};
+//! use common_sql::{CommonExpression, CommonLiteral};
 //!
 //! // 式をPostgreSQL SQLに変換
 //! let expr = CommonExpression::Literal(CommonLiteral::Integer(42));
@@ -143,7 +143,7 @@ impl PostgreSqlEmitter {
     ///
     /// ```rust,ignore
     /// use postgresql_emitter::{PostgreSqlEmitter, EmissionConfig};
-    /// use tsql_parser::common::{CommonStatement, CommonSelectStatement, CommonSelectItem};
+    /// use common_sql::{CommonStatement, CommonSelectStatement, CommonSelectItem};
     /// use tsql_token::Span;
     ///
     /// let config = EmissionConfig::default();
@@ -164,10 +164,7 @@ impl PostgreSqlEmitter {
     /// let sql = emitter.emit(&stmt).unwrap();
     /// assert_eq!(sql, "SELECT *");
     /// ```
-    pub fn emit(
-        &mut self,
-        stmt: &tsql_parser::common::CommonStatement,
-    ) -> Result<String, EmitError> {
+    pub fn emit(&mut self, stmt: &common_sql::CommonStatement) -> Result<String, EmitError> {
         self.reset();
         self.visit_statement(stmt)?;
         Ok(std::mem::take(&mut self.buffer))
@@ -184,7 +181,7 @@ impl PostgreSqlEmitter {
     /// PostgreSQL SQL 文字列（セミコロン区切り）、またはエラー
     pub fn emit_batch(
         &mut self,
-        stmts: &[tsql_parser::common::CommonStatement],
+        stmts: &[common_sql::CommonStatement],
     ) -> Result<String, EmitError> {
         self.reset();
         for (i, stmt) in stmts.iter().enumerate() {
@@ -197,24 +194,13 @@ impl PostgreSqlEmitter {
     }
 
     /// ステートメントを訪問
-    fn visit_statement(
-        &mut self,
-        stmt: &tsql_parser::common::CommonStatement,
-    ) -> Result<(), EmitError> {
+    fn visit_statement(&mut self, stmt: &common_sql::CommonStatement) -> Result<(), EmitError> {
         match stmt {
-            tsql_parser::common::CommonStatement::Select(select) => {
-                self.visit_select_statement(select)
-            }
-            tsql_parser::common::CommonStatement::Insert(insert) => {
-                self.visit_insert_statement(insert)
-            }
-            tsql_parser::common::CommonStatement::Update(update) => {
-                self.visit_update_statement(update)
-            }
-            tsql_parser::common::CommonStatement::Delete(delete) => {
-                self.visit_delete_statement(delete)
-            }
-            tsql_parser::common::CommonStatement::DialectSpecific { description, .. } => {
+            common_sql::CommonStatement::Select(select) => self.visit_select_statement(select),
+            common_sql::CommonStatement::Insert(insert) => self.visit_insert_statement(insert),
+            common_sql::CommonStatement::Update(update) => self.visit_update_statement(update),
+            common_sql::CommonStatement::Delete(delete) => self.visit_delete_statement(delete),
+            common_sql::CommonStatement::DialectSpecific { description, .. } => {
                 // T-SQL方言固有構文をPostgreSQL (PL/pgSQL) 変換ヒント付きで出力
                 if self.config.warn_unsupported {
                     self.visit_dialect_specific(description)?;
@@ -227,7 +213,7 @@ impl PostgreSqlEmitter {
     /// SELECT文を訪問
     fn visit_select_statement(
         &mut self,
-        stmt: &tsql_parser::common::CommonSelectStatement,
+        stmt: &common_sql::CommonSelectStatement,
     ) -> Result<(), EmitError> {
         self.write("SELECT ");
 
@@ -307,22 +293,19 @@ impl PostgreSqlEmitter {
     }
 
     /// SELECTアイテムを訪問
-    fn visit_select_item(
-        &mut self,
-        item: &tsql_parser::common::CommonSelectItem,
-    ) -> Result<(), EmitError> {
+    fn visit_select_item(&mut self, item: &common_sql::CommonSelectItem) -> Result<(), EmitError> {
         match item {
-            tsql_parser::common::CommonSelectItem::Expression(expr, alias) => {
+            common_sql::CommonSelectItem::Expression(expr, alias) => {
                 self.visit_expression(expr)?;
                 if let Some(alias_name) = alias {
                     self.write(" AS ");
                     self.write_identifier(alias_name);
                 }
             }
-            tsql_parser::common::CommonSelectItem::Wildcard => {
+            common_sql::CommonSelectItem::Wildcard => {
                 self.write("*");
             }
-            tsql_parser::common::CommonSelectItem::QualifiedWildcard(table) => {
+            common_sql::CommonSelectItem::QualifiedWildcard(table) => {
                 self.write_identifier(table);
                 self.write(".*");
             }
@@ -333,17 +316,17 @@ impl PostgreSqlEmitter {
     /// テーブル参照を訪問
     fn visit_table_reference(
         &mut self,
-        table: &tsql_parser::common::CommonTableReference,
+        table: &common_sql::CommonTableReference,
     ) -> Result<(), EmitError> {
         match table {
-            tsql_parser::common::CommonTableReference::Table { name, alias, .. } => {
+            common_sql::CommonTableReference::Table { name, alias, .. } => {
                 self.write_identifier(name);
                 if let Some(alias_name) = alias {
                     self.write(" AS ");
                     self.write_identifier(alias_name);
                 }
             }
-            tsql_parser::common::CommonTableReference::Derived {
+            common_sql::CommonTableReference::Derived {
                 subquery, alias, ..
             } => {
                 self.write("(");
@@ -361,7 +344,7 @@ impl PostgreSqlEmitter {
     /// INSERT文を訪問
     fn visit_insert_statement(
         &mut self,
-        stmt: &tsql_parser::common::CommonInsertStatement,
+        stmt: &common_sql::CommonInsertStatement,
     ) -> Result<(), EmitError> {
         self.write("INSERT INTO ");
         self.write_identifier(&stmt.table);
@@ -380,7 +363,7 @@ impl PostgreSqlEmitter {
 
         // VALUES
         match &stmt.source {
-            tsql_parser::common::CommonInsertSource::Values(rows) => {
+            common_sql::CommonInsertSource::Values(rows) => {
                 self.write(" VALUES ");
                 for (i, row) in rows.iter().enumerate() {
                     if i > 0 {
@@ -396,11 +379,11 @@ impl PostgreSqlEmitter {
                     self.write(")");
                 }
             }
-            tsql_parser::common::CommonInsertSource::Select(select) => {
+            common_sql::CommonInsertSource::Select(select) => {
                 self.writeln();
                 self.visit_select_statement(select)?;
             }
-            tsql_parser::common::CommonInsertSource::DefaultValues => {
+            common_sql::CommonInsertSource::DefaultValues => {
                 self.write(" DEFAULT VALUES");
             }
         }
@@ -411,7 +394,7 @@ impl PostgreSqlEmitter {
     /// UPDATE文を訪問
     fn visit_update_statement(
         &mut self,
-        stmt: &tsql_parser::common::CommonUpdateStatement,
+        stmt: &common_sql::CommonUpdateStatement,
     ) -> Result<(), EmitError> {
         self.write("UPDATE ");
         self.write_identifier(&stmt.table);
@@ -439,7 +422,7 @@ impl PostgreSqlEmitter {
     /// DELETE文を訪問
     fn visit_delete_statement(
         &mut self,
-        stmt: &tsql_parser::common::CommonDeleteStatement,
+        stmt: &common_sql::CommonDeleteStatement,
     ) -> Result<(), EmitError> {
         self.write("DELETE FROM ");
         self.write_identifier(&stmt.table);
@@ -454,10 +437,7 @@ impl PostgreSqlEmitter {
     }
 
     /// 式を訪問
-    fn visit_expression(
-        &mut self,
-        expr: &tsql_parser::common::CommonExpression,
-    ) -> Result<(), EmitError> {
+    fn visit_expression(&mut self, expr: &common_sql::CommonExpression) -> Result<(), EmitError> {
         self.write(&mappers::ExpressionEmitter::emit(expr));
         Ok(())
     }
@@ -581,8 +561,8 @@ mod tests {
 
     #[test]
     fn test_dialect_specific_declare() {
-        use tsql_parser::Span;
-        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
+        use tsql_token::Span;
+        let stmt = common_sql::CommonStatement::DialectSpecific {
             description:
                 "Declare(DeclareStatement { variables: [VariableDecl { name: \"@count\" }] })"
                     .to_string(),
@@ -605,8 +585,8 @@ mod tests {
 
     #[test]
     fn test_dialect_specific_if() {
-        use tsql_parser::Span;
-        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
+        use tsql_token::Span;
+        let stmt = common_sql::CommonStatement::DialectSpecific {
             description: "If(IfStatement { condition: .. })".to_string(),
             span: Span { start: 0, end: 20 },
         };
@@ -620,8 +600,8 @@ mod tests {
 
     #[test]
     fn test_dialect_specific_while() {
-        use tsql_parser::Span;
-        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
+        use tsql_token::Span;
+        let stmt = common_sql::CommonStatement::DialectSpecific {
             description: "While(WhileStatement { .. })".to_string(),
             span: Span { start: 0, end: 20 },
         };
@@ -635,8 +615,8 @@ mod tests {
 
     #[test]
     fn test_dialect_specific_create() {
-        use tsql_parser::Span;
-        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
+        use tsql_token::Span;
+        let stmt = common_sql::CommonStatement::DialectSpecific {
             description: "CREATE statement: Create(CreateStatement::Table(...))".to_string(),
             span: Span { start: 0, end: 50 },
         };
@@ -650,8 +630,8 @@ mod tests {
 
     #[test]
     fn test_dialect_specific_try_catch() {
-        use tsql_parser::Span;
-        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
+        use tsql_token::Span;
+        let stmt = common_sql::CommonStatement::DialectSpecific {
             description: "TryCatch(TryCatchStatement { .. })".to_string(),
             span: Span { start: 0, end: 30 },
         };
@@ -665,8 +645,8 @@ mod tests {
 
     #[test]
     fn test_dialect_specific_unknown() {
-        use tsql_parser::Span;
-        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
+        use tsql_token::Span;
+        let stmt = common_sql::CommonStatement::DialectSpecific {
             description: "SomeUnknown(construct)".to_string(),
             span: Span { start: 0, end: 10 },
         };

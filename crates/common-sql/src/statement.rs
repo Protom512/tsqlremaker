@@ -2,7 +2,7 @@
 //!
 //! 方言非依存のSQL文（Statement）ノードを定義する。
 
-use crate::common::expression::CommonExpression;
+use crate::expression::CommonExpression;
 use tsql_token::Span;
 
 /// Common SQL 文
