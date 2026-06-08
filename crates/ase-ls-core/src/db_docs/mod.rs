@@ -70,12 +70,14 @@ static OTHER_LOOKUP: LazyLock<HashMap<&'static str, &'static DocEntry>> = LazyLo
 });
 
 /// 名前（大文字）で関数 DocEntry を検索する
+#[must_use]
 pub fn lookup_function(name: &str) -> Option<&'static DocEntry> {
     FUNCTION_LOOKUP.get(name).copied()
 }
 
 /// 名前（大文字）で DocEntry を検索する
 /// キーワードと関数で名前が重複する場合（例: LEFT）、キーワードを優先する
+#[must_use]
 pub fn lookup(name: &str) -> Option<&'static DocEntry> {
     OTHER_LOOKUP
         .get(name)
@@ -84,21 +86,25 @@ pub fn lookup(name: &str) -> Option<&'static DocEntry> {
 }
 
 /// キーワードエントリのスライスを返す
+#[must_use]
 pub fn keywords() -> &'static [DocEntry] {
     KEYWORD_ENTRIES
 }
 
 /// データ型エントリのスライスを返す
+#[must_use]
 pub fn datatypes() -> &'static [DocEntry] {
     DATATYPE_ENTRIES
 }
 
 /// 関数エントリのスライスを返す
+#[must_use]
 pub fn functions() -> &'static [DocEntry] {
     FUNCTION_ENTRIES
 }
 
 /// システム変数エントリのスライスを返す
+#[must_use]
 pub fn system_variables() -> &'static [DocEntry] {
     SYSTEM_VARIABLE_ENTRIES
 }

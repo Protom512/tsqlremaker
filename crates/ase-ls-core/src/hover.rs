@@ -9,26 +9,23 @@ use tsql_parser::ast::{Statement, TableReference};
 use tsql_token::TokenKind;
 
 /// Hover情報を生成する（DocumentAnalysis利用）
+#[must_use]
 pub fn hover_with_analysis(analysis: &DocumentAnalysis, position: Position) -> Option<Hover> {
-    let offset = analysis
-        .line_index
-        .position_to_offset(&analysis.source, position);
-
-    let (token, _idx) = match analysis.find_token_at(offset) {
+    let (token, _idx) = match analysis.find_token_at_position(position) {
         Some(t) => t,
         None => {
-            tracing::debug!("hover: no token found at offset {offset}");
+            tracing::debug!("hover: no token found at position {:?}", position);
             return None;
         }
     };
     let kind = token.kind;
-    let text = token.text.clone();
+    let text: &str = &token.text;
     let start = token.span.start as usize;
     let end = token.span.end as usize;
 
-    let content = build_schema_hover(&analysis.symbol_table, &kind, &text)
-        .or_else(|| build_column_hover(analysis, offset, &text))
-        .or_else(|| build_hover_content(&kind, &text));
+    let content = build_schema_hover(&analysis.symbol_table, &kind, text)
+        .or_else(|| build_column_hover(analysis, start, text))
+        .or_else(|| build_hover_content(&kind, text));
     let content = match content {
         Some(c) => c,
         None => {
@@ -57,11 +54,9 @@ fn build_column_hover(
     offset: usize,
     ident_text: &str,
 ) -> Option<String> {
-    let upper_ident = ident_text.to_uppercase();
-
     for stmt in &analysis.statements {
         if let Some(result) =
-            resolve_column_in_statement(stmt, &analysis.symbol_table, offset, &upper_ident)
+            resolve_column_in_statement(stmt, &analysis.symbol_table, offset, ident_text)
         {
             return Some(result);
         }
@@ -85,7 +80,7 @@ fn format_column_hover(col: &crate::symbol_table::ColumnSymbol, table_name: &str
 
 /// Check whether `offset` falls within `[span_start, span_end]`.
 /// When `span_end <= span_start` (broken span), uses a fallback window.
-fn in_span(offset: usize, span_start: usize, span_end: u32) -> bool {
+const fn in_span(offset: usize, span_start: usize, span_end: u32) -> bool {
     let span_end = if span_end as usize > span_start {
         span_end as usize
     } else {
@@ -95,12 +90,15 @@ fn in_span(offset: usize, span_start: usize, span_end: u32) -> bool {
 }
 
 /// Collect table names from a list of TableReference, including JOINed tables.
-fn collect_table_names(tables: &[TableReference]) -> Vec<String> {
+///
+/// Returns borrowed `&str` references to avoid allocation — the caller passes
+/// them to `SymbolTableBuilder::find_table` which handles case-insensitivity.
+fn collect_table_names(tables: &[TableReference]) -> Vec<&str> {
     let mut names = Vec::new();
     for tr in tables {
         match tr {
             TableReference::Table { name, .. } => {
-                names.push(name.name.to_uppercase());
+                names.push(name.name.as_str());
             }
             TableReference::Joined { joins, .. } => {
                 for join in joins {
@@ -118,7 +116,7 @@ fn resolve_column_in_statement(
     stmt: &Statement,
     symbol_table: &crate::symbol_table::SymbolTable,
     offset: usize,
-    upper_ident: &str,
+    ident_text: &str,
 ) -> Option<String> {
     match stmt {
         Statement::Select(sel) => {
@@ -136,7 +134,7 @@ fn resolve_column_in_statement(
                     crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, table_name)
                 {
                     for col in &tbl.columns {
-                        if col.name.eq_ignore_ascii_case(upper_ident) {
+                        if col.name.eq_ignore_ascii_case(ident_text) {
                             return Some(format_column_hover(col, &tbl.name));
                         }
                     }
@@ -150,12 +148,12 @@ fn resolve_column_in_statement(
             }
 
             // Check inserted columns
-            let table_name = insert.table.name.to_uppercase();
-            if let Some(tbl) =
-                crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, &table_name)
-            {
+            if let Some(tbl) = crate::symbol_table::SymbolTableBuilder::find_table(
+                symbol_table,
+                &insert.table.name,
+            ) {
                 for col in &tbl.columns {
-                    if col.name.eq_ignore_ascii_case(upper_ident) {
+                    if col.name.eq_ignore_ascii_case(ident_text) {
                         return Some(format_column_hover(col, &tbl.name));
                     }
                 }
@@ -168,11 +166,11 @@ fn resolve_column_in_statement(
             }
 
             let table_name = match &update.table {
-                TableReference::Table { name, .. } => name.name.to_uppercase(),
+                TableReference::Table { name, .. } => name.name.as_str(),
                 _ => return None,
             };
             // Collect tables from both the UPDATE target and FROM clause
-            let mut all_tables = vec![table_name.clone()];
+            let mut all_tables: Vec<&str> = vec![table_name];
             if let Some(from_clause) = &update.from_clause {
                 all_tables.extend(collect_table_names(&from_clause.tables));
             }
@@ -181,7 +179,7 @@ fn resolve_column_in_statement(
                     crate::symbol_table::SymbolTableBuilder::find_table(symbol_table, tbl_name)
                 {
                     for col in &tbl.columns {
-                        if col.name.eq_ignore_ascii_case(upper_ident) {
+                        if col.name.eq_ignore_ascii_case(ident_text) {
                             return Some(format_column_hover(col, &tbl.name));
                         }
                     }
@@ -189,37 +187,36 @@ fn resolve_column_in_statement(
             }
             None
         }
-        Statement::Block(block) => block.statements.iter().find_map(|child| {
-            resolve_column_in_statement(child, symbol_table, offset, upper_ident)
-        }),
+        Statement::Block(block) => block
+            .statements
+            .iter()
+            .find_map(|child| resolve_column_in_statement(child, symbol_table, offset, ident_text)),
         Statement::If(if_stmt) => {
-            resolve_column_in_statement(&if_stmt.then_branch, symbol_table, offset, upper_ident)
+            resolve_column_in_statement(&if_stmt.then_branch, symbol_table, offset, ident_text)
                 .or_else(|| {
                     if_stmt.else_branch.as_ref().and_then(|else_b| {
-                        resolve_column_in_statement(else_b, symbol_table, offset, upper_ident)
+                        resolve_column_in_statement(else_b, symbol_table, offset, ident_text)
                     })
                 })
         }
         Statement::While(while_stmt) => {
-            resolve_column_in_statement(&while_stmt.body, symbol_table, offset, upper_ident)
+            resolve_column_in_statement(&while_stmt.body, symbol_table, offset, ident_text)
         }
         Statement::TryCatch(tc) => tc
             .try_block
             .statements
             .iter()
             .chain(tc.catch_block.statements.iter())
-            .find_map(|child| {
-                resolve_column_in_statement(child, symbol_table, offset, upper_ident)
-            }),
+            .find_map(|child| resolve_column_in_statement(child, symbol_table, offset, ident_text)),
         Statement::Create(create) => match &**create {
             tsql_parser::ast::CreateStatement::Procedure(proc) => {
                 proc.body.iter().find_map(|child| {
-                    resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+                    resolve_column_in_statement(child, symbol_table, offset, ident_text)
                 })
             }
             tsql_parser::ast::CreateStatement::Trigger(trigger) => {
                 trigger.body.iter().find_map(|child| {
-                    resolve_column_in_statement(child, symbol_table, offset, upper_ident)
+                    resolve_column_in_statement(child, symbol_table, offset, ident_text)
                 })
             }
             _ => None,
@@ -234,14 +231,12 @@ fn build_schema_hover(
     kind: &TokenKind,
     text: &str,
 ) -> Option<String> {
-    let upper = text.to_uppercase();
+    use crate::symbol_table::SymbolTableBuilder;
 
     match kind {
         TokenKind::LocalVar => {
             // 変数の型情報を表示
-            if let Some(var) =
-                crate::symbol_table::SymbolTableBuilder::find_variable(symbol_table, text)
-            {
+            if let Some(var) = SymbolTableBuilder::find_variable(symbol_table, text) {
                 return Some(format!(
                     "```tsql\n{}: {}\n```\n\n**Variable** — Declared with `DECLARE {} {}`",
                     text, var.data_type, var.name, var.data_type
@@ -250,7 +245,7 @@ fn build_schema_hover(
             // プロシージャボディ内変数
             for proc in symbol_table.procedures.values() {
                 for body_var in &proc.body_variables {
-                    if body_var.name.eq_ignore_ascii_case(&upper) {
+                    if body_var.name.eq_ignore_ascii_case(text) {
                         return Some(format!(
                             "```tsql\n{}: {}\n```\n\n**Variable** in `{}` — `DECLARE {} {}`",
                             text, body_var.data_type, proc.name, body_var.name, body_var.data_type
@@ -258,7 +253,7 @@ fn build_schema_hover(
                     }
                 }
                 for param in &proc.parameters {
-                    if param.name.eq_ignore_ascii_case(&upper) {
+                    if param.name.eq_ignore_ascii_case(text) {
                         let output_marker = if param.is_output { " OUTPUT" } else { "" };
                         return Some(format!(
                             "```tsql\n{}: {}{}\n```\n\n**Parameter** of `{}`",
@@ -271,7 +266,7 @@ fn build_schema_hover(
         }
         TokenKind::Ident => {
             // テーブルのカラム情報を表示
-            if let Some(table) = symbol_table.tables.get(&upper) {
+            if let Some(table) = SymbolTableBuilder::find_table(symbol_table, text) {
                 let mut cols = String::new();
                 for col in &table.columns {
                     let nullable = match col.nullable {
@@ -294,7 +289,7 @@ fn build_schema_hover(
                 ));
             }
             // プロシージャ情報を表示
-            if let Some(proc) = symbol_table.procedures.get(&upper) {
+            if let Some(proc) = SymbolTableBuilder::find_procedure(symbol_table, text) {
                 let mut params = String::new();
                 for p in &proc.parameters {
                     let output = if p.is_output { " OUTPUT" } else { "" };
@@ -309,11 +304,11 @@ fn build_schema_hover(
                 ));
             }
             // ビュー情報を表示
-            if let Some(_view) = symbol_table.views.get(&upper) {
-                return Some(format!("**`{}`** — View", text));
+            if let Some(_view) = SymbolTableBuilder::find_view(symbol_table, text) {
+                return Some(format!("**`{text}`** — View"));
             }
             // インデックス情報を表示
-            if let Some(idx) = symbol_table.indexes.get(&upper) {
+            if let Some(idx) = SymbolTableBuilder::find_index(symbol_table, text) {
                 let unique = if idx.is_unique { "UNIQUE " } else { "" };
                 let cols = idx.columns.join(", ");
                 return Some(format!(
@@ -328,7 +323,7 @@ fn build_schema_hover(
                 ));
             }
             // トリガー情報を表示
-            if let Some(trigger) = symbol_table.triggers.get(&upper) {
+            if let Some(trigger) = SymbolTableBuilder::find_trigger(symbol_table, text) {
                 let events = trigger.events.join(", ");
                 return Some(format!(
                     "```tsql\nCREATE TRIGGER {} ON {} FOR {}\n```\n\n**Trigger** — on `{}`",
@@ -345,17 +340,19 @@ fn build_schema_hover(
 ///
 /// [`crate::db_docs`] からエントリを検索し、マークダウン形式で返す。
 fn build_hover_content(kind: &TokenKind, text: &str) -> Option<String> {
-    let upper = text.to_uppercase();
-
     match kind {
         TokenKind::LocalVar => Some(format!(
             "```tsql\n{text}: VARIABLE\n```\n\nLocal variable — Declare with `DECLARE {text} TYPE`"
         )),
         _ => {
-            if let Some(entry) = crate::db_docs::lookup(upper.as_str()) {
+            // Fast path: lookup with uppercase conversion. Use entry.name
+            // (already uppercase &'static str) for display to avoid keeping
+            // the allocation when an entry is found.
+            let upper = text.to_uppercase();
+            if let Some(entry) = crate::db_docs::lookup(&upper) {
                 Some(format!(
                     "```tsql\n{}\n```\n\n**`{}`** — {}",
-                    entry.syntax, upper, entry.description
+                    entry.syntax, entry.name, entry.description
                 ))
             } else if kind.is_keyword() {
                 Some(format!("**`{upper}`** — T-SQL Keyword"))

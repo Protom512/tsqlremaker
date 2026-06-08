@@ -27,27 +27,27 @@ impl ToCommonAst for Statement {
             | Statement::Transaction(_)
             | Statement::Throw(_)
             | Statement::Raiserror(_) => Some(CommonStatement::DialectSpecific {
-                description: format!("{:?}", self),
+                description: format!("{self:?}"),
                 span: self.span(),
             }),
             // CREATE文も方言固有として扱う（DDLは実装で差が大きいため）
             Statement::Create(_) => Some(CommonStatement::DialectSpecific {
-                description: format!("CREATE statement: {:?}", self),
+                description: format!("CREATE statement: {self:?}"),
                 span: self.span(),
             }),
             // ALTER TABLE文も方言固有
             Statement::AlterTable(_) => Some(CommonStatement::DialectSpecific {
-                description: format!("ALTER TABLE statement: {:?}", self),
+                description: format!("ALTER TABLE statement: {self:?}"),
                 span: self.span(),
             }),
             // EXEC/EXECUTE文も方言固有
             Statement::Exec(_) => Some(CommonStatement::DialectSpecific {
-                description: format!("EXEC statement: {:?}", self),
+                description: format!("EXEC statement: {self:?}"),
                 span: self.span(),
             }),
             // 変数代入文も方言固有
             Statement::VariableAssignment(_) => Some(CommonStatement::DialectSpecific {
-                description: format!("Variable assignment: {:?}", self),
+                description: format!("Variable assignment: {self:?}"),
                 span: self.span(),
             }),
             // バッチ区切りはCommon ASTには含めない

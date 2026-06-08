@@ -56,7 +56,7 @@ pub enum ParseError {
 impl ParseError {
     /// 予期しないトークンエラーを作成
     #[must_use]
-    pub fn unexpected_token(
+    pub const fn unexpected_token(
         expected: Vec<TokenKind>,
         found: TokenKind,
         position: Position,
@@ -70,19 +70,19 @@ impl ParseError {
 
     /// 予期しないEOFエラーを作成
     #[must_use]
-    pub fn unexpected_eof(expected: String, position: Position) -> Self {
+    pub const fn unexpected_eof(expected: String, position: Position) -> Self {
         Self::UnexpectedEof { expected, position }
     }
 
     /// 無効な構文エラーを作成
     #[must_use]
-    pub fn invalid_syntax(message: String, position: Position) -> Self {
+    pub const fn invalid_syntax(message: String, position: Position) -> Self {
         Self::InvalidSyntax { message, position }
     }
 
     /// 再帰制限超過エラーを作成
     #[must_use]
-    pub fn recursion_limit(limit: usize, position: Position) -> Self {
+    pub const fn recursion_limit(limit: usize, position: Position) -> Self {
         Self::RecursionLimitExceeded { limit, position }
     }
 
@@ -131,9 +131,9 @@ impl fmt::Display for ParseError {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{:?}", kind)?;
+                    write!(f, "{kind:?}")?;
                 }
-                write!(f, ", found {:?}", found)
+                write!(f, ", found {found:?}")
             }
             Self::UnexpectedEof { expected, position } => write!(
                 f,
@@ -155,7 +155,7 @@ impl fmt::Display for ParseError {
             Self::BatchError {
                 batch_number,
                 error,
-            } => write!(f, "error in batch {}: {}", batch_number, error),
+            } => write!(f, "error in batch {batch_number}: {error}"),
         }
     }
 }
@@ -177,19 +177,19 @@ pub struct ParseErrors {
 impl ParseErrors {
     /// 新しいParseErrorsを作成
     #[must_use]
-    pub fn new(errors: Vec<ParseError>) -> Self {
+    pub const fn new(errors: Vec<ParseError>) -> Self {
         Self { errors }
     }
 
     /// エラーが空かどうかを確認
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.errors.is_empty()
     }
 
     /// エラーの数を返す
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.errors.len()
     }
 

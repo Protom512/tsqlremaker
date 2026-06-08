@@ -34,8 +34,10 @@ fn scan_for_call_frame<'a>(
 ) -> Option<CallFrame> {
     let mut stack: Vec<CallFrame> = Vec::new();
     let mut paren_depth = 0i32;
-    // LParen の前に Ident/Keyword があった場合、その名前を保留する
-    let mut pending_name: Option<String> = None;
+    // LParen の前に Ident/Keyword があった場合、その名前を借用で保留する。
+    // .to_uppercase() は CallFrame プッシュ時のみ実行し、
+    // 関数呼び出しに続かないトークンでの不要なアロケーションを回避する。
+    let mut pending_name: Option<&'a str> = None;
 
     for (kind, text, span_start) in tokens {
         if span_start > offset {
@@ -43,21 +45,19 @@ fn scan_for_call_frame<'a>(
         }
 
         match kind {
-            TokenKind::Ident => {
-                pending_name = Some(text.to_uppercase());
+            TokenKind::Ident | TokenKind::LocalVar => {
+                pending_name = Some(text);
             }
             TokenKind::LParen => {
                 paren_depth += 1;
                 if let Some(name) = pending_name.take() {
                     stack.push(CallFrame {
-                        func_name: name,
+                        func_name: name.to_uppercase(),
                         active_param: 0,
                         open_depth: paren_depth,
                     });
-                } else {
-                    // 関数名なしの '(' — 純粋なグループ化
-                    pending_name = None;
                 }
+                // 関数名なしの '(' — 純粋なグループ化
             }
             TokenKind::RParen => {
                 paren_depth -= 1;
@@ -86,7 +86,7 @@ fn scan_for_call_frame<'a>(
             _ => {
                 // キーワードトークンも関数名候補として扱う
                 if kind.is_keyword() {
-                    pending_name = Some(text.to_uppercase());
+                    pending_name = Some(text);
                 }
             }
         }
@@ -101,6 +101,7 @@ fn scan_for_call_frame<'a>(
 }
 
 /// SignatureHelp情報を生成する（DocumentAnalysis利用）
+#[must_use]
 pub fn signature_help_with_analysis(
     analysis: &DocumentAnalysis,
     position: Position,
@@ -113,7 +114,7 @@ pub fn signature_help_with_analysis(
         analysis
             .tokens
             .iter()
-            .map(|t| (t.kind, t.text.as_str(), t.span.start as usize)),
+            .map(|t| (t.kind, &*t.text, t.span.start as usize)),
         offset,
     )?;
 
@@ -286,6 +287,69 @@ mod tests {
             result.is_some(),
             "SUBSTRING should have signature help at 3rd param"
         );
+        let sig = result.unwrap();
+        assert_eq!(sig.signatures[0].active_parameter, Some(2));
+    }
+
+    #[test]
+    fn test_signature_help_empty_source() {
+        let analysis = crate::analysis::DocumentAnalysis::new("");
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 0,
+            },
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_signature_help_cursor_after_closing_paren() {
+        let source = "SELECT SUBSTRING(col, 1, 3) FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // Cursor after the closing paren
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 30,
+            },
+        );
+        assert!(
+            result.is_none(),
+            "Should not show signature help outside function call"
+        );
+    }
+
+    #[test]
+    fn test_signature_help_nested_parens_not_function() {
+        let source = "SELECT (1 + 2) FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 10,
+            },
+        );
+        // Pure grouping parens without a function name → no help
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_signature_help_multiline_function() {
+        let source = "SELECT SUBSTRING(\n  col,\n  1,\n  3\n) FROM t";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // Cursor on 3rd param (line 3, char 2)
+        let result = signature_help_with_analysis(
+            &analysis,
+            Position {
+                line: 3,
+                character: 2,
+            },
+        );
+        assert!(result.is_some());
         let sig = result.unwrap();
         assert_eq!(sig.signatures[0].active_parameter, Some(2));
     }

@@ -99,7 +99,7 @@ impl<'src> Cursor<'src> {
 
     /// EOF かどうかを判定する
     #[must_use]
-    pub fn is_eof(&self) -> bool {
+    pub const fn is_eof(&self) -> bool {
         self.current.is_none()
     }
 
@@ -117,7 +117,7 @@ impl<'src> Cursor<'src> {
     /// # Arguments
     ///
     /// * `width` - タブ幅（デフォルトは8）
-    pub fn set_tab_width(&mut self, width: u32) {
+    pub const fn set_tab_width(&mut self, width: u32) {
         self.tab_width = width;
     }
 }

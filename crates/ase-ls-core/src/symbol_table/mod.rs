@@ -6,7 +6,7 @@
 //! - ビュー定義（CREATE VIEW）とインデックス定義（CREATE INDEX）を抽出
 //! - 変数宣言（DECLARE）から変数情報を抽出
 
-use lsp_types::{Position, Range};
+use lsp_types::Range;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use tsql_parser::ast::{CreateStatement, DataType, DeclareStatement, Statement};
@@ -66,6 +66,31 @@ pub struct SymbolTable {
     pub triggers: HashMap<CaseInsensitiveKey, TriggerSymbol>,
     /// 変数定義 (case-insensitive key → VariableSymbol)
     pub variables: HashMap<CaseInsensitiveKey, VariableSymbol>,
+}
+
+impl SymbolTable {
+    /// Resolve the semantic token type for an identifier name.
+    ///
+    /// Returns `Some(9)` (CLASS) for tables, views, and indexes,
+    /// `Some(2)` (FUNCTION) for procedures,
+    /// or `None` if the name is not a known object.
+    ///
+    /// Uses a single `CaseInsensitiveKey` allocation to check all maps.
+    #[must_use]
+    #[inline]
+    pub fn resolve_semantic_type(&self, name: &str) -> Option<u32> {
+        let key = CaseInsensitiveKey::new(name);
+        if self.tables.contains_key(&key)
+            || self.views.contains_key(&key)
+            || self.indexes.contains_key(&key)
+        {
+            return Some(9); // CLASS
+        }
+        if self.procedures.contains_key(&key) {
+            return Some(2); // FUNCTION
+        }
+        None
+    }
 }
 
 /// Table symbol extracted from `CREATE TABLE`.
@@ -212,6 +237,7 @@ pub struct SymbolTableBuilder;
 
 impl SymbolTableBuilder {
     /// ソースコードからシンボルテーブルを構築する
+    #[must_use]
     pub fn build(source: &str) -> SymbolTable {
         let mut table = SymbolTable::default();
         let line_index = LineIndex::new(source);
@@ -229,6 +255,7 @@ impl SymbolTableBuilder {
     }
 
     /// ソースコードからシンボルテーブルを構築（エラー許容）
+    #[must_use]
     pub fn build_tolerant(source: &str) -> SymbolTable {
         let mut table = SymbolTable::default();
         let line_index = LineIndex::new(source);
@@ -505,6 +532,7 @@ impl SymbolTableBuilder {
 
     /// テーブル名でテーブルを検索 (case-insensitive)
     #[must_use]
+    #[inline]
     pub fn find_table<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a TableSymbol> {
         let key = CaseInsensitiveKey::new(name);
         table.tables.get::<str>(key.borrow())
@@ -512,54 +540,46 @@ impl SymbolTableBuilder {
 
     /// プロシージャ名でプロシージャを検索 (case-insensitive)
     #[must_use]
+    #[inline]
     pub fn find_procedure<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a ProcedureSymbol> {
         let key = CaseInsensitiveKey::new(name);
         table.procedures.get::<str>(key.borrow())
     }
 
+    /// ビュー名でビューを検索 (case-insensitive)
+    #[must_use]
+    #[inline]
+    pub fn find_view<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a ViewSymbol> {
+        let key = CaseInsensitiveKey::new(name);
+        table.views.get::<str>(key.borrow())
+    }
+
+    /// インデックス名でインデックスを検索 (case-insensitive)
+    #[must_use]
+    #[inline]
+    pub fn find_index<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a IndexSymbol> {
+        let key = CaseInsensitiveKey::new(name);
+        table.indexes.get::<str>(key.borrow())
+    }
+
+    /// トリガー名でトリガーを検索 (case-insensitive)
+    #[must_use]
+    #[inline]
+    pub fn find_trigger<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a TriggerSymbol> {
+        let key = CaseInsensitiveKey::new(name);
+        table.triggers.get::<str>(key.borrow())
+    }
+
     /// 変数名で変数を検索 (case-insensitive, @prefix auto-added)
     #[must_use]
+    #[inline]
     pub fn find_variable<'a>(table: &'a SymbolTable, name: &str) -> Option<&'a VariableSymbol> {
         let search_name = if name.starts_with('@') {
             CaseInsensitiveKey::new(name)
         } else {
-            CaseInsensitiveKey::new(&format!("@{}", name))
+            CaseInsensitiveKey::new(&format!("@{name}"))
         };
         table.variables.get::<str>(search_name.borrow())
-    }
-
-    /// カーソル位置の識別子を特定
-    pub fn find_identifier_at(
-        source: &str,
-        position: Position,
-    ) -> Option<(String, lsp_types::Range)> {
-        let line_index = LineIndex::new(source);
-        let offset = line_index.position_to_offset(source, position);
-
-        for token_result in tsql_lexer::Lexer::new(source) {
-            let token = match token_result {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            let start = token.span.start as usize;
-            let end = token.span.end as usize;
-            if offset >= start && offset < end {
-                if matches!(
-                    token.kind,
-                    tsql_token::TokenKind::Ident | tsql_token::TokenKind::LocalVar
-                ) {
-                    return Some((
-                        token.text.to_string(),
-                        span_to_range(&line_index, token.span),
-                    ));
-                }
-                return None;
-            }
-            if start > offset {
-                break;
-            }
-        }
-        None
     }
 }
 
@@ -574,6 +594,7 @@ fn span_to_range(line_index: &LineIndex, span: Span) -> Range {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+    use lsp_types::Position;
 
     #[test]
     fn test_case_insensitive_key_equality() {
@@ -741,21 +762,6 @@ mod tests {
         assert!(table.views.is_empty());
     }
 
-    #[test]
-    fn test_find_identifier_at() {
-        let source = "SELECT * FROM users";
-        let result = SymbolTableBuilder::find_identifier_at(
-            source,
-            Position {
-                line: 0,
-                character: 15,
-            },
-        );
-        assert!(result.is_some());
-        let (name, _range) = result.unwrap();
-        assert_eq!(name, "users");
-    }
-
     // --- Explicit variant coverage tests (#56) ---
 
     #[test]
@@ -901,5 +907,143 @@ mod tests {
             !results.is_empty(),
             "Go to Definition should find trigger definition"
         );
+    }
+
+    // --- find_* helper tests ---
+
+    #[test]
+    fn test_find_view() {
+        let source = "CREATE VIEW active_users AS SELECT * FROM users";
+        let table = SymbolTableBuilder::build(source);
+        assert!(
+            SymbolTableBuilder::find_view(&table, "active_users").is_some(),
+            "Should find view with original case"
+        );
+        assert!(
+            SymbolTableBuilder::find_view(&table, "ACTIVE_USERS").is_some(),
+            "Should find view with uppercase"
+        );
+        assert!(
+            SymbolTableBuilder::find_view(&table, "Active_Users").is_some(),
+            "Should find view with mixed case"
+        );
+        assert!(
+            SymbolTableBuilder::find_view(&table, "nonexistent").is_none(),
+            "Should not find nonexistent view"
+        );
+    }
+
+    #[test]
+    fn test_find_index() {
+        let source = "CREATE INDEX idx_name ON users (id)";
+        let table = SymbolTableBuilder::build(source);
+        assert!(
+            SymbolTableBuilder::find_index(&table, "idx_name").is_some(),
+            "Should find index with original case"
+        );
+        assert!(
+            SymbolTableBuilder::find_index(&table, "IDX_NAME").is_some(),
+            "Should find index with uppercase"
+        );
+        assert!(
+            SymbolTableBuilder::find_index(&table, "nonexistent").is_none(),
+            "Should not find nonexistent index"
+        );
+        let idx = SymbolTableBuilder::find_index(&table, "IDX_NAME").expect("found");
+        assert_eq!(idx.columns, vec!["id"]);
+    }
+
+    #[test]
+    fn test_find_trigger() {
+        let source = "CREATE TRIGGER tr_test ON users FOR INSERT AS BEGIN SELECT 1 END";
+        let table = SymbolTableBuilder::build(source);
+        assert!(
+            SymbolTableBuilder::find_trigger(&table, "tr_test").is_some(),
+            "Should find trigger with original case"
+        );
+        assert!(
+            SymbolTableBuilder::find_trigger(&table, "TR_TEST").is_some(),
+            "Should find trigger with uppercase"
+        );
+        assert!(
+            SymbolTableBuilder::find_trigger(&table, "nonexistent").is_none(),
+            "Should not find nonexistent trigger"
+        );
+        let trigger = SymbolTableBuilder::find_trigger(&table, "TR_TEST").expect("found");
+        assert_eq!(trigger.table_name, "users");
+    }
+
+    #[test]
+    fn test_find_index_unique() {
+        let source = "CREATE UNIQUE INDEX idx_unique_email ON users (email)";
+        let table = SymbolTableBuilder::build_tolerant(source);
+        let idx = SymbolTableBuilder::find_index(&table, "idx_unique_email").expect("found");
+        assert!(idx.is_unique, "Should detect UNIQUE index");
+    }
+
+    // --- resolve_semantic_type tests ---
+
+    #[test]
+    fn test_resolve_semantic_type_table() {
+        let source = "CREATE TABLE users (id INT)";
+        let table = SymbolTableBuilder::build(source);
+        assert_eq!(
+            table.resolve_semantic_type("users"),
+            Some(9),
+            "Table should resolve to CLASS (9)"
+        );
+    }
+
+    #[test]
+    fn test_resolve_semantic_type_procedure() {
+        let source = "CREATE PROCEDURE my_proc AS BEGIN RETURN 1 END";
+        let table = SymbolTableBuilder::build(source);
+        assert_eq!(
+            table.resolve_semantic_type("my_proc"),
+            Some(2),
+            "Procedure should resolve to FUNCTION (2)"
+        );
+    }
+
+    #[test]
+    fn test_resolve_semantic_type_view() {
+        let source = "CREATE VIEW my_view AS SELECT 1";
+        let table = SymbolTableBuilder::build(source);
+        assert_eq!(
+            table.resolve_semantic_type("my_view"),
+            Some(9),
+            "View should resolve to CLASS (9)"
+        );
+    }
+
+    #[test]
+    fn test_resolve_semantic_type_index() {
+        let source = "CREATE INDEX idx_name ON users (id)";
+        let table = SymbolTableBuilder::build(source);
+        assert_eq!(
+            table.resolve_semantic_type("idx_name"),
+            Some(9),
+            "Index should resolve to CLASS (9)"
+        );
+    }
+
+    #[test]
+    fn test_resolve_semantic_type_unknown() {
+        let source = "CREATE TABLE users (id INT)";
+        let table = SymbolTableBuilder::build(source);
+        assert_eq!(
+            table.resolve_semantic_type("nonexistent"),
+            None,
+            "Unknown name should resolve to None"
+        );
+    }
+
+    #[test]
+    fn test_resolve_semantic_type_case_insensitive() {
+        let source = "CREATE TABLE MyTable (id INT)";
+        let table = SymbolTableBuilder::build(source);
+        assert_eq!(table.resolve_semantic_type("mytable"), Some(9));
+        assert_eq!(table.resolve_semantic_type("MYTABLE"), Some(9));
+        assert_eq!(table.resolve_semantic_type("MyTable"), Some(9));
     }
 }

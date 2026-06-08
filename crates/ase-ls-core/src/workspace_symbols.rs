@@ -59,6 +59,7 @@ fn collect_symbols(
 }
 
 /// DocumentAnalysisからクエリにマッチするシンボルを検索する
+#[must_use]
 pub fn workspace_symbols_with_analysis(
     analysis: &DocumentAnalysis,
     query: &str,

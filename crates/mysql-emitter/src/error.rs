@@ -33,16 +33,16 @@ impl fmt::Display for EmitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnsupportedStatement { statement_type } => {
-                write!(f, "Unsupported statement type: {}", statement_type)
+                write!(f, "Unsupported statement type: {statement_type}")
             }
             Self::UnsupportedExpression { expression_type } => {
-                write!(f, "Unsupported expression type: {}", expression_type)
+                write!(f, "Unsupported expression type: {expression_type}")
             }
             Self::UnsupportedDataType { data_type } => {
-                write!(f, "Unsupported data type: {}", data_type)
+                write!(f, "Unsupported data type: {data_type}")
             }
             Self::UnsupportedFunction { function_name } => {
-                write!(f, "Unsupported function: {}", function_name)
+                write!(f, "Unsupported function: {function_name}")
             }
         }
     }

@@ -19,6 +19,7 @@ use tsql_token::TokenKind;
 const TRY_CATCH_LABEL: &str = "Wrap with TRY...CATCH";
 
 /// Code Actionsを生成する（DocumentAnalysis利用）
+#[must_use]
 pub fn code_actions_with_analysis(
     analysis: &DocumentAnalysis,
     range: Range,
@@ -248,10 +249,7 @@ fn try_generate_insert_skeleton_ast(
     let placeholders = vec!["?"; columns.len()];
     let values_list = placeholders.join(", ");
 
-    let new_text = format!(
-        "INSERT INTO {} ({}) VALUES ({})",
-        table_name, col_list, values_list
-    );
+    let new_text = format!("INSERT INTO {table_name} ({col_list}) VALUES ({values_list})");
 
     // Replace the entire INSERT statement span
     let edit = make_text_edit(
@@ -270,6 +268,8 @@ fn try_generate_insert_skeleton_ast(
 
 /// Find a case-insensitive ASCII substring, returning the byte offset.
 /// Returns None if the needle is not found.
+#[must_use]
+#[inline]
 fn find_ignore_ascii_case(haystack: &str, needle: &str) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
@@ -291,6 +291,8 @@ fn find_ignore_ascii_case(haystack: &str, needle: &str) -> Option<usize> {
 }
 
 /// Check if haystack contains needle (case-insensitive ASCII) without allocation.
+#[must_use]
+#[inline]
 fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
     find_ignore_ascii_case(haystack, needle).is_some()
 }
@@ -342,10 +344,7 @@ fn try_generate_insert_skeleton(
     let placeholders = vec!["?"; columns.len()];
     let values_list = placeholders.join(", ");
 
-    let new_text = format!(
-        "INSERT INTO {} ({}) VALUES ({})",
-        table_name, col_list, values_list
-    );
+    let new_text = format!("INSERT INTO {table_name} ({col_list}) VALUES ({values_list})");
 
     let edit = make_text_edit(
         uri,
@@ -634,7 +633,7 @@ fn make_text_edit(uri: &lsp_types::Url, range: Range, new_text: String) -> Works
 }
 
 /// Create a quick-fix CodeAction with standard fields.
-fn make_quickfix(title: String, edit: WorkspaceEdit) -> CodeAction {
+const fn make_quickfix(title: String, edit: WorkspaceEdit) -> CodeAction {
     CodeAction {
         title,
         kind: Some(CodeActionKind::QUICKFIX),
@@ -648,7 +647,7 @@ fn make_quickfix(title: String, edit: WorkspaceEdit) -> CodeAction {
 }
 
 /// Create a refactor CodeAction with standard fields.
-fn make_refactor(title: String, edit: WorkspaceEdit) -> CodeAction {
+const fn make_refactor(title: String, edit: WorkspaceEdit) -> CodeAction {
     CodeAction {
         title,
         kind: Some(CodeActionKind::REFACTOR),
@@ -1269,5 +1268,41 @@ mod tests {
             action.is_some(),
             "TRY...CATCH wrap should be offered for BEGIN block inside CREATE TRIGGER"
         );
+    }
+
+    #[test]
+    fn test_find_ignore_ascii_case_basic() {
+        assert_eq!(
+            find_ignore_ascii_case("insert into t", "INSERT INTO"),
+            Some(0)
+        );
+        assert_eq!(
+            find_ignore_ascii_case("INSERT INTO t", "insert into"),
+            Some(0)
+        );
+        assert_eq!(
+            find_ignore_ascii_case("  insert into t", "INSERT INTO"),
+            Some(2)
+        );
+        assert_eq!(
+            find_ignore_ascii_case("select * from t", "INSERT INTO"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_find_ignore_ascii_case_edge_cases() {
+        assert_eq!(find_ignore_ascii_case("", ""), Some(0));
+        assert_eq!(find_ignore_ascii_case("abc", ""), Some(0));
+        assert_eq!(find_ignore_ascii_case("", "abc"), None);
+        assert_eq!(find_ignore_ascii_case("ab", "abc"), None);
+    }
+
+    #[test]
+    fn test_contains_ignore_ascii_case() {
+        assert!(contains_ignore_ascii_case("insert into t values", "VALUES"));
+        assert!(contains_ignore_ascii_case("insert into t Values", "VALUES"));
+        assert!(contains_ignore_ascii_case("insert into t select", "SELECT"));
+        assert!(!contains_ignore_ascii_case("insert into t", "VALUES"));
     }
 }

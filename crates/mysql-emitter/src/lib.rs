@@ -173,7 +173,7 @@ impl MySqlEmitter {
                 if i > 0 {
                     self.write(", ");
                 }
-                self.write(&format!("`{}`", col));
+                self.write(&format!("`{col}`"));
             }
             self.write(")");
         }
@@ -444,12 +444,12 @@ impl MySqlEmitter {
                 self.write("*");
             }
             tsql_parser::common::CommonSelectItem::QualifiedWildcard(table) => {
-                self.write(&format!("`{}`.*", table));
+                self.write(&format!("`{table}`.*"));
             }
             tsql_parser::common::CommonSelectItem::Expression(expr, alias) => {
                 self.visit_expression(expr)?;
                 if let Some(a) = alias {
-                    self.write(&format!(" AS `{}`", a));
+                    self.write(&format!(" AS `{a}`"));
                 }
             }
         }
@@ -463,9 +463,9 @@ impl MySqlEmitter {
     ) -> Result<(), EmitError> {
         match table {
             tsql_parser::common::CommonTableReference::Table { name, alias, .. } => {
-                self.write(&format!("`{}`", name));
+                self.write(&format!("`{name}`"));
                 if let Some(a) = alias {
-                    self.write(&format!(" AS `{}`", a));
+                    self.write(&format!(" AS `{a}`"));
                 }
             }
             tsql_parser::common::CommonTableReference::Derived {
@@ -475,7 +475,7 @@ impl MySqlEmitter {
                 self.visit_select_statement(subquery)?;
                 self.write(")");
                 if let Some(a) = alias {
-                    self.write(&format!(" AS `{}`", a));
+                    self.write(&format!(" AS `{a}`"));
                 }
             }
         }
@@ -698,7 +698,7 @@ impl MySqlEmitter {
         // ESCAPE句を出力
         if let Some(esc) = escape {
             let escape_str = self.visit_expression(esc)?;
-            self.write(&format!(" ESCAPE {}", escape_str));
+            self.write(&format!(" ESCAPE {escape_str}"));
         }
 
         Ok(())

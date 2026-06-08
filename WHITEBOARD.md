@@ -2,7 +2,7 @@
 
 > **各エージェントへ**: 作業前に必ずこのファイルを読むこと。
 
-**最終更新:** 2026-06-05 / Session 20 (legacy function removal + PR rebase)
+**最終更新:** 2026-06-07 / Session 25 (parser #[must_use], format arg inlining)
 
 ---
 
@@ -10,12 +10,153 @@
 
 | 項目 | 状態 |
 |------|------|
-| **テスト** | 1043 passed, 2 skipped (master) / 1077 passed, 2 skipped (PR #123) |
+| **テスト** | 1089 passed, 2 skipped (branch refactor/session-21-code-quality) |
 | **Clippy** | clean (`-D warnings`) |
 | **Fmt** | clean |
-| **Open Issues** | 11 |
-| **Open PRs** | 1 (#123, rebased onto latest master) |
-| **ブランチ** | master + feat/insert-column-list-v2 (#123) |
+| **Coupling** | Grade D (0.39) — emitter→parser依存は構造的、db_docs→DocEntryは同一crate内 |
+| **Open Issues** | 12 (全てLarge機能、コード品質改善なし) |
+| **Open PRs** | 2 (#123 INSERT column list, #124 code quality) |
+| **ブランチ** | master + feat/insert-column-list-v2 (#123) + refactor/session-21-code-quality (#124) |
+
+## 🔄 Session 24 成果
+
+### コミット（PR #124 ブランチ）
+| コミット | 内容 |
+|---------|------|
+| `cec4854` | refactor(core): eliminate Arc<str> clones, dedup semantic tokens, add find_token_at_position |
+| `5c71e83` | perf(hover): use entry.name instead of allocated upper in build_hover_content |
+| `e6938a6` | fix(parser): return ParseError for invalid BINARY length instead of silent default |
+| `e91b0d2` | refactor(parser): add #[must_use] to public parse functions and with_mode |
+| `13da0c8` | style: inline format args across 17 files (clippy uninlined_format_args) |
+
+### 変更内容
+- **hover/definition/references/rename**: `Arc<str>.clone()` → `&str` 借用に置換（ホットパスでのアトミック参照カウント操作を回避）
+- **semantic_tokens**: `DeltaEncoder` 構造体を抽出し、`semantic_tokens_full_with_analysis` と `semantic_tokens_range_with_analysis` 間の約30行の重複コードを除去
+- **analysis.rs**: `find_token_at_position(position)` ヘルパーを追加。6ファイルのoffset→token検索ボイラープレートを統一
+- **signature_help**: `scan_for_call_frame` の `pending_name` を `Option<String>` → `Option<&str>` に変更し、CallFrameプッシュ時のみ `.to_uppercase()` を実行（非関数トークンでのアロケーション回避）
+- **hover.rs**: `build_hover_content` で `entry.name` を使用し、エントリ発見時の不要な `upper` 変数使用を回避
+- **symbol_table**: `find_*` 6関数 + `resolve_semantic_type` に `#[inline]` 追加。`build/build_tolerant` に `#[must_use]` 追加
+- **completion**: `build_function_snippet`, `is_comma_separated_syntax` に `#[must_use]` 追加
+- **code_actions**: `find_ignore_ascii_case`, `contains_ignore_ascii_case` に `#[must_use]` 追加
+- **formatting**: `should_newline_before`, `needs_space_before`, `should_decrease_indent` に `#[inline]` 追加
+- **symbol_table**: デッドコード `find_identifier_at` とそのテストを削除（Session 19以降未使用）
+- **parser**: `BINARY(abc)` のような無効な長さ指定がサイレントにデフォルト値1になっていた問題を修正。VARCHAR/DECIMALと同様に `InvalidSyntax` エラーを返すよう変更
+- **parser**: `parse`, `parse_one`, `parse_with_errors`, `with_mode` に `#[must_use]` 追加
+- **全17ファイル**: `format!("{}", var)` → `format!("{var}")` にインライン化（clippy uninlined_format_args）
+- **1089 tests passed** (-1 from find_identifier_at test removal)
+
+## 🔄 Session 23 成果
+
+### コミット（PR #124 ブランチ）
+| コミット | 内容 |
+|---------|------|
+| `1c09cf3` | perf(server): wrap DocumentAnalysis in Arc to avoid clone-on-read |
+| `8267468` | refactor: add const fn to 29 pure functions across 4 crates |
+| `7114367` | perf(core): add #[inline] to hot-path LineIndex and DocumentAnalysis accessors |
+| `3c9ec2b` | perf(core): change OwnedToken.text from String to Arc<str> |
+| `2c5005a` | test(core): add 7 edge-case tests for signature_help and semantic_tokens |
+
+### 変更内容
+- **server.rs**: `DocumentStore`が`Arc<DocumentAnalysis>`を格納。`get_analysis()`が`Option<Arc<DocumentAnalysis>>`を返す。Deref coercionで呼び出し元は`&DocumentAnalysis`を透過的に取得
+- **tsql-lexer** (5箇所): `is_eof`, `set_tab_width`, `position`, `with_comments`, `has_errors` → `const fn`
+- **tsql-parser** (15箇所): `Literal::span`, `position_at_eof`, `ParseError::unexpected_token/unexpected_eof/invalid_syntax/recursion_limit`, `ParseErrors::new/is_empty/len`, `get_infix_binding_power`, `span_for_binary`, `can_keyword_be_identifier`, `with_max_depth`, `with_mode`, `has_errors` → `const fn`
+- **ase-ls-core** (9箇所): `make_quickfix`, `make_refactor`, `should_newline_before`, `needs_space_before`, `should_decrease_indent`, `in_span`, `line_count`, `token_kind_to_type_index`, `make_symbol` → `const fn`
+- **line_index.rs** (5箇所): `offset_to_position`, `position_to_offset`, `line_number`, `line_offset`, `offset_to_range` → `#[inline]`
+- **analysis.rs** (2箇所): `find_token_at`, `get_line` → `#[inline]`
+
+### 削減効果
+- `Arc<DocumentAnalysis>`: リクエストごとのclone（~50KB DocumentAnalysis）を`Arc::clone`（8バイトポインタコピー）に削減
+- `const fn` 29箇所: コンパイラの最適化ヒント + 純粋性の型レベル表明
+- `#[inline]` 7箇所: ホットパスの関数呼び出しオーバーヘッドを除去
+- `Arc<str>` for OwnedToken.text: 4ハンドラの`.clone()`がO(n)→O(1)に
+- +7テスト: signature_help (4件: 空ソース/括弧外/グループ化/複数行), semantic_tokens (3件: 変数/データ型/範囲境界)
+
+## ✅ コード品質改善 完了状況
+
+### アロケーション除去
+- ✅ `.to_uppercase()` 11箇所除去（Session 17-22）
+- ✅ `.to_string()` 不要箇所除去（Session 14-15）
+- ✅ `Vec<String>` → `Vec<&str>`（collect_table_names）
+- ✅ `buffer.clone()` → `mem::take`（3 emitter）
+
+### API品質
+- ✅ 全28公開純粋関数に `#[must_use]`（Session 21-22）
+- ✅ 全公開struct field/enum variantにdoc comment（Session 14）
+- ✅ `Debug` derive 追加（DocumentAnalysis, LineIndex）
+- ✅ `find_*` helper 統一（table/procedure/variable/view/index/trigger）
+- ✅ `resolve_semantic_type` メソッド追加
+
+### テストカバレッジ
+- ✅ 1043 → 1083 テスト（+40 over Sessions 7-22）
+- ✅ find_* helper テスト 5件
+- ✅ resolve_semantic_type テスト 6件
+- ✅ definition テスト 4件（view, trigger, case-insensitive, multi-object）
+- ✅ emitter integration テスト追加
+
+### 残る改善は大規模リファクタリングのみ
+- レガシー関数削除（50+テスト移行が必要）→ 別PRで対応
+- 結合度Grade D改善 → アーキテクチャ変更（trait導入等）が必要
+- 残りのOpen Issues → 全てLarge規模の新機能追加
+
+---
+
+## 🔄 Session 22 成果
+
+### コミット（PR #124 ブランチ）
+| コミット | 内容 |
+|---------|------|
+| `e08845e` | refactor(core): add #[must_use] to all remaining pure LSP handler functions |
+| `b7416f4` | test(core): add tests for new find_* helpers and resolve_semantic_type |
+| `b7b8015` | refactor(core): unify symbol lookups, eliminate to_uppercase() in definition/hover/semantic_tokens |
+
+### コミット（PR #123 ブランチ）
+| コミット | 内容 |
+|---------|------|
+| `0cd82a1` | refactor(code_actions): use make_quickfix helper for INSERT column list action |
+
+### 変更内容
+- **symbol_table/mod.rs**: `find_view`, `find_index`, `find_trigger` helpers, `SymbolTable::resolve_semantic_type` method
+- **definition.rs**: Replace direct HashMap::get with case-insensitive find_* helpers, eliminate `.to_uppercase()`, add `#[must_use]`
+- **hover.rs**: `collect_table_names` returns `Vec<&str>` (zero-alloc borrows), use `find_*` + `eq_ignore_ascii_case` throughout, add `#[must_use]`
+- **semantic_tokens.rs**: Delegate to `SymbolTable::resolve_semantic_type` (single allocation), add `#[must_use]`
+- **references.rs, rename.rs, folding.rs, symbols.rs, workspace_symbols.rs, signature_help.rs, code_actions.rs**: `#[must_use]` on all public pure functions
+- **db_docs/mod.rs**: `#[must_use]` on all 6 lookup/accessor functions
+- **code_actions.rs (PR #123)**: Use `make_quickfix` helper for INSERT column list action (CodeRabbit review feedback)
+
+### 削減効果
+- 5箇所の `.to_uppercase()` アロケーションを除去（definition + hover）
+- `collect_table_names` の `Vec<String>` → `Vec<&str>` でテーブル名ごとのアロケーション除去
+- 全28の公開純粋関数に `#[must_use]` 追加完了
+- +14テスト（find_view/index/trigger 5件, resolve_semantic_type 6件, definition 4件, CodeRabbit指摘対応既存）
+
+---
+
+## 🔄 Session 21 成果
+
+### コミット（master直接）
+| コミット | 内容 |
+|---------|------|
+| `f077159` | refactor(core): extract constants, add #[must_use], remove allocations, add tests |
+| `d3ece94` | perf(core): replace to_uppercase() with zero-allocation case-insensitive search |
+| `dbaa091` | perf(references): replace to_uppercase() with zero-alloc ends_with_ignore_ascii_case |
+
+### 変更内容
+- **code_actions.rs**: `TRY_CATCH_LABEL` const, `find_ignore_ascii_case`/`contains_ignore_ascii_case` utilities, removed 2x `get_line().to_string()` allocations
+- **completion.rs**: `KEYWORD_DETAIL` const for repeated "T-SQL Keyword" literal
+- **workspace_symbols.rs**: Use `CaseInsensitiveKey.as_str()` instead of per-symbol `name.to_uppercase().contains()`. Macro-based iteration
+- **symbol_table/mod.rs**: `as_str()` accessor on `CaseInsensitiveKey`
+- **references.rs**: `ends_with_ignore_ascii_case()` replaces `trimmed.to_uppercase()` allocation
+- **line_index.rs**: `#[must_use]` on 5 methods
+- **diagnostics.rs**: `#[must_use]` on `diagnose()`
+- **formatting.rs**: `#[must_use]` on `format()`
+- **semantic_tokens.rs**: `#[must_use]` on 2 functions
+- **folding.rs/hover.rs**: doc comments on private functions
+- **+7 tests**: definition (INDEX, variable in WHILE), rename (case-insensitive table, multi-reference), signature_help (CONVERT, GETDATE, SUBSTRING)
+
+### 削減効果
+- 6箇所の不要な `.to_uppercase()` / `.to_string()` アロケーションを除去
+- 12箇所の `#[must_use]` 追加で意図しない戻り値破棄を防止
+- 1050 tests (+7 from 1043)
 
 ---
 

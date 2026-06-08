@@ -60,7 +60,8 @@ impl<'src> Parser<'src> {
     /// # Arguments
     ///
     /// * `mode` - パーサーモード
-    pub fn with_mode(mut self, mode: ParserMode) -> Self {
+    #[must_use]
+    pub const fn with_mode(mut self, mode: ParserMode) -> Self {
         self.mode = mode;
         self
     }
@@ -153,7 +154,7 @@ impl<'src> Parser<'src> {
     ///
     /// エラーがある場合はtrue
     #[must_use]
-    pub fn has_errors(&self) -> bool {
+    pub const fn has_errors(&self) -> bool {
         !self.errors.is_empty()
     }
 
@@ -1447,7 +1448,7 @@ impl<'src> Parser<'src> {
                         let num_str = token.text;
                         let n = num_str.parse::<u32>().map_err(|_| {
                             ParseError::invalid_syntax(
-                                format!("Invalid number for VARCHAR length: {}", num_str),
+                                format!("Invalid number for VARCHAR length: {num_str}"),
                                 token.position,
                             )
                         })?;
@@ -1479,7 +1480,7 @@ impl<'src> Parser<'src> {
                         let num_str = token.text;
                         let parsed = num_str.parse::<u32>().map_err(|_| {
                             ParseError::invalid_syntax(
-                                format!("Invalid number for CHAR length: {}", num_str),
+                                format!("Invalid number for CHAR length: {num_str}"),
                                 token.position,
                             )
                         })?;
@@ -1510,7 +1511,7 @@ impl<'src> Parser<'src> {
                         let num_str = token.text;
                         let parsed = num_str.parse::<u8>().map_err(|_| {
                             ParseError::invalid_syntax(
-                                format!("Invalid number for DECIMAL precision: {}", num_str),
+                                format!("Invalid number for DECIMAL precision: {num_str}"),
                                 token.position,
                             )
                         })?;
@@ -1526,7 +1527,7 @@ impl<'src> Parser<'src> {
                             let num_str = token.text;
                             let parsed = num_str.parse::<u8>().map_err(|_| {
                                 ParseError::invalid_syntax(
-                                    format!("Invalid number for DECIMAL scale: {}", num_str),
+                                    format!("Invalid number for DECIMAL scale: {num_str}"),
                                     token.position,
                                 )
                             })?;
@@ -1569,7 +1570,14 @@ impl<'src> Parser<'src> {
                 let len = if self.buffer.check(TokenKind::LParen) {
                     self.buffer.consume()?;
                     let n = if self.buffer.check(TokenKind::Number) {
-                        let n = self.buffer.current()?.text.parse().unwrap_or(1);
+                        let token = self.buffer.current()?;
+                        let num_str = token.text;
+                        let n = num_str.parse::<u32>().map_err(|_| {
+                            ParseError::invalid_syntax(
+                                format!("Invalid number for BINARY length: {num_str}"),
+                                token.position,
+                            )
+                        })?;
                         self.buffer.consume()?;
                         n
                     } else {

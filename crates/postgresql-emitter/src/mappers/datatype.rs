@@ -43,7 +43,7 @@ impl DataTypeMapper {
             CommonDataType::DoublePrecision => "DOUBLE PRECISION".to_string(),
             CommonDataType::Float { precision } => {
                 if let Some(p) = precision {
-                    format!("FLOAT({})", p)
+                    format!("FLOAT({p})")
                 } else {
                     "FLOAT".to_string()
                 }
@@ -77,8 +77,8 @@ impl DataTypeMapper {
     /// DECIMAL/NUMERIC 型をフォーマット
     fn format_decimal(precision: Option<u8>, scale: Option<u8>) -> String {
         match (precision, scale) {
-            (Some(p), Some(s)) => format!("NUMERIC({},{})", p, s),
-            (Some(p), None) => format!("NUMERIC({})", p),
+            (Some(p), Some(s)) => format!("NUMERIC({p},{s})"),
+            (Some(p), None) => format!("NUMERIC({p})"),
             (None, _) => "NUMERIC".to_string(),
         }
     }
@@ -86,7 +86,7 @@ impl DataTypeMapper {
     /// CHAR/NCHAR 型をフォーマット
     fn format_char(base: &str, length: Option<u64>) -> String {
         match length {
-            Some(n) => format!("{}({})", base, n),
+            Some(n) => format!("{base}({n})"),
             None => base.to_string(),
         }
     }
@@ -94,7 +94,7 @@ impl DataTypeMapper {
     /// VARCHAR 型をフォーマット
     fn format_varchar(length: Option<u64>) -> String {
         match length {
-            Some(n) => format!("VARCHAR({})", n),
+            Some(n) => format!("VARCHAR({n})"),
             None => "VARCHAR".to_string(),
         }
     }
@@ -102,7 +102,7 @@ impl DataTypeMapper {
     /// TIME/TIMESTAMP 型をフォーマット
     fn format_time(base: &str, precision: Option<u8>) -> String {
         match precision {
-            Some(p) => format!("{}({})", base, p),
+            Some(p) => format!("{base}({p})"),
             None => base.to_string(),
         }
     }
@@ -110,7 +110,7 @@ impl DataTypeMapper {
     /// BINARY 型をフォーマット
     fn format_binary(base: &str, length: Option<u64>) -> String {
         match length {
-            Some(n) => format!("{}({})", base, n),
+            Some(n) => format!("{base}({n})"),
             None => base.to_string(),
         }
     }
@@ -118,7 +118,7 @@ impl DataTypeMapper {
     /// VARBINARY 型をフォーマット
     fn format_varbinary(length: Option<u64>) -> String {
         match length {
-            Some(n) => format!("BYTEA({})", n),
+            Some(n) => format!("BYTEA({n})"),
             None => "BYTEA".to_string(),
         }
     }

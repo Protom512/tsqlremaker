@@ -21,8 +21,8 @@ pub struct AseLanguageServer {
 
 /// メモリ上のドキュメント管理
 struct DocumentStore {
-    /// URI → analysis
-    docs: std::collections::HashMap<String, DocumentAnalysis>,
+    /// URI → analysis (Arc で共有、リクエストごとのcloneを回避)
+    docs: std::collections::HashMap<String, Arc<DocumentAnalysis>>,
 }
 
 impl DocumentStore {
@@ -34,7 +34,7 @@ impl DocumentStore {
 
     /// Insert or replace a document's analysis.
     fn upsert(&mut self, uri: &str, text: &str) {
-        let analysis = DocumentAnalysis::new(text);
+        let analysis = Arc::new(DocumentAnalysis::new(text));
         self.docs.insert(uri.to_string(), analysis);
     }
 
@@ -63,7 +63,7 @@ impl AseLanguageServer {
     }
 
     /// URIに対応するDocumentAnalysisを取得する
-    async fn get_analysis(&self, uri: &Url) -> Option<DocumentAnalysis> {
+    async fn get_analysis(&self, uri: &Url) -> Option<Arc<DocumentAnalysis>> {
         let docs = self.documents.read().await;
         docs.docs.get(uri.as_str()).cloned()
     }

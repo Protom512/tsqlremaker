@@ -39,7 +39,7 @@ impl<'a, 'src> ExpressionParser<'a, 'src> {
     }
 
     /// 最大再帰深度を設定
-    pub fn with_max_depth(mut self, max: usize) -> Self {
+    pub const fn with_max_depth(mut self, max: usize) -> Self {
         self.max_depth = max;
         self
     }

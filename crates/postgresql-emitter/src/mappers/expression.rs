@@ -155,7 +155,7 @@ impl ExpressionEmitter {
         // * はワイルドカードとして特別扱い
         if col.column == "*" {
             return match &col.table {
-                Some(table) => format!("{}.*", table),
+                Some(table) => format!("{table}.*"),
                 None => "*".to_string(),
             };
         }

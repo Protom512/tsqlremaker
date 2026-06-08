@@ -8,6 +8,7 @@ use lsp_types::{DocumentSymbol, DocumentSymbolResponse, SymbolKind};
 use tsql_parser::ast::{Statement, TableReference};
 
 /// DocumentAnalysisから Document Symbols を生成する（キャッシュ利用）
+#[must_use]
 pub fn document_symbols_with_analysis(
     analysis: &DocumentAnalysis,
 ) -> Option<DocumentSymbolResponse> {
@@ -99,7 +100,7 @@ fn table_ref_name(tr: &TableReference) -> String {
 
 /// DocumentSymbol を構築するヘルパー
 #[allow(deprecated)]
-fn make_symbol(name: String, kind: SymbolKind, range: lsp_types::Range) -> DocumentSymbol {
+const fn make_symbol(name: String, kind: SymbolKind, range: lsp_types::Range) -> DocumentSymbol {
     DocumentSymbol {
         name,
         kind,

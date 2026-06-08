@@ -9,6 +9,7 @@ use tsql_parser::ast::Statement;
 use tsql_token::TokenKind;
 
 /// Folding Ranges を DocumentAnalysis から生成する
+#[must_use]
 pub fn folding_ranges_with_analysis(
     analysis: &crate::analysis::DocumentAnalysis,
 ) -> Vec<FoldingRange> {

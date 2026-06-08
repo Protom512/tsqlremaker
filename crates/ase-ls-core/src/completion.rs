@@ -24,6 +24,7 @@ const KEYWORD_DETAIL: &str = "T-SQL Keyword";
 /// - `build_function_snippet("SUBSTRING", &["expression", "start", "length"])`
 ///   → `SUBSTRING(${1:expression}, ${2:start}, ${3:length})`
 /// - `build_function_snippet("GETDATE", &[])` → `GETDATE()`
+#[must_use]
 pub(crate) fn build_function_snippet(name: &str, params: &[&str]) -> String {
     if params.is_empty() {
         return format!("{name}()");
@@ -41,6 +42,7 @@ pub(crate) fn build_function_snippet(name: &str, params: &[&str]) -> String {
 /// カンマ区切りではない関数（`CAST(expr AS type)`等）や
 /// 括弧なしの関数（`IDENTITY`等）はsnippetプレースホルダー生成に
 /// 適さないためfalseを返す。
+#[must_use]
 fn is_comma_separated_syntax(syntax: &str) -> bool {
     if let (Some(open), Some(close)) = (syntax.find('('), syntax.rfind(')')) {
         if open < close {

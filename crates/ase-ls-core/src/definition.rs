@@ -9,41 +9,35 @@
 //! - インデックス参照 → CREATE INDEX定義
 
 use crate::analysis::DocumentAnalysis;
-use crate::symbol_table::SymbolTable;
+use crate::symbol_table::SymbolTableBuilder;
 
 use lsp_types::{Position, Range};
 use tsql_token::TokenKind;
 
 /// カーソル位置のシンボルの定義箇所を検索する（DocumentAnalysis利用）
+#[must_use]
 pub fn definition_ranges_with_analysis(
     analysis: &DocumentAnalysis,
     position: Position,
 ) -> Vec<Range> {
-    let offset = analysis
-        .line_index
-        .position_to_offset(&analysis.source, position);
-
-    let (target_kind, target_text) = match analysis.find_token_at(offset) {
-        Some((t, _)) => (t.kind, t.text.clone()),
+    let (target_kind, target_text) = match analysis.find_token_at_position(position) {
+        Some((t, _)) => (t.kind, &*t.text),
         None => return Vec::new(),
     };
 
-    let search_name = target_text.to_uppercase();
-
     if target_kind == TokenKind::LocalVar {
-        find_variable_definition(&analysis.symbol_table, &search_name)
+        find_variable_definition(&analysis.symbol_table, target_text)
     } else {
-        find_object_definition(&analysis.symbol_table, &search_name)
+        find_object_definition(&analysis.symbol_table, target_text)
     }
 }
 
 /// 変数定義を検索する
-fn find_variable_definition(table: &SymbolTable, name: &str) -> Vec<Range> {
-    // プロシージャ内変数を含めて検索
+fn find_variable_definition(table: &crate::symbol_table::SymbolTable, name: &str) -> Vec<Range> {
     let mut results = Vec::new();
 
     // トップレベル変数
-    if let Some(var) = table.variables.get(name) {
+    if let Some(var) = SymbolTableBuilder::find_variable(table, name) {
         results.push(var.range);
     }
 
@@ -66,22 +60,22 @@ fn find_variable_definition(table: &SymbolTable, name: &str) -> Vec<Range> {
 }
 
 /// オブジェクト定義（テーブル、プロシージャ、ビュー、インデックス、トリガー）を検索する
-fn find_object_definition(table: &SymbolTable, name: &str) -> Vec<Range> {
+fn find_object_definition(table: &crate::symbol_table::SymbolTable, name: &str) -> Vec<Range> {
     let mut results = Vec::new();
 
-    if let Some(tbl) = table.tables.get(name) {
+    if let Some(tbl) = SymbolTableBuilder::find_table(table, name) {
         results.push(tbl.range);
     }
-    if let Some(proc) = table.procedures.get(name) {
+    if let Some(proc) = SymbolTableBuilder::find_procedure(table, name) {
         results.push(proc.range);
     }
-    if let Some(view) = table.views.get(name) {
+    if let Some(view) = SymbolTableBuilder::find_view(table, name) {
         results.push(view.range);
     }
-    if let Some(idx) = table.indexes.get(name) {
+    if let Some(idx) = SymbolTableBuilder::find_index(table, name) {
         results.push(idx.range);
     }
-    if let Some(trigger) = table.triggers.get(name) {
+    if let Some(trigger) = SymbolTableBuilder::find_trigger(table, name) {
         results.push(trigger.range);
     }
 
@@ -196,5 +190,82 @@ mod tests {
             },
         );
         assert_eq!(ranges.len(), 1);
+    }
+
+    #[test]
+    fn test_definition_with_analysis_view() {
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE VIEW active_users AS SELECT * FROM users\nSELECT * FROM active_users",
+        );
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 17,
+            },
+        );
+        assert_eq!(ranges.len(), 1, "Should find view definition");
+        assert_eq!(
+            ranges[0].start.line, 0,
+            "View definition should be on line 0"
+        );
+    }
+
+    #[test]
+    fn test_definition_with_analysis_trigger() {
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TRIGGER tr_test ON users FOR INSERT AS BEGIN SELECT 1 END",
+        );
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 18,
+            },
+        );
+        assert_eq!(ranges.len(), 1, "Should find trigger definition");
+    }
+
+    #[test]
+    fn test_definition_case_insensitive() {
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TABLE Users (id INT)\nSELECT * FROM users",
+        );
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 15,
+            },
+        );
+        assert_eq!(ranges.len(), 1, "Case-insensitive table lookup should work");
+    }
+
+    #[test]
+    fn test_definition_multiple_object_types() {
+        let source =
+            "CREATE TABLE t (id INT)\nCREATE VIEW v AS SELECT * FROM t\nCREATE INDEX idx ON t (id)";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // Table definition from line 1 "FROM t" — 't' is at char 31
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 31,
+            },
+        );
+        assert!(
+            !ranges.is_empty(),
+            "Should find table definition from view's FROM clause"
+        );
+        // View definition — 'v' is at line 1, char 12
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 12,
+            },
+        );
+        assert!(!ranges.is_empty(), "Should find view definition");
     }
 }

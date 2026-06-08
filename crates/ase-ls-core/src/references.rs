@@ -12,17 +12,14 @@ use lsp_types::{Position, Range};
 use tsql_token::TokenKind;
 
 /// カーソル位置のシンボルの全参照箇所を検索する（DocumentAnalysis利用）
+#[must_use]
 pub fn reference_ranges_with_analysis(
     analysis: &DocumentAnalysis,
     position: Position,
     include_declaration: bool,
 ) -> Vec<Range> {
-    let offset = analysis
-        .line_index
-        .position_to_offset(&analysis.source, position);
-
-    let (target_kind, target_text) = match analysis.find_token_at(offset) {
-        Some((t, _)) => (t.kind, t.text.clone()),
+    let (target_kind, target_text) = match analysis.find_token_at_position(position) {
+        Some((t, _)) => (t.kind, &*t.text),
         None => return Vec::new(),
     };
 
@@ -31,7 +28,7 @@ pub fn reference_ranges_with_analysis(
     let mut refs = Vec::new();
 
     for token in &analysis.tokens {
-        if token_matches_symbol(token.kind, &token.text, &target_text, is_var) {
+        if token_matches_symbol(token.kind, &token.text, target_text, is_var) {
             let range = analysis
                 .line_index
                 .offset_to_range(token.span.start, token.span.end);
@@ -50,6 +47,7 @@ pub fn reference_ranges_with_analysis(
 }
 
 /// Check if `haystack` ends with `suffix`, comparing ASCII characters case-insensitively.
+#[inline]
 fn ends_with_ignore_ascii_case(haystack: &str, suffix: &str) -> bool {
     if suffix.len() > haystack.len() {
         return false;
@@ -223,5 +221,15 @@ mod tests {
             "DECLARE ".len(),
             true
         ));
+    }
+
+    #[test]
+    fn test_ends_with_ignore_ascii_case() {
+        assert!(ends_with_ignore_ascii_case("CREATE TABLE", "TABLE"));
+        assert!(ends_with_ignore_ascii_case("create table", "TABLE"));
+        assert!(ends_with_ignore_ascii_case("CREATE table", "CREATE TABLE"));
+        assert!(!ends_with_ignore_ascii_case("CREATE", "CREATE TABLE"));
+        assert!(ends_with_ignore_ascii_case("DECLARE", "DECLARE"));
+        assert!(!ends_with_ignore_ascii_case("DECLARE @x", "DECLARE"));
     }
 }
