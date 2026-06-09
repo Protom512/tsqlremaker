@@ -691,6 +691,7 @@ impl<'src> super::Parser<'src> {
                     DataType::Numeric(precision, scale)
                 }
             }
+            TokenKind::Float => DataType::Float,
             TokenKind::Real => DataType::Real,
             TokenKind::Double => DataType::Double,
             TokenKind::Date => DataType::Date,

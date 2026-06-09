@@ -420,4 +420,43 @@ mod tests {
             "Nested WHILE inside trigger should produce multiple folds, got {region_folds}"
         );
     }
+
+    /// Regression test for FINDING-001: Nested procedure with IF/ELSE + WHILE + TRY/CATCH
+    /// must produce folding ranges when the parser can fully parse the body.
+    /// Uses parenthesized RAISERROR syntax (space syntax is unsupported by parser).
+    #[test]
+    fn test_ast_fold_nested_procedure_full() {
+        let source = "\
+CREATE PROCEDURE sp_nested @mode INT AS
+BEGIN
+    DECLARE @result INT
+
+    IF @mode = 1
+    BEGIN
+        WHILE @result < 10
+        BEGIN
+            SET @result = @result + 1
+        END
+    END
+    ELSE
+    BEGIN
+        BEGIN TRY
+            SELECT * FROM sysobjects
+        END TRY
+        BEGIN CATCH
+            RAISERROR('Error', 16, 1)
+        END CATCH
+    END
+
+    RETURN @result
+END";
+        let analysis = make_analysis(source);
+        let ranges = folding_ranges_with_analysis(&analysis);
+        let region_folds = count_region_folds(&ranges);
+        assert!(
+            region_folds >= 4,
+            "Nested procedure with IF/WHILE/TRY-CATCH should produce 4+ folds \
+             (proc body, IF block, WHILE block, TRY/CATCH blocks), got {region_folds}"
+        );
+    }
 }

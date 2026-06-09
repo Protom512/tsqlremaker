@@ -115,6 +115,7 @@ static KEYWORDS: LazyLock<HashMap<&'static str, TokenKind>> = LazyLock::new(|| {
     m.insert("smallint", TokenKind::Smallint);
     m.insert("tinyint", TokenKind::Tinyint);
     m.insert("bigint", TokenKind::Bigint);
+    m.insert("float", TokenKind::Float);
     m.insert("real", TokenKind::Real);
     m.insert("double", TokenKind::Double);
     m.insert("decimal", TokenKind::Decimal);
