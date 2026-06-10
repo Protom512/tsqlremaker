@@ -432,7 +432,7 @@ fn parse_procedure_parameter(&mut self) -> ParseResult<ParameterDefinition> {
                          │
 ┌─────────────────────────────────────────────────────┐
 │                        Parser                        │
-│      (tsql-parser/src/parser.rs, expression/)        │
+│      (tsql-parser/src/parser/, expression/)          │
 │         依存: tsql-lexer                             │
 └─────────────────────────────────────────────────────┘
                          │
