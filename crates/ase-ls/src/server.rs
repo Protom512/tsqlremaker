@@ -180,9 +180,21 @@ impl LanguageServer for AseLanguageServer {
             .await;
     }
 
-    async fn completion(&self, _: CompletionParams) -> Result<Option<CompletionResponse>> {
-        let response = completion::complete_all().clone();
-        Ok(Some(response))
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+
+        if let Some(analysis) = self.get_analysis(uri).await {
+            let offset = analysis
+                .line_index
+                .position_to_offset(&analysis.source, position);
+            let response = completion::complete_with_context(&analysis, offset);
+            Ok(Some(response))
+        } else {
+            // Fallback: return all completions when no analysis is available
+            let response = completion::complete_all().clone();
+            Ok(Some(response))
+        }
     }
 
     async fn document_symbol(
