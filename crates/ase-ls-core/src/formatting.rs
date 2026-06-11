@@ -34,6 +34,77 @@ pub fn format(source: &str) -> Vec<TextEdit> {
     }]
 }
 
+/// 指定された範囲の行のみをフォーマットし、TextEditのリストを返す
+///
+/// フォーマッタはストリーミングで全体をフォーマットする必要があるため（インデント
+/// コンテキストを維持するため）、まず全体をフォーマットしてから範囲内の変更行のみを
+/// TextEditとして返すアプローチをとる。
+#[must_use]
+pub fn format_range(source: &str, range: Range) -> Vec<TextEdit> {
+    let formatted = format_sql(source);
+    if formatted == source {
+        return Vec::new();
+    }
+
+    let original_lines: Vec<&str> = source.lines().collect();
+    let formatted_lines: Vec<&str> = formatted.lines().collect();
+
+    let mut edits = Vec::new();
+    let start_line = range.start.line as usize;
+    let end_line = (range.end.line as usize).min(original_lines.len().saturating_sub(1));
+
+    // Collect consecutive changed lines within the range into single TextEdits
+    let mut run_start: Option<usize> = None;
+    let mut run_lines: Vec<&str> = Vec::new();
+
+    for line_idx in start_line..=end_line {
+        let orig_line = original_lines.get(line_idx).copied().unwrap_or("");
+        let fmt_line = formatted_lines.get(line_idx).copied().unwrap_or("");
+
+        if orig_line != fmt_line {
+            if run_start.is_none() {
+                run_start = Some(line_idx);
+            }
+            run_lines.push(fmt_line);
+        } else {
+            // Flush any accumulated run
+            if let Some(rs) = run_start.take() {
+                edits.push(make_line_edit(rs, line_idx, &run_lines));
+                run_lines.clear();
+            }
+        }
+    }
+
+    // Flush trailing run
+    if let Some(rs) = run_start.take() {
+        let end = end_line + 1;
+        edits.push(make_line_edit(rs, end, &run_lines));
+    }
+
+    edits
+}
+
+/// Build a TextEdit replacing lines [start, end) with new text.
+fn make_line_edit(start: usize, end: usize, new_lines: &[&str]) -> TextEdit {
+    TextEdit {
+        range: Range {
+            start: Position {
+                line: start as u32,
+                character: 0,
+            },
+            end: Position {
+                line: end as u32,
+                character: 0,
+            },
+        },
+        new_text: {
+            let mut text = new_lines.join("\n");
+            text.push('\n');
+            text
+        },
+    }
+}
+
 /// SQL文字列をフォーマットする
 fn format_sql(source: &str) -> String {
     let lexer = Lexer::new(source).with_comments(true);
@@ -494,5 +565,105 @@ mod tests {
             "HexString should be preserved: {}",
             result
         );
+    }
+
+    // ========================================================================
+    // Range formatting tests (#129)
+    // ========================================================================
+
+    /// Helper: create a range for lines [start, end] (inclusive, 0-indexed)
+    fn line_range(start: u32, end: u32) -> Range {
+        Range {
+            start: Position {
+                line: start,
+                character: 0,
+            },
+            end: Position {
+                line: end,
+                character: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn test_format_range_single_line_change() {
+        // Source has lowercase "select" on line 0 — should uppercase it
+        let source = "select * from t\nWHERE id = 1\n";
+        let edits = format_range(source, line_range(0, 0));
+        assert_eq!(edits.len(), 1, "Should have exactly 1 edit for line 0");
+        assert!(
+            edits[0].new_text.contains("SELECT"),
+            "Should uppercase select: {:?}",
+            edits[0].new_text
+        );
+    }
+
+    #[test]
+    fn test_format_range_preserves_unchanged_lines() {
+        // Format source fully first, then format a range of an already-formatted doc.
+        // The formatted source should be idempotent, so range edits should be empty.
+        let source = "SELECT * FROM t\nWHERE id = 1\n";
+        let formatted = format_sql(source);
+        let edits = format_range(&formatted, line_range(1, 1));
+        assert!(
+            edits.is_empty(),
+            "Already-formatted line should have no edits"
+        );
+    }
+
+    #[test]
+    fn test_format_range_multi_line() {
+        // Both lines need formatting
+        let source = "select * from t\nwhere id = 1\n";
+        let edits = format_range(source, line_range(0, 1));
+        assert!(!edits.is_empty(), "Should have edits for changed lines");
+        let all_text: String = edits.iter().map(|e| e.new_text.as_str()).collect();
+        assert!(
+            all_text.contains("SELECT") || all_text.contains("WHERE"),
+            "Should contain formatted keywords: {all_text}"
+        );
+    }
+
+    #[test]
+    fn test_format_range_no_change_returns_empty() {
+        let source = "SELECT * FROM t\nWHERE id = 1\n";
+        let formatted = format_sql(source);
+        // Use already-formatted source
+        let edits = format_range(&formatted, line_range(0, 1));
+        assert!(edits.is_empty(), "No changes should return empty edits");
+    }
+
+    #[test]
+    fn test_format_range_edit_bounds() {
+        let source = "select col from t\nWHERE id = 1\nORDER BY name\n";
+        let edits = format_range(source, line_range(0, 0));
+        assert_eq!(edits.len(), 1);
+        // Edit should cover only line 0
+        assert_eq!(edits[0].range.start.line, 0);
+        assert_eq!(edits[0].range.end.line, 1);
+    }
+
+    #[test]
+    fn test_format_range_mid_document() {
+        let source = "SELECT * FROM t\nWHERE id = 1\norder by name\n";
+        let formatted = format_sql(source);
+        let formatted_lines: Vec<&str> = formatted.lines().collect();
+        let original_lines: Vec<&str> = source.lines().collect();
+
+        // Verify line 2 actually changes
+        if original_lines.get(2) != formatted_lines.get(2) {
+            let edits = format_range(source, line_range(2, 2));
+            assert!(
+                !edits.is_empty(),
+                "Changed line within range should produce edits"
+            );
+            assert_eq!(edits[0].range.start.line, 2);
+        }
+    }
+
+    #[test]
+    fn test_format_range_empty_source() {
+        let edits = format_range("", line_range(0, 0));
+        assert!(edits.is_empty(), "Empty source should have no edits");
     }
 }
