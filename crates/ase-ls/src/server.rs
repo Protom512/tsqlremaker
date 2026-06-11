@@ -54,7 +54,7 @@ impl AseLanguageServer {
 
     /// ドキュメントの診断情報をパブリッシュする
     async fn publish_diagnostics_for(&self, uri: &Url) {
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "diagnostics").await {
             let diags = diagnostics::diagnose(&analysis);
             self.client
                 .publish_diagnostics(uri.clone(), diags, None)
@@ -66,6 +66,32 @@ impl AseLanguageServer {
     async fn get_analysis(&self, uri: &Url) -> Option<Arc<DocumentAnalysis>> {
         let docs = self.documents.read().await;
         docs.docs.get(uri.as_str()).cloned()
+    }
+
+    /// URIに対応するDocumentAnalysisを取得し、見つからない場合はログを出力する
+    ///
+    /// # Arguments
+    /// * `uri` - ドキュメントのURI
+    /// * `handler_name` - ログメッセージに含めるハンドラ名（例: "hover", "completion"）
+    async fn get_analysis_or_log(
+        &self,
+        uri: &Url,
+        handler_name: &str,
+    ) -> Option<Arc<DocumentAnalysis>> {
+        match self.get_analysis(uri).await {
+            Some(analysis) => Some(analysis),
+            None => {
+                self.client
+                    .log_message(
+                        MessageType::WARNING,
+                        format!(
+                            "{handler_name}: no analysis available for {uri} (document not open?)"
+                        ),
+                    )
+                    .await;
+                None
+            }
+        }
     }
 }
 
@@ -184,7 +210,7 @@ impl LanguageServer for AseLanguageServer {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
 
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "completion").await {
             let offset = analysis
                 .line_index
                 .position_to_offset(&analysis.source, position);
@@ -202,7 +228,7 @@ impl LanguageServer for AseLanguageServer {
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
         let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "document_symbol").await {
             Ok(symbols::document_symbols_with_analysis(&analysis))
         } else {
             Ok(None)
@@ -211,7 +237,7 @@ impl LanguageServer for AseLanguageServer {
 
     async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
         let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "folding_range").await {
             Ok(Some(folding::folding_ranges_with_analysis(&analysis)))
         } else {
             Ok(Some(Vec::new()))
@@ -223,7 +249,7 @@ impl LanguageServer for AseLanguageServer {
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "semantic_tokens_full").await {
             Ok(Some(semantic_tokens::semantic_tokens_full_with_analysis(
                 &analysis,
             )))
@@ -237,7 +263,7 @@ impl LanguageServer for AseLanguageServer {
         params: SemanticTokensRangeParams,
     ) -> Result<Option<SemanticTokensRangeResult>> {
         let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "semantic_tokens_range").await {
             Ok(Some(semantic_tokens::semantic_tokens_range_with_analysis(
                 &analysis,
                 params.range,
@@ -249,7 +275,7 @@ impl LanguageServer for AseLanguageServer {
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = &params.text_document_position_params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "hover").await {
             Ok(hover::hover_with_analysis(
                 &analysis,
                 params.text_document_position_params.position,
@@ -261,7 +287,7 @@ impl LanguageServer for AseLanguageServer {
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "formatting").await {
             let edits = formatting::format(&analysis.source);
             if edits.is_empty() {
                 Ok(None)
@@ -278,7 +304,7 @@ impl LanguageServer for AseLanguageServer {
         params: DocumentRangeFormattingParams,
     ) -> Result<Option<Vec<TextEdit>>> {
         let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "range_formatting").await {
             let edits = formatting::format_range(&analysis.source, params.range);
             if edits.is_empty() {
                 Ok(None)
@@ -292,7 +318,7 @@ impl LanguageServer for AseLanguageServer {
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         let uri = &params.text_document_position_params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "signature_help").await {
             Ok(signature_help::signature_help_with_analysis(
                 &analysis,
                 params.text_document_position_params.position,
@@ -307,7 +333,7 @@ impl LanguageServer for AseLanguageServer {
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = &params.text_document_position_params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "goto_definition").await {
             let ranges = definition::definition_ranges_with_analysis(
                 &analysis,
                 params.text_document_position_params.position,
@@ -331,7 +357,7 @@ impl LanguageServer for AseLanguageServer {
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let uri = &params.text_document_position.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "references").await {
             let ranges = references::reference_ranges_with_analysis(
                 &analysis,
                 params.text_document_position.position,
@@ -356,7 +382,7 @@ impl LanguageServer for AseLanguageServer {
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "code_action").await {
             let actions = code_actions::code_actions_with_analysis(&analysis, params.range, uri);
             if actions.is_empty() {
                 Ok(None)
@@ -370,7 +396,7 @@ impl LanguageServer for AseLanguageServer {
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         let uri = &params.text_document_position.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "rename").await {
             Ok(rename::rename_with_analysis(
                 &analysis,
                 params.text_document_position.position,
@@ -387,7 +413,7 @@ impl LanguageServer for AseLanguageServer {
         params: TextDocumentPositionParams,
     ) -> Result<Option<PrepareRenameResponse>> {
         let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis_or_log(uri, "prepare_rename").await {
             Ok(rename::prepare_rename_with_analysis(
                 &analysis,
                 params.position,
