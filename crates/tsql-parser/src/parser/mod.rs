@@ -11,7 +11,7 @@ mod select;
 
 use crate::ast::*;
 use crate::buffer::TokenBuffer;
-use crate::error::{ParseError, ParseErrors, ParseResult, ParseResultWithErrors};
+use crate::error::{ParseError, ParseResult};
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
 
@@ -72,11 +72,16 @@ impl<'src> Parser<'src> {
         self
     }
 
-    /// 入力全体を解析
+    /// 入力全体を解析（strictモード）
+    ///
+    /// 構文エラーが1つでもある場合、最初のエラーを返し、パース結果は破棄される。
+    /// エラー時も部分結果を得たい場合は [`parse_with_errors()`] を使用すること。
     ///
     /// # Returns
     ///
-    /// 文のリスト、またはエラー
+    /// 文のリスト、または（最初の）エラー
+    ///
+    /// [`parse_with_errors()`]: Self::parse_with_errors
     pub fn parse(&mut self) -> ParseResult<Vec<Statement>> {
         let mut statements = Vec::new();
 
@@ -104,26 +109,39 @@ impl<'src> Parser<'src> {
     /// 入力全体を解析（エラー回復付き）
     ///
     /// エラー回復機能を使用して、構文エラーがあってもパースを継続し、
-    /// 複数のエラーを一度に報告する。
+    /// 回復できた文とすべてのエラーを返す。
+    ///
+    /// 戻り値は常に `(Vec<Statement>, Vec<ParseError>)` であり、
+    /// `Result` ではない。構文エラーがあっても回復可能な文が
+    /// 返される。エラーが空であれば入力に構文エラーがないことを意味する。
+    ///
+    /// エラーが一定数（100件）を超えた場合は以降のパースを打ち切り、
+    /// それまでに回復した文とエラーを返す。これにより壊滅的に壊れた入力や
+    /// 深くネストされた構造でのスタックオーバーフローを防止する。
     ///
     /// # Returns
     ///
-    /// 文のリストとエラーリスト、または単一のエラー
-    pub fn parse_with_errors(
-        &mut self,
-    ) -> ParseResultWithErrors<(Vec<Statement>, Vec<ParseError>)> {
+    /// (回復した文のリスト, 検出したエラーのリスト)
+    pub fn parse_with_errors(&mut self) -> (Vec<Statement>, Vec<ParseError>) {
+        const MAX_ERRORS: usize = 100;
         let mut statements = Vec::new();
 
         while !self.is_at_eof() {
+            // エラーが多すぎる場合は以降のパースを打ち切る
+            if self.errors.len() >= MAX_ERRORS {
+                break;
+            }
+
             match self.parse_statement() {
                 Ok(stmt) => statements.push(stmt),
                 Err(e) => {
-                    self.errors.push(e.clone());
+                    self.errors.push(e);
                     self.synchronize();
-                    // Safety: always advance past the current token to prevent
-                    // infinite loops when synchronize stops at a sync-point
-                    // (e.g., END) that is not a valid statement starter.
-                    if !self.is_at_eof() {
+                    // synchronize() が同期ポイント (SELECT, INSERT 等) で停止した場合、
+                    // そのトークンは次のループで parse_statement が処理するため、
+                    // 追加の consume は不要。同期ポイントに到達できなかった場合のみ
+                    // 1トークン進めて無限ループを防止する。
+                    if !self.is_at_eof() && !self.is_at_statement_start() {
                         let _ = self.buffer.consume();
                     }
                 }
@@ -133,15 +151,8 @@ impl<'src> Parser<'src> {
             let _ = self.buffer.consume_if(TokenKind::Semicolon);
         }
 
-        // エラーリストをクローンして返す
-        let errors = self.errors.clone();
-
-        // エラーがあった場合はParseErrorsを返す
-        if !errors.is_empty() {
-            return Err(ParseErrors::new(errors));
-        }
-
-        Ok((statements, Vec::new()))
+        let errors = self.errors.drain(..).collect();
+        (statements, errors)
     }
 
     /// 収集されたエラーを返す
