@@ -1,5 +1,6 @@
 //! AST module — dialect-independent SQL nodes.
 
+pub mod clause;
 pub mod datatype;
 pub mod expression;
 pub mod identifier;
@@ -8,6 +9,10 @@ pub mod literal;
 pub mod span;
 pub mod statement;
 
+pub use clause::{
+    Cte, GroupByClause, GroupByItem, LimitClause, NullOrdering, OrderByClause, OrderByItem,
+    SortDirection, WithClause,
+};
 pub use datatype::DataType;
 pub use expression::{
     BinaryOperator, ComparisonOperator, Expression, InList, LogicalOperator, UnaryOperator,
