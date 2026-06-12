@@ -520,25 +520,17 @@ fn test_fixture_sp_complex_logic_parseable() {
     // for unsupported syntax like CURSOR)
     let content = read_fixture("sp_complex_logic.sql");
     let mut parser = tsql_parser::Parser::new(&content);
-    let result = parser.parse_with_errors();
+    let (statements, errors) = parser.parse_with_errors();
 
-    // We expect at least some statements to be parsed
-    match result {
-        Ok((statements, errors)) => {
-            assert!(
-                !statements.is_empty(),
-                "Should parse at least some statements from sp_complex_logic.sql"
-            );
-            // Errors may exist for unsupported syntax (cursors, etc)
-            let _ = errors;
-        }
-        Err(parse_errors) => {
-            // Even with errors, we should have collected some errors
-            assert!(
-                !parse_errors.errors.is_empty(),
-                "If parsing fails, should report meaningful errors"
-            );
-        }
+    // We expect at least some statements to be parsed or some errors to be reported
+    if statements.is_empty() {
+        assert!(
+            !errors.is_empty(),
+            "If parsing fails, should report meaningful errors"
+        );
+    } else {
+        // Errors may exist for unsupported syntax (cursors, etc)
+        let _ = errors;
     }
 }
 
@@ -547,29 +539,20 @@ fn test_fixture_migration_parseable() {
     // The migration script should parse as it uses standard T-SQL
     let content = read_fixture("sp_multi_batch_migration.sql");
     let mut parser = tsql_parser::Parser::new(&content);
-    let result = parser.parse_with_errors();
+    let (statements, errors) = parser.parse_with_errors();
 
-    match result {
-        Ok((statements, errors)) => {
-            assert!(
-                !statements.is_empty(),
-                "Should parse at least some statements from sp_multi_batch_migration.sql"
-            );
-            // We expect many statements from 28+ batches
-            assert!(
-                statements.len() >= 50,
-                "Migration should produce 50+ parsed statements (DDL+DML+batches), got {}",
-                statements.len()
-            );
-            let _ = errors;
-        }
-        Err(parse_errors) => {
-            // Should still report errors meaningfully
-            assert!(
-                !parse_errors.errors.is_empty(),
-                "If parsing fails, should report meaningful errors"
-            );
-        }
+    if !statements.is_empty() {
+        assert!(
+            statements.len() >= 50,
+            "Migration should produce 50+ parsed statements (DDL+DML+batches), got {}",
+            statements.len()
+        );
+    } else {
+        // Should still report errors meaningfully
+        assert!(
+            !errors.is_empty(),
+            "If parsing fails, should report meaningful errors"
+        );
     }
 }
 

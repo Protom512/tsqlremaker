@@ -68,23 +68,53 @@ impl<'src> super::Parser<'src> {
     }
 
     /// 同期ポイントまでスキップしてエラー回復
+    ///
+    /// 文の先頭になり得るトークン（SELECT, INSERT, UPDATE, ...）または
+    /// セミコロン、END に到達するまでトークンを消費する。
     pub(super) fn synchronize(&mut self) {
         while !self.is_at_eof() {
-            let kind = self.buffer.current().map(|t| t.kind);
-            if matches!(
-                kind,
-                Ok(TokenKind::Semicolon)
-                    | Ok(TokenKind::Select)
-                    | Ok(TokenKind::Insert)
-                    | Ok(TokenKind::Update)
-                    | Ok(TokenKind::Delete)
-                    | Ok(TokenKind::Create)
-                    | Ok(TokenKind::End)
-            ) {
+            if self.is_at_statement_start() {
+                break;
+            }
+            // セミコロンは文の区切りなので同期ポイント
+            if self.buffer.check(TokenKind::Semicolon) {
                 break;
             }
             let _ = self.buffer.consume();
         }
+    }
+
+    /// 現在のトークンが文の開始トークンかどうかを判定
+    ///
+    /// エラー回復時に次の文の先頭を検出するために使用する。
+    pub(super) fn is_at_statement_start(&self) -> bool {
+        let kind = self.buffer.current().map(|t| t.kind);
+        matches!(
+            kind,
+            Ok(TokenKind::Select)
+                | Ok(TokenKind::Insert)
+                | Ok(TokenKind::Update)
+                | Ok(TokenKind::Delete)
+                | Ok(TokenKind::Create)
+                | Ok(TokenKind::Alter)
+                | Ok(TokenKind::Declare)
+                | Ok(TokenKind::Set)
+                | Ok(TokenKind::If)
+                | Ok(TokenKind::While)
+                | Ok(TokenKind::Begin)
+                | Ok(TokenKind::Break)
+                | Ok(TokenKind::Continue)
+                | Ok(TokenKind::Return)
+                | Ok(TokenKind::Commit)
+                | Ok(TokenKind::Rollback)
+                | Ok(TokenKind::Save)
+                | Ok(TokenKind::Throw)
+                | Ok(TokenKind::Raiserror)
+                | Ok(TokenKind::Exec)
+                | Ok(TokenKind::Execute)
+                | Ok(TokenKind::Go)
+                | Ok(TokenKind::End)
+        )
     }
 
     /// 再帰深度をチェック（ネストされる前に呼び出す）

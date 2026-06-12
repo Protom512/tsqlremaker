@@ -387,16 +387,14 @@ fn test_block_error_propagation() {
     // BEGIN...ENDブロック内のエラーが正しく伝播されることを確認
     let sql = "BEGIN SELECT FROM users END";
     let mut parser = Parser::new(sql);
-    let result = parser.parse_with_errors();
+    let (stmts, errors) = parser.parse_with_errors();
 
     // エラーが含まれていることを確認
-    assert!(result.is_err());
-    match result {
-        Err(parse_errors) => {
-            assert!(!parse_errors.errors.is_empty());
-        }
-        _ => panic!("Expected ParseErrors"),
-    }
+    assert!(
+        !errors.is_empty(),
+        "should report errors for invalid SELECT FROM"
+    );
+    let _ = stmts;
 }
 
 #[test]
@@ -404,16 +402,11 @@ fn test_block_partial_success() {
     // BEGIN...ENDブロック内でエラーが発生しても、後続のステートメントがパースされることを確認
     let sql = "BEGIN SELECT 1; SELECT FROM users; SELECT 2 END";
     let mut parser = Parser::new(sql);
-    let result = parser.parse_with_errors();
+    let (stmts, errors) = parser.parse_with_errors();
 
-    // エラーが含まれているが、一部のステートメントはパースされていることを確認
-    match result {
-        Err(parse_errors) => {
-            // エラーが発生したことを確認
-            assert!(!parse_errors.errors.is_empty());
-        }
-        _ => panic!("Expected ParseErrors"),
-    }
+    // エラーが含まれていることを確認
+    assert!(!errors.is_empty());
+    let _ = stmts;
 }
 
 // Task 18.1: SELECT文のテスト
@@ -2863,4 +2856,178 @@ fn test_create_trigger_span() {
         },
         _ => panic!("Expected Create"),
     }
+}
+
+// ── Error recovery tests (#127) ──────────────────────────────────────────────
+
+/// Helper: parse with error recovery and return (statements, errors).
+fn parse_with_recovery(sql: &str) -> (Vec<Statement>, Vec<ParseError>) {
+    let mut parser = Parser::new(sql);
+    parser.parse_with_errors()
+}
+
+#[test]
+fn test_recovery_error_in_middle() {
+    // Error in the middle statement; first and last should parse fine.
+    let (stmts, errors) = parse_with_recovery("SELECT 1; SELCT * FROM t; SELECT 2");
+
+    // First SELECT 1 and last SELECT 2 should be recovered
+    assert!(
+        stmts.len() >= 2,
+        "should recover at least 2 statements, got {}",
+        stmts.len()
+    );
+    assert!(!errors.is_empty(), "should report at least 1 error");
+}
+
+#[test]
+fn test_recovery_error_at_start() {
+    // Error at start; second statement should parse.
+    let (stmts, errors) = parse_with_recovery("SELCT * FROM t; SELECT 1");
+
+    assert!(
+        !stmts.is_empty(),
+        "should recover at least 1 statement, got {}",
+        stmts.len()
+    );
+    assert!(!errors.is_empty(), "should report at least 1 error");
+}
+
+#[test]
+fn test_recovery_error_at_end() {
+    // Error at end; first statement should parse.
+    let (stmts, errors) = parse_with_recovery("SELECT 1; SELCT * FROM t");
+
+    assert!(
+        !stmts.is_empty(),
+        "should recover at least 1 statement, got {}",
+        stmts.len()
+    );
+    assert!(!errors.is_empty(), "should report at least 1 error");
+}
+
+#[test]
+fn test_recovery_multiple_errors_mixed_with_valid() {
+    // Two invalid, one valid in between.
+    let (stmts, errors) = parse_with_recovery("SELCT 1; INSERT INTO t VALUES (1); SELCT 2");
+
+    assert!(
+        !stmts.is_empty(),
+        "should recover INSERT statement, got {} stmts",
+        stmts.len()
+    );
+    assert!(
+        errors.len() >= 2,
+        "should report at least 2 errors, got {}",
+        errors.len()
+    );
+}
+
+#[test]
+fn test_recovery_no_errors() {
+    // Clean input should have zero errors and all statements.
+    let (stmts, errors) = parse_with_recovery("SELECT 1; SELECT 2; SELECT 3");
+
+    assert_eq!(stmts.len(), 3, "all 3 statements should parse");
+    assert!(
+        errors.is_empty(),
+        "no errors expected, got {}",
+        errors.len()
+    );
+}
+
+#[test]
+fn test_recovery_preserves_statement_types() {
+    // Mix of DML/DDL/control-flow with one error.
+    let sql = "SELECT 1; INVALID STMT; INSERT INTO t VALUES (1)";
+    let (stmts, errors) = parse_with_recovery(sql);
+
+    assert!(!stmts.is_empty(), "should recover some statements");
+    assert!(!errors.is_empty(), "should report error for INVALID");
+
+    // Check that the recovered statements are the right types
+    let has_select = stmts.iter().any(|s| matches!(s, Statement::Select(_)));
+    let has_insert = stmts.iter().any(|s| matches!(s, Statement::Insert(_)));
+    assert!(has_select, "should recover SELECT statement");
+    assert!(has_insert, "should recover INSERT statement");
+}
+
+#[test]
+fn test_recovery_all_invalid() {
+    // All statements are invalid.
+    let (_stmts, errors) = parse_with_recovery("FOO BAR; BAZ QUX");
+
+    // May or may not recover statements, but should report errors
+    assert!(
+        !errors.is_empty(),
+        "should report errors for all-invalid input"
+    );
+}
+
+#[test]
+fn test_recovery_empty_input() {
+    let (stmts, errors) = parse_with_recovery("");
+
+    assert!(stmts.is_empty(), "empty input should produce no statements");
+    assert!(errors.is_empty(), "empty input should produce no errors");
+}
+
+#[test]
+fn test_recovery_with_declare_and_set() {
+    // Ensure synchronize recognizes DECLARE and SET as sync points.
+    let sql = "INVALID; DECLARE @x INT; SET @x = 1";
+    let (stmts, errors) = parse_with_recovery(sql);
+
+    assert!(!errors.is_empty(), "should report error for INVALID");
+    // DECLARE and SET should be recovered
+    assert!(
+        stmts.len() >= 2,
+        "should recover DECLARE and SET, got {} stmts",
+        stmts.len()
+    );
+}
+
+#[test]
+fn test_recovery_synchronize_to_begin() {
+    // Error before BEGIN block; BEGIN block should still parse.
+    let sql = "INVALID; BEGIN SELECT 1 END";
+    let (stmts, errors) = parse_with_recovery(sql);
+
+    assert!(!errors.is_empty(), "should report error for INVALID");
+    assert!(!stmts.is_empty(), "should recover BEGIN block");
+}
+
+#[test]
+fn test_recovery_error_inside_block() {
+    // Error inside BEGIN...END should not prevent outer parsing.
+    let sql = "BEGIN SELECT 1; INVALID; SELECT 2 END; SELECT 3";
+    let (stmts, errors) = parse_with_recovery(sql);
+
+    // At minimum we should get something
+    assert!(
+        !errors.is_empty(),
+        "should report error for INVALID inside block"
+    );
+    // The outer SELECT 3 should be recovered even if the block has issues
+    assert!(!stmts.is_empty(), "should recover some statements");
+}
+
+#[test]
+fn test_recovery_with_if_statement() {
+    // Error followed by IF statement.
+    let sql = "INVALID; IF 1 = 1 SELECT 1";
+    let (stmts, errors) = parse_with_recovery(sql);
+
+    assert!(!errors.is_empty(), "should report error for INVALID");
+    assert!(!stmts.is_empty(), "should recover IF statement");
+}
+
+#[test]
+fn test_recovery_with_while_statement() {
+    // Error followed by WHILE statement.
+    let sql = "INVALID; WHILE 1 = 1 BREAK";
+    let (stmts, errors) = parse_with_recovery(sql);
+
+    assert!(!errors.is_empty(), "should report error for INVALID");
+    assert!(!stmts.is_empty(), "should recover WHILE statement");
 }
