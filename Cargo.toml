@@ -3,6 +3,7 @@ members = [
     "crates/tsql-token",
     "crates/tsql-lexer",
     "crates/tsql-parser",
+    "crates/common-sql",
     "crates/mysql-emitter",
     "crates/postgresql-emitter",
     "crates/sqlite-emitter",
