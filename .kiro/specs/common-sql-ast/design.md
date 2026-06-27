@@ -51,20 +51,30 @@ common-sql/
 
 ### Span（位置情報）
 
+> **CTO Review 修正**: `tsql_token::Span { start: u32, end: u32 }` と同じバイトオフセット形式を採用。
+> ゼロ依存原則を維持しつつ、`From<tsql_token::Span>` による変換を容易にする。
+
 ```rust
-/// ソースコード内の位置情報
+/// ソースコード内の位置情報（バイトオフセット）
+/// tsql_token::Span と同一レイアウト — 変換時の LineIndex 不要
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
-    pub start: Position,
-    pub end: Position,
+    pub start: u32,
+    pub end: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Position {
-    pub line: usize,
-    pub column: usize,
-    pub offset: usize,
+impl Span {
+    pub fn new(start: u32, end: u32) -> Self {
+        Self { start, end }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.start == self.end
+    }
 }
+
+// tsql-token からの変換は conversion layer (tsql-parser) で実装:
+// impl From<tsql_token::Span> for Span { ... }
 ```
 
 ### Statement ノード
@@ -519,15 +529,22 @@ pub struct TableOptions {
 
 ## Visitor パターン設計
 
+> **CTO Review 修正**: 全 visit メソッドに default implementation を提供。
+> 新しい AST バリアント追加時に全 Visitor 実装の更新が不要になる（Open-Closed 原則）。
+
 ### Visitor Trait
 
 ```rust
 /// Visitor trait - SQL 生成用
+/// 全メソッドに default implementation あり — 必要なものだけオーバーライド可能
 pub trait Visitor: Sized {
     /// 訪問の結果型
     type Output;
 
-    /// Statement を訪問
+    /// デフォルトの出力（オーバーライド可能）
+    fn default_output(&self) -> Self::Output;
+
+    /// Statement を訪問（default impl）
     fn visit_statement(&mut self, stmt: &Statement) -> Self::Output {
         match stmt {
             Statement::Select(s) => self.visit_select_statement(s),
@@ -542,18 +559,18 @@ pub trait Visitor: Sized {
         }
     }
 
-    /// 各 Statement タイプの訪問メソッド
-    fn visit_select_statement(&mut self, stmt: &SelectStatement) -> Self::Output;
-    fn visit_insert_statement(&mut self, stmt: &InsertStatement) -> Self::Output;
-    fn visit_update_statement(&mut self, stmt: &UpdateStatement) -> Self::Output;
-    fn visit_delete_statement(&mut self, stmt: &DeleteStatement) -> Self::Output;
-    fn visit_create_table_statement(&mut self, stmt: &CreateTableStatement) -> Self::Output;
-    fn visit_alter_table_statement(&mut self, stmt: &AlterTableStatement) -> Self::Output;
-    fn visit_drop_table_statement(&mut self, stmt: &DropTableStatement) -> Self::Output;
-    fn visit_create_index_statement(&mut self, stmt: &CreateIndexStatement) -> Self::Output;
-    fn visit_drop_index_statement(&mut self, stmt: &DropIndexStatement) -> Self::Output;
+    /// 各 Statement タイプの訪問メソッド（default: default_output を返す）
+    fn visit_select_statement(&mut self, _stmt: &SelectStatement) -> Self::Output { self.default_output() }
+    fn visit_insert_statement(&mut self, _stmt: &InsertStatement) -> Self::Output { self.default_output() }
+    fn visit_update_statement(&mut self, _stmt: &UpdateStatement) -> Self::Output { self.default_output() }
+    fn visit_delete_statement(&mut self, _stmt: &DeleteStatement) -> Self::Output { self.default_output() }
+    fn visit_create_table_statement(&mut self, _stmt: &CreateTableStatement) -> Self::Output { self.default_output() }
+    fn visit_alter_table_statement(&mut self, _stmt: &AlterTableStatement) -> Self::Output { self.default_output() }
+    fn visit_drop_table_statement(&mut self, _stmt: &DropTableStatement) -> Self::Output { self.default_output() }
+    fn visit_create_index_statement(&mut self, _stmt: &CreateIndexStatement) -> Self::Output { self.default_output() }
+    fn visit_drop_index_statement(&mut self, _stmt: &DropIndexStatement) -> Self::Output { self.default_output() }
 
-    /// Expression を訪問
+    /// Expression を訪問（default impl）
     fn visit_expression(&mut self, expr: &Expression) -> Self::Output {
         match expr {
             Expression::Literal(l) => self.visit_literal(l),
@@ -592,25 +609,25 @@ pub trait Visitor: Sized {
         }
     }
 
-    /// 各 Expression タイプの訪問メソッド
-    fn visit_literal(&mut self, literal: &Literal) -> Self::Output;
-    fn visit_identifier(&mut self, ident: &Identifier) -> Self::Output;
-    fn visit_qualified_identifier(&mut self, table: &Identifier, column: &Identifier) -> Self::Output;
-    fn visit_binary_op(&mut self, left: &Expression, op: BinaryOperator, right: &Expression) -> Self::Output;
-    fn visit_unary_op(&mut self, op: UnaryOperator, expr: &Expression) -> Self::Output;
-    fn visit_logical_op(&mut self, left: &Expression, op: LogicalOperator, right: &Expression) -> Self::Output;
-    fn visit_comparison(&mut self, left: &Expression, op: ComparisonOperator, right: &Expression) -> Self::Output;
-    fn visit_function(&mut self, name: &Identifier, args: &[Expression], distinct: bool) -> Self::Output;
-    fn visit_case(&mut self, operand: &Option<Box<Expression>>, conditions: &[(Expression, Expression)], else_result: &Option<Box<Expression>>) -> Self::Output;
-    fn visit_subquery(&mut self, subquery: &SelectStatement) -> Self::Output;
-    fn visit_exists(&mut self, subquery: &SelectStatement, negated: bool) -> Self::Output;
-    fn visit_in(&mut self, expr: &Expression, list: &InList, negated: bool) -> Self::Output;
-    fn visit_between(&mut self, expr: &Expression, low: &Expression, high: &Expression, negated: bool) -> Self::Output;
-    fn visit_cast(&mut self, expr: &Expression, data_type: &DataType) -> Self::Output;
-    fn visit_is_null(&mut self, expr: &Expression, negated: bool) -> Self::Output;
+    /// 各 Expression タイプの訪問メソッド（default: default_output を返す）
+    fn visit_literal(&mut self, _literal: &Literal) -> Self::Output { self.default_output() }
+    fn visit_identifier(&mut self, _ident: &Identifier) -> Self::Output { self.default_output() }
+    fn visit_qualified_identifier(&mut self, _table: &Identifier, _column: &Identifier) -> Self::Output { self.default_output() }
+    fn visit_binary_op(&mut self, _left: &Expression, _op: BinaryOperator, _right: &Expression) -> Self::Output { self.default_output() }
+    fn visit_unary_op(&mut self, _op: UnaryOperator, _expr: &Expression) -> Self::Output { self.default_output() }
+    fn visit_logical_op(&mut self, _left: &Expression, _op: LogicalOperator, _right: &Expression) -> Self::Output { self.default_output() }
+    fn visit_comparison(&mut self, _left: &Expression, _op: ComparisonOperator, _right: &Expression) -> Self::Output { self.default_output() }
+    fn visit_function(&mut self, _name: &Identifier, _args: &[Expression], _distinct: bool) -> Self::Output { self.default_output() }
+    fn visit_case(&mut self, _operand: &Option<Box<Expression>>, _conditions: &[(Expression, Expression)], _else_result: &Option<Box<Expression>>) -> Self::Output { self.default_output() }
+    fn visit_subquery(&mut self, _subquery: &SelectStatement) -> Self::Output { self.default_output() }
+    fn visit_exists(&mut self, _subquery: &SelectStatement, _negated: bool) -> Self::Output { self.default_output() }
+    fn visit_in(&mut self, _expr: &Expression, _list: &InList, _negated: bool) -> Self::Output { self.default_output() }
+    fn visit_between(&mut self, _expr: &Expression, _low: &Expression, _high: &Expression, _negated: bool) -> Self::Output { self.default_output() }
+    fn visit_cast(&mut self, _expr: &Expression, _data_type: &DataType) -> Self::Output { self.default_output() }
+    fn visit_is_null(&mut self, _expr: &Expression, _negated: bool) -> Self::Output { self.default_output() }
 
-    /// DataType を訪問
-    fn visit_data_type(&mut self, data_type: &DataType) -> Self::Output;
+    /// DataType を訪問（default: default_output を返す）
+    fn visit_data_type(&mut self, _data_type: &DataType) -> Self::Output { self.default_output() }
 }
 ```
 
@@ -692,26 +709,26 @@ impl Visitable for DataType {
 
 ### 方言固有機能の扱い
 
+> **CTO Review 修正**: 下位クレートが上位の型に依存する `DialectOptions { mysql, postgres, tsql }` は
+> アーキテクチャ原則違反（`architecture-coupling-balance.md` セクション7）。
+> 代わりに `DialectHint` による汎用メタデータアプローチを採用。
+
 ```rust
-// 方言固有のオプションを表現するパターン
+/// 方言固有のメタデータ（汎用キー・バリュー形式）
+/// 下位クレート (common-sql) は上位クレートの型に依存しない
 #[derive(Debug, Clone, PartialEq)]
-pub struct DialectOptions {
-    pub mysql: Option<MySqlOptions>,
-    pub postgres: Option<PostgresOptions>,
-    pub tsql: Option<TSqlOptions>,
+pub struct DialectHint {
+    pub key: String,
+    pub value: String,
 }
 
-// 各方言が特別な機能を持つ場合
-#[derive(Debug, Clone, PartialEq)]
-pub struct CreateTableStatement {
-    pub span: Span,
-    pub if_not_exists: bool,
-    pub name: QualifiedName,
-    pub columns: Vec<ColumnDef>,
-    pub constraints: Vec<TableConstraint>,
-    pub options: TableOptions,
-    pub dialect_options: DialectOptions,  // 拡張ポイント
-}
+// 使用例:
+// MySQL: DialectHint { key: "engine", value: "InnoDB" }
+// ASE:   DialectHint { key: "lock_scheme", value: "allpages" }
+// PostgreSQL: DialectHint { key: "tablespace", value: "pg_default" }
+//
+// 各エミッタが独自にキーを定義し、変換層が生成する。
+// common-sql 自体はキーの意味を解釈しない。
 ```
 
 ## 実装時の注意事項

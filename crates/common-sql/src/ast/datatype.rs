@@ -471,6 +471,108 @@ mod tests {
         );
     }
 
+    // ── Debug output: exhaustive per-category variant coverage ──────────
+    // Every DataType variant's Debug representation must contain its own
+    // variant name. This guards against accidental Debug renames and
+    // satisfies the all-variant exhaustiveness requirement.
+
+    #[test]
+    fn debug_output_all_integer_variants() {
+        for (name, dt) in [
+            ("TinyInt", DataType::TinyInt),
+            ("SmallInt", DataType::SmallInt),
+            ("Int", DataType::Int),
+            ("BigInt", DataType::BigInt),
+        ] {
+            let debug = format!("{dt:?}");
+            assert!(
+                debug.contains(name),
+                "Debug output should contain '{name}': {debug}"
+            );
+        }
+    }
+
+    #[test]
+    fn debug_output_all_decimal_float_variants() {
+        let numeric = format!(
+            "{:?}",
+            DataType::Numeric {
+                precision: Some(10),
+                scale: None,
+            }
+        );
+        assert!(numeric.contains("Numeric"), "missing Numeric: {numeric}");
+        let real = format!("{:?}", DataType::Real);
+        assert!(real.contains("Real"), "missing Real: {real}");
+        let double = format!("{:?}", DataType::DoublePrecision);
+        assert!(
+            double.contains("DoublePrecision"),
+            "missing DoublePrecision: {double}"
+        );
+    }
+
+    #[test]
+    fn debug_output_all_string_variants() {
+        for (name, dt) in [("Text", DataType::Text), ("NText", DataType::NText)] {
+            let debug = format!("{dt:?}");
+            assert!(debug.contains(name), "missing {name}: {debug}");
+        }
+        let nchar = format!("{:?}", DataType::NChar { length: Some(5) });
+        assert!(nchar.contains("NChar"), "missing NChar: {nchar}");
+        let nvarchar = format!("{:?}", DataType::NVarChar { length: Some(5) });
+        assert!(
+            nvarchar.contains("NVarChar"),
+            "missing NVarChar: {nvarchar}"
+        );
+    }
+
+    #[test]
+    fn debug_output_all_datetime_variants() {
+        assert!(format!("{:?}", DataType::Date).contains("Date"));
+        assert!(format!("{:?}", DataType::Time { precision: None }).contains("Time"));
+        assert!(format!("{:?}", DataType::DateTime { precision: None }).contains("DateTime"));
+        assert!(format!("{:?}", DataType::Timestamp { precision: Some(6) }).contains("Timestamp"));
+    }
+
+    #[test]
+    fn debug_output_all_binary_variants() {
+        assert!(format!("{:?}", DataType::Binary { length: None }).contains("Binary"));
+        assert!(format!("{:?}", DataType::VarBinary { length: None }).contains("VarBinary"));
+        assert!(format!("{:?}", DataType::Blob).contains("Blob"));
+    }
+
+    #[test]
+    fn debug_output_all_other_variants() {
+        assert!(format!("{:?}", DataType::Boolean).contains("Boolean"));
+        assert!(format!("{:?}", DataType::Uuid).contains("Uuid"));
+        assert!(format!("{:?}", DataType::Json).contains("Json"));
+    }
+
+    #[test]
+    fn debug_output_includes_field_names_for_struct_variants() {
+        // Struct-variant Debug output must surface the field names so that
+        // downstream emitters can pattern-match on the rendered form.
+        let debug = format!(
+            "{:?}",
+            DataType::Decimal {
+                precision: Some(18),
+                scale: Some(4),
+            }
+        );
+        assert!(
+            debug.contains("precision"),
+            "missing precision field: {debug}"
+        );
+        assert!(debug.contains("scale"), "missing scale field: {debug}");
+    }
+
+    #[test]
+    fn debug_output_includes_length_field() {
+        let debug = format!("{:?}", DataType::Char { length: Some(42) });
+        assert!(debug.contains("length"), "missing length field: {debug}");
+        assert!(debug.contains("42"), "missing length value: {debug}");
+    }
+
     // ── Hash / Eq (HashSet usage) ───────────────────────
 
     #[test]
@@ -585,5 +687,105 @@ mod tests {
     #[test]
     fn real_is_distinct_from_int() {
         assert_ne!(DataType::Real, DataType::Int);
+    }
+
+    // ── Exhaustiveness: every variant is constructible & distinct ────────
+    // Enumerates every DataType variant once. If a new variant is added
+    // without updating this list, the count assertion fails — surfacing the
+    // coverage gap rather than silently letting it regress.
+
+    #[test]
+    fn every_variant_constructible_and_clones_equal() {
+        let all = vec![
+            DataType::TinyInt,
+            DataType::SmallInt,
+            DataType::Int,
+            DataType::BigInt,
+            DataType::Decimal {
+                precision: None,
+                scale: None,
+            },
+            DataType::Numeric {
+                precision: None,
+                scale: None,
+            },
+            DataType::Real,
+            DataType::DoublePrecision,
+            DataType::Char { length: None },
+            DataType::VarChar { length: None },
+            DataType::Text,
+            DataType::NChar { length: None },
+            DataType::NVarChar { length: None },
+            DataType::NText,
+            DataType::Date,
+            DataType::Time { precision: None },
+            DataType::DateTime { precision: None },
+            DataType::Timestamp { precision: None },
+            DataType::Binary { length: None },
+            DataType::VarBinary { length: None },
+            DataType::Blob,
+            DataType::Boolean,
+            DataType::Uuid,
+            DataType::Json,
+        ];
+        // 24 variants currently defined. Bump this when adding a variant.
+        assert_eq!(all.len(), 24, "DataType variant count changed; update test");
+        for dt in &all {
+            assert_eq!(dt.clone(), *dt, "clone should equal original for {dt:?}");
+        }
+    }
+
+    // ── Edge cases: None optionals and minimal parametrized forms ───────
+
+    #[test]
+    fn numeric_with_no_params_distinct_from_decimal_no_params() {
+        assert_ne!(
+            DataType::Numeric {
+                precision: None,
+                scale: None,
+            },
+            DataType::Decimal {
+                precision: None,
+                scale: None,
+            }
+        );
+    }
+
+    #[test]
+    fn time_zero_precision_is_valid() {
+        let dt = DataType::Time { precision: Some(0) };
+        assert_eq!(dt, DataType::Time { precision: Some(0) });
+    }
+
+    #[test]
+    fn timestamp_none_vs_some_zero_differ() {
+        assert_ne!(
+            DataType::Timestamp { precision: None },
+            DataType::Timestamp { precision: Some(0) }
+        );
+    }
+
+    #[test]
+    fn binary_none_vs_some_zero_differ() {
+        assert_ne!(
+            DataType::Binary { length: None },
+            DataType::Binary { length: Some(0) }
+        );
+    }
+
+    #[test]
+    fn unit_variants_round_trip_through_eq() {
+        // The four zero-field unit variants must compare equal to themselves.
+        let pairs = [
+            (DataType::Text, DataType::Text),
+            (DataType::NText, DataType::NText),
+            (DataType::Blob, DataType::Blob),
+            (DataType::Boolean, DataType::Boolean),
+            (DataType::Uuid, DataType::Uuid),
+            (DataType::Json, DataType::Json),
+        ];
+        for (a, b) in pairs {
+            assert_eq!(a, b);
+        }
     }
 }

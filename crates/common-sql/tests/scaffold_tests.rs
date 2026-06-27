@@ -226,7 +226,7 @@ mod tests {
     // ---------------------------------------------------------------
     #[test]
     fn test_statement_select_variant_exists() {
-        let stmt = Statement::Select(SelectStatement::simple(vec![]));
+        let stmt = Statement::Select(Box::new(SelectStatement::simple(vec![])));
         let _debug = format!("{stmt:?}");
         assert_eq!(stmt.clone(), stmt);
     }
@@ -262,6 +262,6 @@ mod tests {
         let _item = SelectItem::Wildcard;
         let _expr = Expression::Literal(Literal::Null);
         let _in_list = InList::Values(vec![]);
-        let _stmt = Statement::Select(SelectStatement::simple(vec![]));
+        let _stmt = Statement::Select(Box::new(SelectStatement::simple(vec![])));
     }
 }

@@ -11,3 +11,6 @@
 #![warn(clippy::panic)]
 
 pub mod ast;
+pub mod visitor;
+
+pub use visitor::{Visitable, Visitor};
