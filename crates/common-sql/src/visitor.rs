@@ -37,6 +37,16 @@ use crate::ast::Expression;
 /// `Visitor` is implemented for `&mut T`-style consumers: the trait is generic
 /// over `Sized` self and methods take `&mut self` so visitors can accumulate
 /// state (e.g. a `String` buffer) across nodes.
+///
+/// **Default methods are dispatch-only**: each `visit_*` hook routes a node to
+/// its matching override but does NOT descend into child nodes — e.g.
+/// [`visit_create_table_statement`](Self::visit_create_table_statement) does
+/// not walk `columns`/`constraints`, and
+/// [`visit_comparison`](Self::visit_comparison) does not recurse into
+/// `left`/`right`. An emitter that needs traversal must override the hook and
+/// call [`visit_expression`](Self::visit_expression) /
+/// [`visit_data_type`](Self::visit_data_type) itself. Centralized `walk_*`
+/// helpers may be added when the first downstream emitter lands.
 pub trait Visitor: Sized {
     /// The value produced by visiting a node.
     type Output;

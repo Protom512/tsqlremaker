@@ -32,20 +32,31 @@
 common-sql/
 ├── Cargo.toml
 ├── src/
-│   ├── lib.rs              # 公開APIの再エクスポート
-│   ├── mod.rs              # モジュール宣言
+│   ├── lib.rs              # 公開APIの再エクスポート（Visitor/Visitable 含む）
 │   ├── ast/
-│   │   ├── mod.rs          # AST モジュール
-│   │   ├── statement.rs    # Statement ノード
+│   │   ├── mod.rs          # AST モジュール（公開型の再エクスポート）
+│   │   ├── statement.rs    # Statement enum + DML（Select/Insert/Update/Delete）
+│   │   ├── ddl.rs          # DDL ノード（Create/Alter/Drop Table, Create/Drop Index）
 │   │   ├── expression.rs   # Expression ノード
 │   │   ├── datatype.rs     # DataType ノード
-│   │   ├── clause.rs       # クエリ句（FROM, WHERE 等）
+│   │   ├── clause.rs       # クエリ句（FROM, WHERE, ORDER BY, LIMIT 等）
+│   │   ├── join.rs         # JOIN / TableFactor 表現
+│   │   ├── identifier.rs   # Identifier / QualifiedName / TableAlias
+│   │   ├── literal.rs      # Literal
 │   │   └── span.rs         # 位置情報
-│   └── visitor.rs          # Visitor trait
+│   └── visitor.rs          # Visitor / Visitable trait
 └── tests/
-    ├── ast_tests.rs        # AST 単体テスト
-    └── visitor_tests.rs    # Visitor テスト
+    ├── scaffold_tests.rs   # AST 構築スキャフォールド
+    ├── reexport_dml.rs     # DML 公開面の到達性テスト
+    ├── reexport_ddl.rs     # DDL 公開面の到達性テスト
+    └── visitor_tests.rs    # Visitor 統合テスト
 ```
+
+> **Task 5.1 実装逸脱（記録）**: tasks.md Task 5.1 は DDL 型を `statement.rs` へ追記する計画だったが、
+> 凝集性のため DDL 型は独立した `ast/ddl.rs` モジュールに抽出した（`clause.rs` / `join.rs` 等の
+> カテゴリ別分割と一致）。`statement.rs` は `Statement` enum の DDL バリアントのみ保持する。
+> また enum サイズ不変量のため全バリアントを `Box<T>` で包む（`clippy::large_enum_variant` 回避；
+> 詳細は下記 `Statement` ノードの定義参照）。
 
 ## データ構造設計
 
@@ -83,15 +94,15 @@ impl Span {
 /// SQL 文の種類
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
-    Select(SelectStatement),
-    Insert(InsertStatement),
-    Update(UpdateStatement),
-    Delete(DeleteStatement),
-    CreateTable(CreateTableStatement),
-    AlterTable(AlterTableStatement),
-    DropTable(DropTableStatement),
-    CreateIndex(CreateIndexStatement),
-    DropIndex(DropIndexStatement),
+    Select(Box<SelectStatement>),
+    Insert(Box<InsertStatement>),
+    Update(Box<UpdateStatement>),
+    Delete(Box<DeleteStatement>),
+    CreateTable(Box<CreateTableStatement>),
+    AlterTable(Box<AlterTableStatement>),
+    DropTable(Box<DropTableStatement>),
+    CreateIndex(Box<CreateIndexStatement>),
+    DropIndex(Box<DropIndexStatement>),
 }
 
 /// SELECT 文

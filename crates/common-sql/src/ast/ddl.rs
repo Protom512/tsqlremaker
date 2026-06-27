@@ -207,7 +207,7 @@ pub struct IndexColumn {
     pub name: Identifier,
     /// Sort direction (`ASC` / `DESC`); `None` means default.
     ///
-    /// Reuses [`SortDirection`](crate::ast::clause::SortDirection) so that
+    /// Reuses [`SortDirection`] so that
     /// index columns and `ORDER BY` items share one canonical type.
     pub direction: Option<SortDirection>,
 }
