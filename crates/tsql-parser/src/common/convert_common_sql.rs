@@ -9,9 +9,12 @@
 //! `DOUBLE PRECISION` only); it maps to `DoublePrecision` with its precision
 //! discarded, which is range-safe for typical values.
 
-use common_sql::ast::DataType as SqlDataType;
+use common_sql::ast::{
+    DataType as SqlDataType, Identifier as SqlIdentifier, Literal as SqlLiteral,
+    UnaryOperator as SqlUnaryOperator,
+};
 
-use crate::common::CommonDataType;
+use crate::common::{CommonDataType, CommonIdentifier, CommonLiteral, CommonUnaryOperator};
 
 /// Convert a legacy [`CommonDataType`] into the standalone
 /// [`common_sql::ast::DataType`].
@@ -53,12 +56,100 @@ impl From<CommonDataType> for SqlDataType {
     }
 }
 
+/// Convert a legacy [`CommonLiteral`] into the standalone
+/// [`common_sql::ast::Literal`].
+///
+/// `Float(f64)` is rendered to a string via `Display`, matching common-sql's
+/// precision-preserving `Float(String)` shape. Precision beyond `f64` is
+/// already lost in `CommonLiteral`, so this is the best the bridge can do.
+impl From<CommonLiteral> for SqlLiteral {
+    fn from(lit: CommonLiteral) -> Self {
+        match lit {
+            CommonLiteral::String(s) => SqlLiteral::String(s),
+            CommonLiteral::Integer(i) => SqlLiteral::Integer(i),
+            CommonLiteral::Float(f) => SqlLiteral::Float(f.to_string()),
+            CommonLiteral::Null => SqlLiteral::Null,
+            CommonLiteral::Boolean(b) => SqlLiteral::Boolean(b),
+        }
+    }
+}
+
+/// Convert a legacy [`CommonIdentifier`] into the standalone
+/// [`common_sql::ast::Identifier`] (unquoted).
+impl From<CommonIdentifier> for SqlIdentifier {
+    fn from(id: CommonIdentifier) -> Self {
+        SqlIdentifier::new(id.name)
+    }
+}
+
+/// Convert a legacy [`CommonUnaryOperator`] into the standalone
+/// [`common_sql::ast::UnaryOperator`].
+impl From<CommonUnaryOperator> for SqlUnaryOperator {
+    fn from(op: CommonUnaryOperator) -> Self {
+        match op {
+            CommonUnaryOperator::Plus => SqlUnaryOperator::Plus,
+            CommonUnaryOperator::Minus => SqlUnaryOperator::Minus,
+            CommonUnaryOperator::Not => SqlUnaryOperator::Not,
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::panic)]
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+
+    // -- leaf conversions: Literal / Identifier / UnaryOperator ------------
+
+    #[test]
+    fn literal_maps_identity_except_float() {
+        assert_eq!(
+            SqlLiteral::from(CommonLiteral::String("hi".to_string())),
+            SqlLiteral::String("hi".to_string())
+        );
+        assert_eq!(
+            SqlLiteral::from(CommonLiteral::Integer(7)),
+            SqlLiteral::Integer(7)
+        );
+        assert_eq!(SqlLiteral::from(CommonLiteral::Null), SqlLiteral::Null);
+        assert_eq!(
+            SqlLiteral::from(CommonLiteral::Boolean(true)),
+            SqlLiteral::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn literal_float_renders_to_string() {
+        let got: SqlLiteral = CommonLiteral::Float(1.5_f64).into();
+        assert_eq!(got, SqlLiteral::Float("1.5".to_string()));
+    }
+
+    #[test]
+    fn identifier_preserves_name() {
+        let id = SqlIdentifier::from(CommonIdentifier {
+            name: "count".to_string(),
+        });
+        assert_eq!(id.value(), "count");
+        assert!(!id.quoted());
+    }
+
+    #[test]
+    fn unary_operator_maps_identity() {
+        assert_eq!(
+            SqlUnaryOperator::from(CommonUnaryOperator::Plus),
+            SqlUnaryOperator::Plus
+        );
+        assert_eq!(
+            SqlUnaryOperator::from(CommonUnaryOperator::Minus),
+            SqlUnaryOperator::Minus
+        );
+        assert_eq!(
+            SqlUnaryOperator::from(CommonUnaryOperator::Not),
+            SqlUnaryOperator::Not
+        );
+    }
 
     // -- identity mappings --------------------------------------------------
 
