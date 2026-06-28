@@ -1730,6 +1730,7 @@ dependencies = [
 name = "tsql-parser"
 version = "0.1.0"
 dependencies = [
+ "common-sql",
  "criterion",
  "rstest",
  "thiserror",
