@@ -19,6 +19,8 @@ pub use statement::{
     CommonTableReference, CommonUpdateStatement,
 };
 
+pub use convert_common_sql::convert;
+
 /// Common SQL AST 変換トレイト
 ///
 /// T-SQL ASTノードを方言非依存の Common SQL AST に変換する。
