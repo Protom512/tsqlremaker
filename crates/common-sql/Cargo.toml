@@ -1,0 +1,14 @@
+[package]
+name = "common-sql"
+version = "0.1.0"
+edition = "2021"
+description = "Dialect-independent common SQL AST"
+
+[dependencies]
+
+[dev-dependencies]
+rstest = { workspace = true }
+
+[lints]
+# workspace.lintsを継承
+workspace = true

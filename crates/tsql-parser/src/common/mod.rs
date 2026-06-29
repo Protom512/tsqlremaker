@@ -3,6 +3,7 @@
 //! 方言非依存のSQL抽象構文木（AST）を定義する。
 //! T-SQL 固有の構文から方言に依存しない表現への変換を目的とする。
 
+mod convert_common_sql;
 mod data_type;
 mod expression;
 mod statement;
@@ -17,6 +18,8 @@ pub use statement::{
     CommonLimitClause, CommonOrderByItem, CommonSelectItem, CommonSelectStatement, CommonStatement,
     CommonTableReference, CommonUpdateStatement,
 };
+
+pub use convert_common_sql::convert;
 
 /// Common SQL AST 変換トレイト
 ///

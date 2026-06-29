@@ -10,6 +10,7 @@ repository = "https://github.com/Protom512/tsqlremaker"
 [dependencies]
 tsql-lexer = { path = "../tsql-lexer" }
 tsql-token = { path = "../tsql-token" }
+common-sql = { path = "../common-sql" }
 thiserror = { workspace = true }
 
 [dev-dependencies]
