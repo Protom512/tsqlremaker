@@ -56,6 +56,9 @@ impl Default for EmitterConfig {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
+#[allow(clippy::panic)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -85,5 +88,53 @@ mod tests {
         let config = EmitterConfig::default();
         assert!(config.format);
         assert_eq!(config.indent_size, 4);
+    }
+
+    // --- Task 1.3 design contract conformance (field names + Default values) ---
+
+    /// design.md 158-163: fields are exactly `format: bool` and `indent_size: usize`.
+    /// Constructing via struct literal with these exact names must compile and work.
+    #[test]
+    fn test_struct_literal_field_names_match_design() {
+        let config = EmitterConfig {
+            format: false,
+            indent_size: 8,
+        };
+        assert!(!config.format);
+        assert_eq!(config.indent_size, 8);
+    }
+
+    /// Group0 acceptance: Default must be format:true / indent_size:4.
+    #[test]
+    fn test_default_matches_group0_acceptance() {
+        let config = EmitterConfig::default();
+        assert!(config.format);
+        assert_eq!(config.indent_size, 4);
+    }
+
+    /// Default delegates to formatted() (single source of truth).
+    #[test]
+    fn test_default_equals_formatted() {
+        assert_eq!(EmitterConfig::default(), EmitterConfig::formatted());
+    }
+
+    /// compact() disables formatting and zeroes indent.
+    #[test]
+    fn test_compact_disables_format_and_indent() {
+        let config = EmitterConfig::compact();
+        assert!(!config.format);
+        assert_eq!(config.indent_size, 0);
+    }
+
+    /// new() is a const constructor storing both fields verbatim.
+    #[test]
+    fn test_new_preserves_both_fields() {
+        let config = EmitterConfig::new(true, 2);
+        assert!(config.format);
+        assert_eq!(config.indent_size, 2);
+
+        let config = EmitterConfig::new(false, 16);
+        assert!(!config.format);
+        assert_eq!(config.indent_size, 16);
     }
 }

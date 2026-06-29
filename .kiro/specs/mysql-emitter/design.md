@@ -18,6 +18,31 @@ MySQL Emitter は、Common SQL AST を入力として受け取り、MySQL 方言
 - MySQL 以外の方言への対応（PostgreSQL Emitter など別コンポーネント）
 - 実行時の SQL 検証や最適化
 
+## Design Decisions（CTO DEFER 解消 — 2026-06-30）
+
+以下の決定は、feature-pipeline 推定レビュー（CTO DEFER、wf_ef99daab-c2a）で指摘された設計ドリフトを解消し、design/tasks フェーズを承認可能にするために明文化する。すべてコードベース実態に対して検証済み。
+
+### DD-1: Visitor 実装方針（ハイブリッド） — Req 1.5 / 13
+
+as-built の `common_sql::Visitor` trait は `type Output` がジェネリックで、`visit_*` は **ディスパッチ専用（子ノードへの自動再帰なし）** である。本 design の当初契約（`visit_statement(...) -> String`、下記 API Contract）はこの実態とずれていた（design drift）。
+
+**決定**: ハイブリッド採用。
+- **public**: `impl common_sql::Visitor for MySqlEmitter { type Output = String; ... }` を実装し、契約適合を満たす。
+- **private**: エラー伝播のため内部では `Result<String, EmitError>` を返す `visit_*` メソッドを保持する。public Visitor メソッドは private メソッドを呼び出し、`Result` を `String` に変換する（エラー時は `panic!` せず回復パス or 上位へ伝播）。
+- 子ノード巡回は public/private ともにオーバーライド内で**明示的**に行う（trait の自動再帰に依存しない）。
+
+### DD-2: タスクグラフ順序依存（Task 2.2 ↔ 3.1）
+
+`FunctionConverter::convert_function` は `emitter: &mut MySqlEmitter` を受け取るため、Task 2.2（FunctionConverter）は Task 3.1（MySqlEmitter 構造体）に依存する。したがって **Group 1（converters）と Group 2（emitter）は独立ではない**。実装順序は **3.1 を 2.2 の前（または同時）に着地**させること。tasks.md のグルーピングは参照順であり、実行依存順ではない。
+
+### DD-3: ブリッジ DDL ギャップ（Task 4.4）
+
+`tsql_parser::common::convert()`（commit 6727df8 / Issue #148）は `Select/Insert/Update/Delete` をカバーするが、DDL（CreateTable/DropTable/AlterTable）は `DialectSpecific => None` にマップされる。したがって **Task 4.4（CREATE TABLE 生成）の end-to-end テスト（T-SQL → common-sql → MySQL）は現時点で実行不能**。Task 4.4 の単体/統合テストは `common_sql::ast` ノードを直接構築して検証し、E2E は既知の制限として文書化する（ブリッジが DDL をサポートした時点で追加）。
+
+### DD-4: 依存先クレート名の整合
+
+tasks.md / requirements.md 中の `common-sql-ast` は実クレート名 **`common-sql`**（Rust crate name `common_sql`）の別表記。実装時は `common-sql` に整合させる。Task 1.1 の Cargo.toml 再配線前に `cargo tree -p common-sql --depth 1` で thiserror ワークスペース版との整合を確認すること（dependency-version-compatibility.md）。
+
 ## Architecture
 
 ### Architecture Pattern & Boundary Map
