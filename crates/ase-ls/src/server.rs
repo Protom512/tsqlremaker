@@ -180,9 +180,22 @@ impl LanguageServer for AseLanguageServer {
             .await;
     }
 
-    async fn completion(&self, _: CompletionParams) -> Result<Option<CompletionResponse>> {
-        let response = completion::complete_all().clone();
-        Ok(Some(response))
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        if let Some(analysis) = self.get_analysis(uri).await {
+            // カーソル直前までの行テキストから補完コンテキストを推定 (#126)。
+            // LSP position.character は UTF-16 単位だが、ASCII 主体の SQL では
+            // 文字数で安全にプレフィックスを取り出せる。
+            let line = analysis.get_line(position.line);
+            let prefix: String = line.chars().take(position.character as usize).collect();
+            Ok(Some(completion::complete_for_context(
+                &prefix,
+                &analysis.symbol_table,
+            )))
+        } else {
+            Ok(Some(completion::complete_all().clone()))
+        }
     }
 
     async fn document_symbol(
