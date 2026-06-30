@@ -238,8 +238,12 @@ fn build_schema_hover(
             // 変数の型情報を表示
             if let Some(var) = SymbolTableBuilder::find_variable(symbol_table, text) {
                 return Some(format!(
-                    "```tsql\n{}: {}\n```\n\n**Variable** — Declared with `DECLARE {} {}`",
-                    text, var.data_type, var.name, var.data_type
+                    "```tsql\n{}: {}\n```\n\n**Variable** — Declared with `DECLARE {} {}` (line {})",
+                    text,
+                    var.data_type,
+                    var.name,
+                    var.data_type,
+                    var.range.start.line + 1
                 ));
             }
             // プロシージャボディ内変数
@@ -720,6 +724,63 @@ mod tests {
                 assert!(mc.value.contains("users"), "Should show target table name");
             }
             other => panic!("Expected Markup content, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_hover_declared_variable_shows_type() {
+        // #137: hovering a DECLARE'd variable should show its declared type.
+        let source = "DECLARE @count INT\nSELECT @count";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        // @count sits on line 1; "SELECT " is 7 chars, so char 8 lands on @count.
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 8,
+            },
+        );
+        assert!(
+            result.is_some(),
+            "hover over DECLARE'd variable @count should return info"
+        );
+        if let Some(h) = result {
+            if let HoverContents::Markup(mc) = &h.contents {
+                assert!(
+                    mc.value.contains("INT"),
+                    "variable hover should show the declared type INT, got: {}",
+                    mc.value
+                );
+                assert!(
+                    mc.value.contains("line 1"),
+                    "variable hover should point at the DECLARE line, got: {}",
+                    mc.value
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_hover_declared_variable_parameterized_type() {
+        // #137: a parameterized type (VARCHAR(100)) must render with its size.
+        let source = "DECLARE @name VARCHAR(100)\nSELECT @name";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 8,
+            },
+        );
+        assert!(result.is_some(), "hover over @name should return info");
+        if let Some(h) = result {
+            if let HoverContents::Markup(mc) = &h.contents {
+                assert!(
+                    mc.value.contains("VARCHAR(100)"),
+                    "variable hover should show VARCHAR(100), got: {}",
+                    mc.value
+                );
+            }
         }
     }
 }
