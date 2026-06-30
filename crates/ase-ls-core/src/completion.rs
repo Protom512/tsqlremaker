@@ -5,6 +5,8 @@
 use lsp_types::{CompletionItem, CompletionItemKind, CompletionList, CompletionResponse};
 use std::sync::LazyLock;
 
+use crate::symbol_table::{SymbolTable, TableSymbol};
+
 /// 全補完候補のグローバルキャッシュ。初回アクセス時のみ構築される。
 static COMPLETE_ALL_CACHE: LazyLock<CompletionResponse> = LazyLock::new(build_complete_all);
 
@@ -152,11 +154,100 @@ fn build_complete_keywords() -> CompletionResponse {
     })
 }
 
+/// 補完コンテキスト（カーソル直前のトークンから推定、#126）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CompletionContext {
+    /// テーブル名が期待される位置 (FROM / JOIN / INTO / UPDATE / TABLE の直後)。
+    Table,
+    /// 変数名の宣言位置 (`DECLARE @<name>`)。静的候補は無意味なため空。
+    VariableDeclaration,
+    /// 式が期待される位置 (SELECT / WHERE / SET / 値 等)。全候補を返す。
+    Expression,
+}
+
+/// カーソル直前の行プレフィックスから補完コンテキストを推定する。
+///
+/// ホワイトスペース区切りの最終トークン（およびその直前トークン）から、
+/// テーブル名位置・変数宣言位置・式位置を判定する。
+pub(crate) fn detect_context(prefix: &str) -> CompletionContext {
+    let upper = prefix.trim_end().to_uppercase();
+    let tokens: Vec<&str> = upper.split_whitespace().collect();
+    let table_kw = ["FROM", "JOIN", "INTO", "UPDATE", "TABLE"];
+
+    let last_token = tokens.last().copied().unwrap_or("");
+
+    // 変数宣言位置: "DECLARE" が最終トークン、または "@<name>" の直前が DECLARE。
+    let is_declare =
+        last_token == "DECLARE" || tokens.len() >= 2 && tokens[tokens.len() - 2] == "DECLARE";
+    if is_declare {
+        return CompletionContext::VariableDeclaration;
+    }
+
+    // テーブル名位置: 最終トークン、またはその直前がテーブル系キーワード。
+    let last_is_table = table_kw.contains(&last_token);
+    let prev_is_table = tokens.len() >= 2 && table_kw.contains(&tokens[tokens.len() - 2]);
+    if last_is_table || prev_is_table {
+        return CompletionContext::Table;
+    }
+
+    CompletionContext::Expression
+}
+
+/// カーソルコンテキストに応じた補完候補を返す (#126)。
+///
+/// * `Table` → シンボルテーブル内のテーブル名
+/// * `VariableDeclaration` → 空 (新規変数名入力中)
+/// * `Expression` → [`complete_all`] の全候補
+///
+/// # Arguments
+///
+/// * `prefix` - 行頭〜カーソル位置までのテキスト
+/// * `symbol_table` - 現ドキュメントのシンボルテーブル (テーブル名参照用)
+#[must_use]
+pub fn complete_for_context(prefix: &str, symbol_table: &SymbolTable) -> CompletionResponse {
+    match detect_context(prefix) {
+        CompletionContext::VariableDeclaration => CompletionResponse::List(CompletionList {
+            is_incomplete: false,
+            items: Vec::new(),
+        }),
+        CompletionContext::Table => {
+            let items: Vec<CompletionItem> = symbol_table
+                .tables
+                .values()
+                .map(table_completion_item)
+                .collect();
+            CompletionResponse::List(CompletionList {
+                is_incomplete: false,
+                items,
+            })
+        }
+        CompletionContext::Expression => complete_all().clone(),
+    }
+}
+
+/// テーブルシンボルから補完アイテムを構築する。
+fn table_completion_item(t: &TableSymbol) -> CompletionItem {
+    CompletionItem {
+        label: t.name.clone(),
+        kind: Some(CompletionItemKind::STRUCT),
+        detail: Some(
+            if t.is_temporary {
+                "Temporary table"
+            } else {
+                "Table"
+            }
+            .to_string(),
+        ),
+        ..CompletionItem::default()
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::panic)]
 mod tests {
     use super::*;
+    use crate::symbol_table::SymbolTableBuilder;
     use lsp_types::InsertTextFormat;
 
     #[test]
@@ -433,5 +524,99 @@ mod tests {
         assert!(!is_comma_separated_syntax(""));
         assert!(is_comma_separated_syntax("()")); // empty parens still match pattern
         assert!(is_comma_separated_syntax("F()")); // single char func
+    }
+
+    // ----- #126: context-aware completion ---------------------------------
+
+    #[test]
+    fn detect_context_table_after_from() {
+        assert_eq!(detect_context("SELECT * FROM "), CompletionContext::Table);
+    }
+
+    #[test]
+    fn detect_context_table_while_typing_name() {
+        // "FROM u" — user started typing the table name
+        assert_eq!(detect_context("SELECT * FROM u"), CompletionContext::Table);
+    }
+
+    #[test]
+    fn detect_context_table_after_join_and_into() {
+        assert_eq!(
+            detect_context("SELECT * FROM a JOIN "),
+            CompletionContext::Table
+        );
+        assert_eq!(detect_context("INSERT INTO "), CompletionContext::Table);
+        assert_eq!(detect_context("UPDATE "), CompletionContext::Table);
+    }
+
+    #[test]
+    fn detect_context_variable_declaration() {
+        assert_eq!(
+            detect_context("DECLARE @"),
+            CompletionContext::VariableDeclaration
+        );
+        // while typing the variable name
+        assert_eq!(
+            detect_context("DECLARE @co"),
+            CompletionContext::VariableDeclaration
+        );
+        // after DECLARE + space, before the '@'
+        assert_eq!(
+            detect_context("DECLARE "),
+            CompletionContext::VariableDeclaration
+        );
+    }
+
+    #[test]
+    fn detect_context_expression_positions() {
+        assert_eq!(detect_context("SELECT "), CompletionContext::Expression);
+        assert_eq!(
+            detect_context("SELECT * FROM users WHERE "),
+            CompletionContext::Expression
+        );
+        assert_eq!(detect_context(""), CompletionContext::Expression);
+    }
+
+    #[test]
+    fn complete_for_context_returns_table_names() {
+        let st = SymbolTableBuilder::build("CREATE TABLE users (id INT)");
+        let resp = complete_for_context("SELECT * FROM ", &st);
+        match resp {
+            CompletionResponse::List(list) => {
+                assert!(
+                    list.items.iter().any(|i| i.label == "users"),
+                    "FROM context should offer table names"
+                );
+            }
+            _ => panic!("Expected List"),
+        }
+    }
+
+    #[test]
+    fn complete_for_context_variable_decl_is_empty() {
+        let st = SymbolTableBuilder::build("");
+        let resp = complete_for_context("DECLARE @", &st);
+        match resp {
+            CompletionResponse::List(list) => {
+                assert!(
+                    list.items.is_empty(),
+                    "Variable declaration should not offer static items"
+                );
+            }
+            _ => panic!("Expected List"),
+        }
+    }
+
+    #[test]
+    fn complete_for_context_expression_returns_full_list() {
+        let st = SymbolTableBuilder::build("");
+        let resp = complete_for_context("SELECT ", &st);
+        match resp {
+            CompletionResponse::List(list) => {
+                // Expression context returns the full cached list (e.g. SELECT keyword).
+                assert!(list.items.iter().any(|i| i.label == "SELECT"));
+            }
+            _ => panic!("Expected List"),
+        }
     }
 }
