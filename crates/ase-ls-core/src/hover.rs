@@ -783,4 +783,34 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_hover_column_in_where_clause() {
+        // #141: hovering a column referenced in a WHERE clause should show
+        // its type. "SELECT id, name FROM users WHERE id > 0" — the WHERE
+        // "id" sits at char 33 on line 1.
+        let source =
+            "CREATE TABLE users (id INT, name VARCHAR(100))\nSELECT id, name FROM users WHERE id > 0";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+        let result = hover_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 33,
+            },
+        );
+        assert!(
+            result.is_some(),
+            "hover over WHERE-clause column 'id' should return info"
+        );
+        if let Some(h) = result {
+            if let HoverContents::Markup(mc) = &h.contents {
+                assert!(
+                    mc.value.contains("INT"),
+                    "WHERE column hover should show type INT, got: {}",
+                    mc.value
+                );
+            }
+        }
+    }
 }
