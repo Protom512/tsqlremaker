@@ -280,21 +280,8 @@ impl LanguageServer for AseLanguageServer {
     ) -> Result<Option<Vec<TextEdit>>> {
         let uri = &params.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            let all_edits = formatting::format(&analysis.source);
-            // Filter edits to only those within the requested range
-            let range = params.range;
-            let filtered: Vec<TextEdit> = all_edits
-                .into_iter()
-                .filter(|edit| {
-                    edit.range.start.line >= range.start.line
-                        && edit.range.end.line <= range.end.line
-                })
-                .collect();
-            if filtered.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(filtered))
-            }
+            // 選択範囲のみを整形した単一 TextEdit を返す (#129)。
+            Ok(formatting::format_range(&analysis.source, params.range).map(|edit| vec![edit]))
         } else {
             Ok(None)
         }

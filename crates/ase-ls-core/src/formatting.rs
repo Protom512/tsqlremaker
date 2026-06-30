@@ -34,6 +34,36 @@ pub fn format(source: &str) -> Vec<TextEdit> {
     }]
 }
 
+/// 選択範囲 (`range`) のみをフォーマットした [`TextEdit`] を返す (#129)。
+///
+/// ドキュメント全体をフォーマットした結果から `range` に含まれる行を抽出し、
+/// その範囲だけを置換する単一の [`TextEdit`] を返す。範囲外は変更されない。
+/// 指定範囲が既に整形済み（フォーマット前後で変化ない）場合は `None`。
+#[must_use]
+pub fn format_range(source: &str, range: Range) -> Option<TextEdit> {
+    let formatted = format_sql(source);
+    let formatted_lines: Vec<&str> = formatted.lines().collect();
+    if formatted_lines.is_empty() {
+        return None;
+    }
+    let last = formatted_lines.len() - 1;
+    let start = (range.start.line as usize).min(last);
+    let end = (range.end.line as usize).min(last);
+    if start > end {
+        return None;
+    }
+    let new_text = formatted_lines[start..=end].join("\n");
+
+    // 選択範囲が既に整形済みなら編集不要。
+    let original_lines: Vec<&str> = source.lines().collect();
+    if let Some(orig) = original_lines.get(start..=end) {
+        if orig.join("\n") == new_text {
+            return None;
+        }
+    }
+    Some(TextEdit { range, new_text })
+}
+
 /// SQL文字列をフォーマットする
 fn format_sql(source: &str) -> String {
     let lexer = Lexer::new(source).with_comments(true);
@@ -216,6 +246,7 @@ const fn should_decrease_indent(kind: &TokenKind) -> bool {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::panic)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -493,6 +524,49 @@ mod tests {
             result.contains("0x41"),
             "HexString should be preserved: {}",
             result
+        );
+    }
+
+    #[test]
+    fn format_range_formats_only_selected_line() {
+        // #129: range formatting must touch only the selected range.
+        let source = "select id\nfrom users";
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 9,
+            },
+        };
+        let edit = format_range(source, range).expect("should produce a range edit");
+        assert_eq!(edit.range, range, "edit must cover only the selected range");
+        assert!(
+            edit.new_text.contains("SELECT"),
+            "selected line should be formatted, got: {}",
+            edit.new_text
+        );
+    }
+
+    #[test]
+    fn format_range_none_when_already_formatted() {
+        // #129: an already-formatted range yields no edit.
+        let source = "SELECT id\nFROM users";
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 9,
+            },
+        };
+        assert!(
+            format_range(source, range).is_none(),
+            "already-formatted range should yield no edit"
         );
     }
 }
