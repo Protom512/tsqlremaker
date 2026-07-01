@@ -3,7 +3,7 @@
 //! Common SQL DataType を PostgreSQL のデータ型文字列に変換します。
 
 use crate::EmitError;
-use tsql_parser::common::CommonDataType;
+use common_sql::ast::DataType;
 
 /// PostgreSQL データ型マッパー
 #[derive(Debug, Clone, Copy)]
@@ -23,54 +23,47 @@ impl DataTypeMapper {
     /// # Errors
     ///
     /// サポートされていないデータ型の場合はエラーを返す
-    pub fn map(data_type: &CommonDataType) -> Result<String, EmitError> {
+    pub fn map(data_type: &DataType) -> Result<String, EmitError> {
         Ok(match data_type {
             // 整数型
             // Note: PostgreSQL doesn't have TINYINT, use SMALLINT instead
-            CommonDataType::TinyInt => "SMALLINT".to_string(),
-            CommonDataType::SmallInt => "SMALLINT".to_string(),
-            CommonDataType::Int => "INTEGER".to_string(),
-            CommonDataType::BigInt => "BIGINT".to_string(),
+            DataType::TinyInt => "SMALLINT".to_string(),
+            DataType::SmallInt => "SMALLINT".to_string(),
+            DataType::Int => "INTEGER".to_string(),
+            DataType::BigInt => "BIGINT".to_string(),
 
             // 小数型
-            CommonDataType::Decimal { precision, scale } => {
-                Self::format_decimal(*precision, *scale)
-            }
-            CommonDataType::Numeric { precision, scale } => {
-                Self::format_decimal(*precision, *scale)
-            }
-            CommonDataType::Real => "REAL".to_string(),
-            CommonDataType::DoublePrecision => "DOUBLE PRECISION".to_string(),
-            CommonDataType::Float { precision } => {
-                if let Some(p) = precision {
-                    format!("FLOAT({p})")
-                } else {
-                    "FLOAT".to_string()
-                }
-            }
+            // Note: common-sql `DataType` には `Float` バリアントが存在しないため、
+            // 従来の FLOAT マッピングは削除された。浮動小数点は Real / DoublePrecision 経由。
+            DataType::Decimal { precision, scale } => Self::format_decimal(*precision, *scale),
+            DataType::Numeric { precision, scale } => Self::format_decimal(*precision, *scale),
+            DataType::Real => "REAL".to_string(),
+            DataType::DoublePrecision => "DOUBLE PRECISION".to_string(),
 
             // 文字列型
-            CommonDataType::Char { length } => Self::format_char("CHAR", *length),
-            CommonDataType::VarChar { length } => Self::format_varchar(*length),
-            CommonDataType::Text => "TEXT".to_string(),
-            CommonDataType::NChar { length } => Self::format_char("CHAR", *length),
-            CommonDataType::NVarChar { length } => Self::format_varchar(*length),
+            DataType::Char { length } => Self::format_char("CHAR", *length),
+            DataType::VarChar { length } => Self::format_varchar(*length),
+            DataType::Text => "TEXT".to_string(),
+            DataType::NChar { length } => Self::format_char("CHAR", *length),
+            DataType::NVarChar { length } => Self::format_varchar(*length),
+            // PostgreSQL は Unicode ネイティブ対応のため NTEXT → TEXT に正規化
+            DataType::NText => "TEXT".to_string(),
 
             // 日時型
-            CommonDataType::Date => "DATE".to_string(),
-            CommonDataType::Time { precision } => Self::format_time("TIME", *precision),
-            CommonDataType::DateTime { precision } => Self::format_time("TIMESTAMP", *precision),
-            CommonDataType::Timestamp { precision } => Self::format_time("TIMESTAMP", *precision),
+            DataType::Date => "DATE".to_string(),
+            DataType::Time { precision } => Self::format_time("TIME", *precision),
+            DataType::DateTime { precision } => Self::format_time("TIMESTAMP", *precision),
+            DataType::Timestamp { precision } => Self::format_time("TIMESTAMP", *precision),
 
             // バイナリ型
-            CommonDataType::Binary { length } => Self::format_binary("BYTEA", *length),
-            CommonDataType::VarBinary { length } => Self::format_varbinary(*length),
-            CommonDataType::Blob => "BYTEA".to_string(),
+            DataType::Binary { length } => Self::format_binary("BYTEA", *length),
+            DataType::VarBinary { length } => Self::format_varbinary(*length),
+            DataType::Blob => "BYTEA".to_string(),
 
             // その他
-            CommonDataType::Boolean => "BOOLEAN".to_string(),
-            CommonDataType::Uuid => "UUID".to_string(),
-            CommonDataType::Json => "JSONB".to_string(),
+            DataType::Boolean => "BOOLEAN".to_string(),
+            DataType::Uuid => "UUID".to_string(),
+            DataType::Json => "JSONB".to_string(),
         })
     }
 
@@ -126,6 +119,8 @@ impl DataTypeMapper {
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
+#[allow(clippy::panic)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -133,41 +128,32 @@ mod tests {
     #[test]
     fn test_map_tinyint() {
         // PostgreSQLにはTINYINT型がないため、TINYINTはSMALLINTにマップされる
-        assert_eq!(
-            DataTypeMapper::map(&CommonDataType::TinyInt).unwrap(),
-            "SMALLINT"
-        );
+        assert_eq!(DataTypeMapper::map(&DataType::TinyInt).unwrap(), "SMALLINT");
     }
 
     #[test]
     fn test_map_smallint() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::SmallInt).unwrap(),
+            DataTypeMapper::map(&DataType::SmallInt).unwrap(),
             "SMALLINT"
         );
     }
 
     #[test]
     fn test_map_int() {
-        assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Int).unwrap(),
-            "INTEGER"
-        );
+        assert_eq!(DataTypeMapper::map(&DataType::Int).unwrap(), "INTEGER");
     }
 
     #[test]
     fn test_map_bigint() {
-        assert_eq!(
-            DataTypeMapper::map(&CommonDataType::BigInt).unwrap(),
-            "BIGINT"
-        );
+        assert_eq!(DataTypeMapper::map(&DataType::BigInt).unwrap(), "BIGINT");
     }
 
     // 小数型のテスト
     #[test]
     fn test_map_decimal_default() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Decimal {
+            DataTypeMapper::map(&DataType::Decimal {
                 precision: None,
                 scale: None
             })
@@ -179,7 +165,7 @@ mod tests {
     #[test]
     fn test_map_decimal_with_precision() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Decimal {
+            DataTypeMapper::map(&DataType::Decimal {
                 precision: Some(10),
                 scale: None
             })
@@ -191,7 +177,7 @@ mod tests {
     #[test]
     fn test_map_decimal_with_precision_and_scale() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Decimal {
+            DataTypeMapper::map(&DataType::Decimal {
                 precision: Some(10),
                 scale: Some(2)
             })
@@ -203,7 +189,7 @@ mod tests {
     #[test]
     fn test_map_numeric_to_decimal() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Numeric {
+            DataTypeMapper::map(&DataType::Numeric {
                 precision: Some(8),
                 scale: Some(0)
             })
@@ -214,33 +200,29 @@ mod tests {
 
     #[test]
     fn test_map_real() {
-        assert_eq!(DataTypeMapper::map(&CommonDataType::Real).unwrap(), "REAL");
+        assert_eq!(DataTypeMapper::map(&DataType::Real).unwrap(), "REAL");
     }
 
     #[test]
     fn test_map_double_precision() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::DoublePrecision).unwrap(),
+            DataTypeMapper::map(&DataType::DoublePrecision).unwrap(),
             "DOUBLE PRECISION"
         );
     }
 
     #[test]
-    fn test_map_float_default() {
-        assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Float { precision: None }).unwrap(),
-            "FLOAT"
-        );
+    fn test_map_ntext_to_text() {
+        // PostgreSQL は Unicode ネイティブ対応のため NTEXT → TEXT に正規化される
+        assert_eq!(DataTypeMapper::map(&DataType::NText).unwrap(), "TEXT");
     }
 
     #[test]
-    fn test_map_float_with_precision() {
-        assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Float {
-                precision: Some(53)
-            })
-            .unwrap(),
-            "FLOAT(53)"
+    fn test_map_ntext_distinct_from_blob() {
+        // NTEXT は TEXT へ、BLOB は BYTEA へ — 異なる PostgreSQL 型にマップされる
+        assert_ne!(
+            DataTypeMapper::map(&DataType::NText).unwrap(),
+            DataTypeMapper::map(&DataType::Blob).unwrap()
         );
     }
 
@@ -248,7 +230,7 @@ mod tests {
     #[test]
     fn test_map_char_default() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Char { length: None }).unwrap(),
+            DataTypeMapper::map(&DataType::Char { length: None }).unwrap(),
             "CHAR"
         );
     }
@@ -256,7 +238,7 @@ mod tests {
     #[test]
     fn test_map_char_with_length() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Char { length: Some(10) }).unwrap(),
+            DataTypeMapper::map(&DataType::Char { length: Some(10) }).unwrap(),
             "CHAR(10)"
         );
     }
@@ -264,7 +246,7 @@ mod tests {
     #[test]
     fn test_map_varchar_default() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::VarChar { length: None }).unwrap(),
+            DataTypeMapper::map(&DataType::VarChar { length: None }).unwrap(),
             "VARCHAR"
         );
     }
@@ -272,20 +254,20 @@ mod tests {
     #[test]
     fn test_map_varchar_with_length() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::VarChar { length: Some(255) }).unwrap(),
+            DataTypeMapper::map(&DataType::VarChar { length: Some(255) }).unwrap(),
             "VARCHAR(255)"
         );
     }
 
     #[test]
     fn test_map_text() {
-        assert_eq!(DataTypeMapper::map(&CommonDataType::Text).unwrap(), "TEXT");
+        assert_eq!(DataTypeMapper::map(&DataType::Text).unwrap(), "TEXT");
     }
 
     #[test]
     fn test_map_nchar_to_char() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::NChar { length: Some(10) }).unwrap(),
+            DataTypeMapper::map(&DataType::NChar { length: Some(10) }).unwrap(),
             "CHAR(10)"
         );
     }
@@ -293,7 +275,7 @@ mod tests {
     #[test]
     fn test_map_nvarchar_to_varchar() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::NVarChar { length: Some(255) }).unwrap(),
+            DataTypeMapper::map(&DataType::NVarChar { length: Some(255) }).unwrap(),
             "VARCHAR(255)"
         );
     }
@@ -301,13 +283,13 @@ mod tests {
     // 日時型のテスト
     #[test]
     fn test_map_date() {
-        assert_eq!(DataTypeMapper::map(&CommonDataType::Date).unwrap(), "DATE");
+        assert_eq!(DataTypeMapper::map(&DataType::Date).unwrap(), "DATE");
     }
 
     #[test]
     fn test_map_time_default() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Time { precision: None }).unwrap(),
+            DataTypeMapper::map(&DataType::Time { precision: None }).unwrap(),
             "TIME"
         );
     }
@@ -315,7 +297,7 @@ mod tests {
     #[test]
     fn test_map_time_with_precision() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Time { precision: Some(6) }).unwrap(),
+            DataTypeMapper::map(&DataType::Time { precision: Some(6) }).unwrap(),
             "TIME(6)"
         );
     }
@@ -323,7 +305,7 @@ mod tests {
     #[test]
     fn test_map_datetime_to_timestamp() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::DateTime { precision: None }).unwrap(),
+            DataTypeMapper::map(&DataType::DateTime { precision: None }).unwrap(),
             "TIMESTAMP"
         );
     }
@@ -331,7 +313,7 @@ mod tests {
     #[test]
     fn test_map_datetime_with_precision() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::DateTime { precision: Some(3) }).unwrap(),
+            DataTypeMapper::map(&DataType::DateTime { precision: Some(3) }).unwrap(),
             "TIMESTAMP(3)"
         );
     }
@@ -339,7 +321,7 @@ mod tests {
     #[test]
     fn test_map_timestamp_default() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Timestamp { precision: None }).unwrap(),
+            DataTypeMapper::map(&DataType::Timestamp { precision: None }).unwrap(),
             "TIMESTAMP"
         );
     }
@@ -347,7 +329,7 @@ mod tests {
     #[test]
     fn test_map_timestamp_with_precision() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Timestamp { precision: Some(6) }).unwrap(),
+            DataTypeMapper::map(&DataType::Timestamp { precision: Some(6) }).unwrap(),
             "TIMESTAMP(6)"
         );
     }
@@ -356,7 +338,7 @@ mod tests {
     #[test]
     fn test_map_binary_default() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Binary { length: None }).unwrap(),
+            DataTypeMapper::map(&DataType::Binary { length: None }).unwrap(),
             "BYTEA"
         );
     }
@@ -364,7 +346,7 @@ mod tests {
     #[test]
     fn test_map_binary_with_length() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Binary { length: Some(16) }).unwrap(),
+            DataTypeMapper::map(&DataType::Binary { length: Some(16) }).unwrap(),
             "BYTEA(16)"
         );
     }
@@ -372,7 +354,7 @@ mod tests {
     #[test]
     fn test_map_varbinary_default() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::VarBinary { length: None }).unwrap(),
+            DataTypeMapper::map(&DataType::VarBinary { length: None }).unwrap(),
             "BYTEA"
         );
     }
@@ -380,32 +362,29 @@ mod tests {
     #[test]
     fn test_map_varbinary_with_length() {
         assert_eq!(
-            DataTypeMapper::map(&CommonDataType::VarBinary { length: Some(255) }).unwrap(),
+            DataTypeMapper::map(&DataType::VarBinary { length: Some(255) }).unwrap(),
             "BYTEA(255)"
         );
     }
 
     #[test]
     fn test_map_blob_to_bytea() {
-        assert_eq!(DataTypeMapper::map(&CommonDataType::Blob).unwrap(), "BYTEA");
+        assert_eq!(DataTypeMapper::map(&DataType::Blob).unwrap(), "BYTEA");
     }
 
     // その他の型のテスト
     #[test]
     fn test_map_boolean() {
-        assert_eq!(
-            DataTypeMapper::map(&CommonDataType::Boolean).unwrap(),
-            "BOOLEAN"
-        );
+        assert_eq!(DataTypeMapper::map(&DataType::Boolean).unwrap(), "BOOLEAN");
     }
 
     #[test]
     fn test_map_uuid() {
-        assert_eq!(DataTypeMapper::map(&CommonDataType::Uuid).unwrap(), "UUID");
+        assert_eq!(DataTypeMapper::map(&DataType::Uuid).unwrap(), "UUID");
     }
 
     #[test]
     fn test_map_json_to_jsonb() {
-        assert_eq!(DataTypeMapper::map(&CommonDataType::Json).unwrap(), "JSONB");
+        assert_eq!(DataTypeMapper::map(&DataType::Json).unwrap(), "JSONB");
     }
 }
