@@ -4,8 +4,8 @@
 
 use ase_ls_core::{
     analysis::DocumentAnalysis, code_actions, completion, definition, diagnostics, folding,
-    formatting, hover, references, rename, semantic_tokens, signature_help, symbols,
-    workspace_symbols,
+    formatting, hover, incremental::apply_content_change, line_index::LineIndex, references,
+    rename, semantic_tokens, signature_help, symbols, workspace_symbols,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -21,8 +21,21 @@ pub struct AseLanguageServer {
 
 /// メモリ上のドキュメント管理
 struct DocumentStore {
-    /// URI → analysis (Arc で共有、リクエストごとのcloneを回避)
-    docs: std::collections::HashMap<String, Arc<DocumentAnalysis>>,
+    /// URI → entry (Arc で共有、リクエストごとのcloneを回避)
+    docs: std::collections::HashMap<String, DocumentEntry>,
+}
+
+/// ドキュメントの解析結果とメタデータ。
+///
+/// `version` は正確性とデバウンス/不変条件チェックのためのメタデータ保持であり、
+/// AST の再利用ではない。本チケットではバージョンを記録するのみで、
+/// 単調増加の強制は行わない（非単調な更新も許容する）。
+struct DocumentEntry {
+    analysis: Arc<DocumentAnalysis>,
+    // インクリメンタル同期 (#128) の後続タスクでデバウンス/不変条件チェックに
+    // 使用する。現時点ではメタデータとして記録するのみ（テストから参照）。
+    #[allow(dead_code)]
+    version: i32,
 }
 
 impl DocumentStore {
@@ -32,10 +45,20 @@ impl DocumentStore {
         }
     }
 
-    /// Insert or replace a document's analysis.
-    fn upsert(&mut self, uri: &str, text: &str) {
+    /// Insert or replace a document's analysis with the given LSP document version.
+    fn upsert(&mut self, uri: &str, text: &str, version: i32) {
         let analysis = Arc::new(DocumentAnalysis::new(text));
-        self.docs.insert(uri.to_string(), analysis);
+        self.docs
+            .insert(uri.to_string(), DocumentEntry { analysis, version });
+    }
+
+    /// 現在のドキュメントソースを取得。未登録の場合は空文字列。
+    /// did_change でレンジパッチ適用前に read lock 下で呼び出す。
+    fn get_source(&self, uri: &str) -> String {
+        self.docs
+            .get(uri)
+            .map(|e| e.analysis.source.clone())
+            .unwrap_or_default()
     }
 
     fn close(&mut self, uri: &str) {
@@ -65,7 +88,9 @@ impl AseLanguageServer {
     /// URIに対応するDocumentAnalysisを取得する
     async fn get_analysis(&self, uri: &Url) -> Option<Arc<DocumentAnalysis>> {
         let docs = self.documents.read().await;
-        docs.docs.get(uri.as_str()).cloned()
+        docs.docs
+            .get(uri.as_str())
+            .map(|entry| entry.analysis.clone())
     }
 }
 
@@ -76,7 +101,7 @@ impl LanguageServer for AseLanguageServer {
             capabilities: ServerCapabilities {
                 position_encoding: Some(PositionEncodingKind::UTF8),
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::FULL,
+                    TextDocumentSyncKind::INCREMENTAL,
                 )),
                 completion_provider: Some(CompletionOptions {
                     resolve_provider: Some(false),
@@ -147,10 +172,11 @@ impl LanguageServer for AseLanguageServer {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri;
         let text = params.text_document.text;
+        let version = params.text_document.version;
 
         {
             let mut docs = self.documents.write().await;
-            docs.upsert(uri.as_str(), &text);
+            docs.upsert(uri.as_str(), &text, version);
         }
 
         self.publish_diagnostics_for(&uri).await;
@@ -158,11 +184,27 @@ impl LanguageServer for AseLanguageServer {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
+        let version = params.text_document.version;
 
-        // FULL sync mode: use the last change
-        if let Some(change) = params.content_changes.last() {
+        // インクリメンタル同期 (#128): 現在のソースを read lock で取得し、
+        // ロック解放後にレンジパッチを純粋計算で順次適用してから write lock で再構築。
+        // 未登録ドキュメントでも空文字列からの適用で正しく初期化される。
+        let current_source = {
+            let docs = self.documents.read().await;
+            docs.get_source(uri.as_str())
+        };
+
+        let new_source = params
+            .content_changes
+            .iter()
+            .fold(current_source, |source, change| {
+                let index = LineIndex::new(&source);
+                apply_content_change(&source, &index, change)
+            });
+
+        {
             let mut docs = self.documents.write().await;
-            docs.upsert(uri.as_str(), &change.text);
+            docs.upsert(uri.as_str(), &new_source, version);
         }
 
         self.publish_diagnostics_for(&uri).await;
@@ -401,10 +443,10 @@ impl LanguageServer for AseLanguageServer {
         let docs = self.documents.read().await;
         let mut all_symbols = Vec::new();
 
-        for (uri_str, analysis) in &docs.docs {
+        for (uri_str, entry) in &docs.docs {
             if let Ok(uri) = Url::parse(uri_str) {
                 let symbols = workspace_symbols::workspace_symbols_with_analysis(
-                    analysis,
+                    &entry.analysis,
                     &params.query,
                     &uri,
                 );
@@ -417,5 +459,86 @@ impl LanguageServer for AseLanguageServer {
         } else {
             Ok(Some(all_symbols))
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+#[allow(clippy::panic)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_upsert_stores_version_metadata() {
+        let mut store = DocumentStore::new();
+        store.upsert("file:///a.sql", "SELECT 1", 0);
+
+        let entry = store.docs.get("file:///a.sql").expect("entry should exist");
+        assert_eq!(entry.version, 0);
+        assert_eq!(entry.analysis.source, "SELECT 1");
+    }
+
+    #[test]
+    fn test_upsert_overwrite_replaces_version_and_analysis() {
+        let mut store = DocumentStore::new();
+        store.upsert("file:///a.sql", "SELECT 1", 0);
+        store.upsert("file:///a.sql", "CREATE TABLE t (id INT)", 3);
+
+        let entry = store.docs.get("file:///a.sql").expect("entry should exist");
+        assert_eq!(entry.version, 3);
+        assert_eq!(entry.analysis.source, "CREATE TABLE t (id INT)");
+    }
+
+    #[test]
+    fn test_version_recorded_but_not_monotonic_enforced() {
+        // Per accepted invariant: version is recorded only; non-monotonic updates
+        // are tolerated gracefully (debounce/metadata use case, not validation).
+        let mut store = DocumentStore::new();
+        store.upsert("file:///a.sql", "SELECT 1", 5);
+        store.upsert("file:///a.sql", "SELECT 2", 2);
+
+        let entry = store.docs.get("file:///a.sql").expect("entry should exist");
+        assert_eq!(entry.version, 2);
+    }
+
+    #[test]
+    fn test_close_removes_entry() {
+        let mut store = DocumentStore::new();
+        store.upsert("file:///a.sql", "SELECT 1", 0);
+        assert!(store.docs.contains_key("file:///a.sql"));
+
+        store.close("file:///a.sql");
+        assert!(!store.docs.contains_key("file:///a.sql"));
+    }
+
+    #[test]
+    fn test_entry_holds_shared_analysis_arc() {
+        // The analysis must remain behind an Arc so request handlers can clone
+        // the handle cheaply without rebuilding the analysis.
+        let mut store = DocumentStore::new();
+        store.upsert("file:///a.sql", "SELECT 1", 0);
+
+        let entry = store.docs.get("file:///a.sql").expect("entry should exist");
+        let cloned: Arc<DocumentAnalysis> = entry.analysis.clone();
+        assert_eq!(cloned.source, "SELECT 1");
+    }
+
+    #[test]
+    fn test_symbol_loop_iterates_entries() {
+        let mut store = DocumentStore::new();
+        store.upsert("file:///a.sql", "CREATE TABLE users (id INT)", 0);
+        store.upsert("file:///b.sql", "CREATE TABLE orders (id INT)", 1);
+
+        // Simulate the symbol() loop: iterate entries and read .analysis
+        let mut table_count = 0;
+        for entry in store.docs.values() {
+            // Access the analysis through the entry — proves the loop compiles
+            // and yields each stored analysis.
+            if entry.analysis.source.contains("CREATE TABLE") {
+                table_count += 1;
+            }
+        }
+        assert_eq!(table_count, 2);
     }
 }
