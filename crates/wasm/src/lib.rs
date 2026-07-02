@@ -196,12 +196,29 @@ pub fn convert_to(input: &str, dialect: TargetDialect) -> JsValue {
     match dialect {
         TargetDialect::PostgreSQL => {
             use postgresql_emitter::{EmissionConfig, PostgreSqlEmitter};
+            // postgresql-emitter は common-sql のみに依存 (P1 結合負債是正 / PR #157) なので、
+            // レガシー CommonStatement をブリッジ (convert) で共通 AST へ変換してから渡す。
+            // MySQL ブランチ (下記) と同じパターン。
+            use tsql_parser::common::convert;
 
             let mut emitter = PostgreSqlEmitter::new(EmissionConfig::default());
             let mut results = Vec::new();
 
             for stmt in common_stmts {
-                match emitter.emit(&stmt) {
+                let sql_stmt = match convert(stmt) {
+                    Some(s) => s,
+                    None => {
+                        let error_result = JsConversionResult::Error {
+                            message:
+                                "Statement contains unsupported features for PostgreSQL conversion"
+                                    .to_string(),
+                        };
+                        return serde_wasm_bindgen::to_value(&error_result).unwrap_or_else(|_| {
+                            JsValue::from_str(r#"{"error":"serialization_error"}"#)
+                        });
+                    }
+                };
+                match emitter.emit(&sql_stmt) {
                     Ok(sql) => results.push(sql),
                     Err(e) => {
                         let error_result = JsConversionResult::Error {
@@ -331,6 +348,9 @@ pub fn tokenize(input: &str) -> Result<Vec<tsql_lexer::Token<'_>>, tsql_lexer::L
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
+#[allow(clippy::expect_used)]
+#[allow(clippy::panic)]
 mod tests {
     use super::*;
 
