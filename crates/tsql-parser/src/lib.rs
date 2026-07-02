@@ -57,10 +57,6 @@ pub use common::{
 pub use error::{ParseError, ParseErrors, ParseResult};
 pub use expression::ExpressionParser;
 pub use parser::{Parser, ParserMode};
-pub use tsql_token::{Position, Span, TokenKind};
-
-// トークン構造体も再エクスポート
-pub use tsql_lexer::Token;
 
 /// SQL文を解析するヘルパー関数
 ///
@@ -113,7 +109,7 @@ pub fn parse_one(input: &str) -> ParseResult<Statement> {
 
 /// エラー回復付きでSQL文を解析するヘルパー関数
 ///
-/// 構文エラーがあってもパースを継続し、複数のエラーを一度に報告する。
+/// 構文エラーがあってもパースを継続し、回復できた文と検出したエラーをすべて返す。
 ///
 /// # Arguments
 ///
@@ -121,7 +117,8 @@ pub fn parse_one(input: &str) -> ParseResult<Statement> {
 ///
 /// # Returns
 ///
-/// 文のリストとエラーリストのタプル、または複数エラー
+/// (回復した文のリスト, 検出したエラーのリスト) のタプル。
+/// エラーが空であれば入力に構文エラーがないことを意味する。
 ///
 /// # Examples
 ///
@@ -129,21 +126,23 @@ pub fn parse_one(input: &str) -> ParseResult<Statement> {
 /// use tsql_parser::parse_with_errors;
 ///
 /// let sql = "SELECT * FROM users; INSERT INTO orders VALUES (1)";
-/// let result = parse_with_errors(sql);
-/// assert!(result.is_ok());
+/// let (stmts, errors) = parse_with_errors(sql);
+/// assert!(errors.is_empty());
+/// assert_eq!(stmts.len(), 2);
 /// ```
 ///
-/// エラーがある場合:
+/// エラーがある場合でも回復可能な文は返される:
 ///
 /// ```
 /// use tsql_parser::parse_with_errors;
 ///
-/// let sql = "SELCT * FROM users; INERT INTO orders VALUES (1)";
-/// let result = parse_with_errors(sql);
-/// assert!(result.is_err());
+/// let sql = "SELECT 1; INVALID SQL; SELECT 2";
+/// let (stmts, errors) = parse_with_errors(sql);
+/// assert!(!errors.is_empty());
+/// assert!(stmts.len() >= 2); // SELECT 1 と SELECT 2 は回復される
 /// ```
 #[must_use = "parsing result should be used"]
-pub fn parse_with_errors(input: &str) -> Result<(Vec<Statement>, Vec<ParseError>), ParseErrors> {
+pub fn parse_with_errors(input: &str) -> (Vec<Statement>, Vec<ParseError>) {
     let mut parser = Parser::new(input);
     parser.parse_with_errors()
 }

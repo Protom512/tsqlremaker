@@ -154,6 +154,7 @@ pub enum TokenKind {
     Smallint,
     Tinyint,
     Bigint,
+    Float,
     Real,
     Double,
     Decimal,

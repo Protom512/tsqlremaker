@@ -657,14 +657,17 @@ fn test_synchronization_at_keywords() {
 
     // エラー回復が実装されたので、複数の文をパースできることを確認
     let mut parser = Parser::new(sql);
-    let result = parser.parse_with_errors();
+    let (stmts, errors) = parser.parse_with_errors();
 
     // エラーがあることを確認（SELCTは typo）
-    assert!(result.is_err());
+    assert!(!errors.is_empty());
 
-    // エラーの詳細を確認
-    let errors = result.unwrap_err();
-    assert!(errors.len() >= 1);
+    // 回復した文を確認（INSERT, UPDATE は回復されるはず）
+    assert!(
+        stmts.len() >= 2,
+        "should recover at least INSERT and UPDATE, got {} stmts",
+        stmts.len()
+    );
 
     // 最初のエラーは「SELCT」が原因
     let first_error = errors.first().unwrap();
@@ -682,12 +685,14 @@ fn test_multiple_syntax_errors() {
     "#;
 
     let mut parser = Parser::new(sql);
-    let result = parser.parse_with_errors();
+    let (_stmts, errors) = parser.parse_with_errors();
 
     // 複数のエラーを検出
-    assert!(result.is_err());
-    let errors = result.unwrap_err();
-    assert!(errors.len() >= 2);
+    assert!(
+        errors.len() >= 2,
+        "should detect at least 2 errors, got {}",
+        errors.len()
+    );
 
     // 各エラーにキーワード typo が含まれていることを確認
     let error_strings: Vec<String> = errors.iter().map(|e| format!("{}", e)).collect();
@@ -700,14 +705,16 @@ fn test_synchronization_at_semicolon() {
     let sql = "SELCT * FROM users; SELECT * FROM orders";
 
     let mut parser = Parser::new(sql);
-    let result = parser.parse_with_errors();
+    let (stmts, errors) = parser.parse_with_errors();
 
     // エラーがあるが、2番目の文はパースできるはず
-    assert!(result.is_err());
-
-    let errors = result.unwrap_err();
-    // 最初のエラーのみ
-    assert!(errors.len() >= 1);
+    assert!(!errors.is_empty());
+    assert!(
+        stmts
+            .iter()
+            .any(|s| matches!(s, tsql_parser::Statement::Select(_))),
+        "should recover SELECT * FROM orders"
+    );
 }
 
 /// エラー回復：GOキーワードで同期
@@ -716,10 +723,17 @@ fn test_synchronization_at_go() {
     let sql = "SELCT * FROM users GO SELECT * FROM orders";
 
     let mut parser = Parser::new(sql);
-    let result = parser.parse_with_errors();
+    let (stmts, errors) = parser.parse_with_errors();
 
     // エラーがある
-    assert!(result.is_err());
+    assert!(!errors.is_empty());
+    // GOの後のSELECTは回復されるはず
+    assert!(
+        stmts
+            .iter()
+            .any(|s| matches!(s, tsql_parser::Statement::Select(_))),
+        "should recover SELECT after GO"
+    );
 }
 
 /// エラー回復：エラー収集メソッド
@@ -728,14 +742,18 @@ fn test_error_collection_methods() {
     let sql = "SELCT * FROM users; INERT INTO orders VALUES (1, 2)";
 
     let mut parser = Parser::new(sql);
-    let _ = parser.parse_with_errors();
+    let (_stmts, errors) = parser.parse_with_errors();
 
-    // has_errors() メソッドのテスト
-    assert!(parser.has_errors());
+    // parse_with_errors() returns errors in the tuple (drains from internal storage)
+    assert!(
+        errors.len() >= 2,
+        "should detect at least 2 errors, got {}",
+        errors.len()
+    );
 
-    // errors() メソッドのテスト
-    let errors = parser.errors();
-    assert!(errors.len() >= 2);
+    // After drain, internal error storage should be empty
+    assert!(!parser.has_errors());
+    assert!(parser.errors().is_empty());
 }
 
 /// エラー回復：予期しないEOF

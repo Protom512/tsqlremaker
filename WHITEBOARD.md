@@ -357,7 +357,7 @@
 - **3エミッター** (sqlite/mysql/postgresql): `self.buffer.clone()` → `std::mem::take(&mut self.buffer)` でヒープコピー回避
 - **completion.rs**: `complete_all()` が `&'static CompletionResponse` を返すよう変更。clone箇所を呼び出し元(server.rs)に明示化
 - **server.rs**: `DocumentStore` から不要な `Arc<str>` を削除。`HashMap<String, DocumentAnalysis>` に簡略化
-- **parser.rs**: `errors()` が `&[ParseError]` を返すよう変更（Lexer APIと統一）。不要な Vec clone を除去
+- **parser/mod.rs**: `errors()` が `&[ParseError]` を返すよう変更（Lexer APIと統一）。不要な Vec clone を除去
 - **symbols.rs**: `span_to_lsp_range()` が毎回 `LineIndex::new()` していたのを、`document_symbols()` で一度だけ構築して参照渡しに変更
 - **token/kind.rs**: `Exec`, `Execute` を `is_keyword()` に追加
 - **lib.rs**: `token_matches_symbol()` の15行 `matches!` マクロを `is_keyword()` 呼び出しに簡素化

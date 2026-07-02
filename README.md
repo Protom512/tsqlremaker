@@ -343,15 +343,15 @@ tsqlremaker/
 │   │   │   ├── ast/       # AST modules (base, batch, select, ddl, etc.)
 │   │   │   ├── expression/ # Expression parsing (binary, function, prefix, special)
 │   │   │   ├── common/    # Common SQL AST conversion
-│   │   │   └── parser.rs  # Main recursive descent parser
+│   │   │   └── parser/    # Recursive descent parser (mod/select/dml/ddl/control_flow/misc/helpers)
 │   │   └── benches/       # Criterion benchmarks
 │   ├── wasm/              # WebAssembly bindings for JavaScript/TypeScript
 │   │   └── src/
 │   │       ├── token_js.rs # JavaScript-friendly token types
 │   │       ├── ast_js.rs  # JavaScript-friendly AST types
 │   │       └── lib.rs     # WASM entry point
-│   ├── common-sql/        # Common SQL AST (planned)
-│   └── mysql-emitter/     # MySQL code generator (planned)
+│   ├── common-sql/        # Dialect-agnostic Common SQL AST types
+│   └── mysql-emitter/     # MySQL SQL code generator
 ├── web/                   # Web demo frontend
 │   ├── index.html         # Main HTML page
 │   ├── style.css          # Styles

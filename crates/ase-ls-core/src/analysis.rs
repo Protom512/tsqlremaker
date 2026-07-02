@@ -53,11 +53,7 @@ impl DocumentAnalysis {
             })
             .collect();
 
-        let (statements, parse_errors) = match tsql_parser::Parser::new(&source).parse_with_errors()
-        {
-            Ok((stmts, errs)) => (stmts, errs),
-            Err(errs) => (Vec::new(), errs.errors),
-        };
+        let (statements, parse_errors) = tsql_parser::Parser::new(&source).parse_with_errors();
 
         let symbol_table = SymbolTableBuilder::build_tolerant(&source);
         let symbol_table = if symbol_table.tables.is_empty()

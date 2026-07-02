@@ -1,0 +1,21 @@
+This is not a SQL file at all.
+
+It contains regular English text, some numbers like 42 and 3.14,
+and various special characters: @#$%^&*()!
+
+The purpose of this file is to test LSP behavior when a non-SQL file
+is opened or when the language server receives non-SQL content.
+
+Expected behavior:
+- Parser should produce zero statements
+- Parser should not crash
+- Lexer may produce error tokens or unexpected tokens
+- LSP should gracefully handle this with no diagnostics or minimal noise
+
+Some lines might accidentally look like SQL:
+SELECT something from somewhere
+CREATE TABLE IF NOT EXISTS
+
+But they are not valid T-SQL and should not be parsed as such.
+
+=== END OF FILE ===

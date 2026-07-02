@@ -137,4 +137,7 @@ crates/wasm/pkg/
 
 # Node modules (if using npm for testing)
 node_modules/
+
+# VSCode extension build output
+editors/vscode/out/
 coverage/

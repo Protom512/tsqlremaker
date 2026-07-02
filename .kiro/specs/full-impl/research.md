@@ -189,7 +189,7 @@ SAP ASE では明示的な制約名を推奨：
 
 ### 3.1 現状分析
 
-**ファイル**: `crates/tsql-parser/src/parser.rs`
+**ファイル**: `crates/tsql-parser/src/parser/` (旧 parser.rs、7サブモジュールに分割済み)
 
 **テーブル制約パーサー**: `parse_table_constraint()` (Line 1039-1139)
 
@@ -705,7 +705,7 @@ EXEC @result = check_user_status @user_id = 123
 
 ### 8.1 現状分析
 
-**ファイル**: `crates/tsql-parser/src/parser.rs`
+**ファイル**: `crates/tsql-parser/src/parser/` (旧 parser.rs、7サブモジュールに分割済み)
 
 **プロシージャパーサー**: `parse_create_procedure()` (Line 1407-1468)
 

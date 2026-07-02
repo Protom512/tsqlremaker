@@ -1,0 +1,4 @@
+# 行末正規化: クロスプラットフォーム (Windows/Linux) でテストの一貫性を保証。
+# .sql フィクスチャは include_str! / read_fixture で LF 前提のアサーションが
+# あるため、必ず LF でチェックアウト・コミットする (session-21 dogfooding テスト)。
+*.sql text eol=lf
