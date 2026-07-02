@@ -119,7 +119,7 @@ impl IdentifierQuoter {
         "AGGREGATE",
         "ALSO",
         "ALTER",
-        " ALWAYS",
+        "ALWAYS",
         "ASSERTION",
         "ASSIGNMENT",
         "AT",
@@ -469,6 +469,9 @@ impl IdentifierQuoter {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
+#[allow(clippy::panic)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 

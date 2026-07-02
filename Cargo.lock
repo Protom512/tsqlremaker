@@ -964,9 +964,9 @@ dependencies = [
 name = "postgresql-emitter"
 version = "0.1.0"
 dependencies = [
+ "common-sql",
  "rstest",
  "thiserror",
- "tsql-parser",
 ]
 
 [[package]]

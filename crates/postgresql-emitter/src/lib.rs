@@ -4,33 +4,40 @@
 //!
 //! ## 概要
 //!
-//! このライブラリは、Common SQL AST を入力として受け取り、
+//! このライブラリは、Common SQL AST ([`common_sql::ast`]) を入力として受け取り、
 //! PostgreSQL 方言の SQL 文字列を出力します。
+//!
+//! ## 設計 (P1 結合負債是正 — architecture §1.2)
+//!
+//! このクレートは [`common_sql`] のみに依存し、`tsql-parser` / `tsql-token` への
+//! 直接依存を持ちません。旧 `tsql_parser::common::*` への依存は削除され、
+//! 全て [`common_sql::ast`] の型を消費します。
 //!
 //! ## 使用例
 //!
-//! 現在は式、関数、識別子のマッパーが使用可能です：
+//! ```rust,ignore
+//! use postgresql_emitter::{PostgreSqlEmitter, EmissionConfig};
+//! use common_sql::ast::{Statement, SelectStatement, SelectItem};
 //!
-//! ```rust
-//! use postgresql_emitter::{ExpressionEmitter, FunctionMapper};
-//! use tsql_parser::common::{CommonExpression, CommonLiteral};
+//! let config = EmissionConfig::default();
+//! let mut emitter = PostgreSqlEmitter::new(config);
 //!
-//! // 式をPostgreSQL SQLに変換
-//! let expr = CommonExpression::Literal(CommonLiteral::Integer(42));
-//! let sql = ExpressionEmitter::emit(&expr);
-//! assert_eq!(sql, "42");
-//!
-//! // 関数名のマッピング
-//! let func_name = FunctionMapper::map_function_name("GETDATE");
-//! assert_eq!(func_name, Some("CURRENT_TIMESTAMP".to_string()));
+//! let stmt = Statement::Select(Box::new(SelectStatement::simple(vec![SelectItem::Wildcard])));
+//! let sql = emitter.emit(&stmt).unwrap();
+//! assert_eq!(sql, "SELECT *");
 //! ```
 //!
 //! ## 機能
 //!
-//! - Common SQL AST からの PostgreSQL SQL 生成
-//! - データ型の変換
-//! - 関数の変換
-//! - T-SQL 固有構文の変換
+//! - SELECT / INSERT / UPDATE / DELETE の生成
+//! - 式・データ型・関数の PostgreSQL 方言への変換
+//!
+//! ## 非スコープ (Issue #157 後続)
+//!
+//! 旧 `tsql_parser::common::CommonStatement::DialectSpecific` が保持していた
+//! T-SQL→PL/pgSQL 変換ヒントコメント生成 (~150行) は、`common_sql::ast::Statement`
+//! に等価なバリアントが存在しないため削除された。この振る舞いの復元は別 Issue で
+//! 扱う (PR 本文に明記)。
 
 #![warn(missing_docs)]
 // workspace.lints から clippy 設定を継承
@@ -49,6 +56,10 @@ pub use error::EmitError;
 pub use mappers::ExpressionEmitter;
 pub use mappers::FunctionMapper;
 pub use mappers::IdentifierQuoter;
+
+use common_sql::ast::{
+    DeleteStatement, InsertSource, InsertStatement, SelectStatement, Statement, UpdateStatement,
+};
 
 /// PostgreSQL Emitter
 ///
@@ -139,35 +150,10 @@ impl PostgreSqlEmitter {
     ///
     /// PostgreSQL SQL 文字列、またはエラー
     ///
-    /// # Examples
+    /// # Errors
     ///
-    /// ```rust,ignore
-    /// use postgresql_emitter::{PostgreSqlEmitter, EmissionConfig};
-    /// use tsql_parser::common::{CommonStatement, CommonSelectStatement, CommonSelectItem};
-    /// use tsql_token::Span;
-    ///
-    /// let config = EmissionConfig::default();
-    /// let mut emitter = PostgreSqlEmitter::new(config);
-    ///
-    /// let stmt = CommonStatement::Select(CommonSelectStatement {
-    ///     span: Span { start: 0, end: 10 },
-    ///     distinct: false,
-    ///     columns: vec![CommonSelectItem::Wildcard],
-    ///     from: vec![],
-    ///     where_clause: None,
-    ///     group_by: vec![],
-    ///     having: None,
-    ///     order_by: vec![],
-    ///     limit: None,
-    /// });
-    ///
-    /// let sql = emitter.emit(&stmt).unwrap();
-    /// assert_eq!(sql, "SELECT *");
-    /// ```
-    pub fn emit(
-        &mut self,
-        stmt: &tsql_parser::common::CommonStatement,
-    ) -> Result<String, EmitError> {
+    /// サポート対象外のステートメント (DDL 系) の場合 [`EmitError::Unsupported`] を返す。
+    pub fn emit(&mut self, stmt: &Statement) -> Result<String, EmitError> {
         self.reset();
         self.visit_statement(stmt)?;
         Ok(std::mem::take(&mut self.buffer))
@@ -182,10 +168,11 @@ impl PostgreSqlEmitter {
     /// # Returns
     ///
     /// PostgreSQL SQL 文字列（セミコロン区切り）、またはエラー
-    pub fn emit_batch(
-        &mut self,
-        stmts: &[tsql_parser::common::CommonStatement],
-    ) -> Result<String, EmitError> {
+    ///
+    /// # Errors
+    ///
+    /// いずれかのステートメントでエラーが発生した場合、即座にそのエラーを返す。
+    pub fn emit_batch(&mut self, stmts: &[Statement]) -> Result<String, EmitError> {
         self.reset();
         for (i, stmt) in stmts.iter().enumerate() {
             self.visit_statement(stmt)?;
@@ -197,174 +184,35 @@ impl PostgreSqlEmitter {
     }
 
     /// ステートメントを訪問
-    fn visit_statement(
-        &mut self,
-        stmt: &tsql_parser::common::CommonStatement,
-    ) -> Result<(), EmitError> {
+    fn visit_statement(&mut self, stmt: &Statement) -> Result<(), EmitError> {
         match stmt {
-            tsql_parser::common::CommonStatement::Select(select) => {
-                self.visit_select_statement(select)
-            }
-            tsql_parser::common::CommonStatement::Insert(insert) => {
-                self.visit_insert_statement(insert)
-            }
-            tsql_parser::common::CommonStatement::Update(update) => {
-                self.visit_update_statement(update)
-            }
-            tsql_parser::common::CommonStatement::Delete(delete) => {
-                self.visit_delete_statement(delete)
-            }
-            tsql_parser::common::CommonStatement::DialectSpecific { description, .. } => {
-                // T-SQL方言固有構文をPostgreSQL (PL/pgSQL) 変換ヒント付きで出力
-                if self.config.warn_unsupported {
-                    self.visit_dialect_specific(description)?;
-                }
-                Ok(())
-            }
+            Statement::Select(select) => self.visit_select_statement(select),
+            Statement::Insert(insert) => self.visit_insert_statement(insert),
+            Statement::Update(update) => self.visit_update_statement(update),
+            Statement::Delete(delete) => self.visit_delete_statement(delete),
+            // DDL 系は本 emitter が未対応のため Unsupported を返す。
+            // 旧 CommonStatement::DialectSpecific の T-SQL→PL/pgSQL ヒント生成は
+            // 削除された (common_sql Statement に等価バリアント不存在、別 Issue で扱う)。
+            Statement::CreateTable(_)
+            | Statement::AlterTable(_)
+            | Statement::DropTable(_)
+            | Statement::CreateIndex(_)
+            | Statement::DropIndex(_) => Err(EmitError::Unsupported(statement_kind_name(stmt))),
         }
     }
 
     /// SELECT文を訪問
-    fn visit_select_statement(
-        &mut self,
-        stmt: &tsql_parser::common::CommonSelectStatement,
-    ) -> Result<(), EmitError> {
-        self.write("SELECT ");
-
-        if stmt.distinct {
-            self.write("DISTINCT ");
-        }
-
-        // SELECTリスト
-        for (i, item) in stmt.columns.iter().enumerate() {
-            if i > 0 {
-                self.write(", ");
-            }
-            self.visit_select_item(item)?;
-        }
-
-        // FROM
-        if !stmt.from.is_empty() {
-            self.write(" FROM ");
-            for (i, table) in stmt.from.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.visit_table_reference(table)?;
-            }
-        }
-
-        // WHERE
-        if let Some(where_clause) = &stmt.where_clause {
-            self.write(" WHERE ");
-            self.visit_expression(where_clause)?;
-        }
-
-        // GROUP BY
-        if !stmt.group_by.is_empty() {
-            self.write(" GROUP BY ");
-            for (i, expr) in stmt.group_by.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.visit_expression(expr)?;
-            }
-        }
-
-        // HAVING
-        if let Some(having) = &stmt.having {
-            self.write(" HAVING ");
-            self.visit_expression(having)?;
-        }
-
-        // ORDER BY
-        if !stmt.order_by.is_empty() {
-            self.write(" ORDER BY ");
-            for (i, item) in stmt.order_by.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.visit_expression(&item.expr)?;
-                if item.asc {
-                    self.write(" ASC");
-                } else {
-                    self.write(" DESC");
-                }
-            }
-        }
-
-        // LIMIT
-        if let Some(limit) = &stmt.limit {
-            self.write(" LIMIT ");
-            self.visit_expression(&limit.limit)?;
-            if let Some(offset) = &limit.offset {
-                self.write(" OFFSET ");
-                self.visit_expression(offset)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// SELECTアイテムを訪問
-    fn visit_select_item(
-        &mut self,
-        item: &tsql_parser::common::CommonSelectItem,
-    ) -> Result<(), EmitError> {
-        match item {
-            tsql_parser::common::CommonSelectItem::Expression(expr, alias) => {
-                self.visit_expression(expr)?;
-                if let Some(alias_name) = alias {
-                    self.write(" AS ");
-                    self.write_identifier(alias_name);
-                }
-            }
-            tsql_parser::common::CommonSelectItem::Wildcard => {
-                self.write("*");
-            }
-            tsql_parser::common::CommonSelectItem::QualifiedWildcard(table) => {
-                self.write_identifier(table);
-                self.write(".*");
-            }
-        }
-        Ok(())
-    }
-
-    /// テーブル参照を訪問
-    fn visit_table_reference(
-        &mut self,
-        table: &tsql_parser::common::CommonTableReference,
-    ) -> Result<(), EmitError> {
-        match table {
-            tsql_parser::common::CommonTableReference::Table { name, alias, .. } => {
-                self.write_identifier(name);
-                if let Some(alias_name) = alias {
-                    self.write(" AS ");
-                    self.write_identifier(alias_name);
-                }
-            }
-            tsql_parser::common::CommonTableReference::Derived {
-                subquery, alias, ..
-            } => {
-                self.write("(");
-                self.visit_select_statement(subquery)?;
-                self.write(")");
-                if let Some(alias_name) = alias {
-                    self.write(" AS ");
-                    self.write_identifier(alias_name);
-                }
-            }
-        }
+    fn visit_select_statement(&mut self, stmt: &SelectStatement) -> Result<(), EmitError> {
+        // SelectStatementRenderer に委譲し、結果をバッファへ書き込む。
+        let rendered = mappers::SelectStatementRenderer::emit(stmt);
+        self.write(&rendered);
         Ok(())
     }
 
     /// INSERT文を訪問
-    fn visit_insert_statement(
-        &mut self,
-        stmt: &tsql_parser::common::CommonInsertStatement,
-    ) -> Result<(), EmitError> {
+    fn visit_insert_statement(&mut self, stmt: &InsertStatement) -> Result<(), EmitError> {
         self.write("INSERT INTO ");
-        self.write_identifier(&stmt.table);
+        self.write_qualified_name(&stmt.table);
 
         // カラムリスト
         if !stmt.columns.is_empty() {
@@ -373,14 +221,16 @@ impl PostgreSqlEmitter {
                 if i > 0 {
                     self.write(", ");
                 }
-                self.write_identifier(col);
+                self.write_identifier(col.value());
             }
             self.write(")");
         }
 
-        // VALUES
+        // VALUES / SELECT
+        // 旧 CommonInsertSource::DefaultValues は common_sql::InsertSource に存在しない
+        // → bridge 側で InsertSource::Values(vec![]) にフォールバック済み。
         match &stmt.source {
-            tsql_parser::common::CommonInsertSource::Values(rows) => {
+            InsertSource::Values(rows) => {
                 self.write(" VALUES ");
                 for (i, row) in rows.iter().enumerate() {
                     if i > 0 {
@@ -396,12 +246,10 @@ impl PostgreSqlEmitter {
                     self.write(")");
                 }
             }
-            tsql_parser::common::CommonInsertSource::Select(select) => {
+            InsertSource::Select(select) => {
                 self.writeln();
-                self.visit_select_statement(select)?;
-            }
-            tsql_parser::common::CommonInsertSource::DefaultValues => {
-                self.write(" DEFAULT VALUES");
+                let rendered = mappers::SelectStatementRenderer::emit(select);
+                self.write(&rendered);
             }
         }
 
@@ -409,12 +257,9 @@ impl PostgreSqlEmitter {
     }
 
     /// UPDATE文を訪問
-    fn visit_update_statement(
-        &mut self,
-        stmt: &tsql_parser::common::CommonUpdateStatement,
-    ) -> Result<(), EmitError> {
+    fn visit_update_statement(&mut self, stmt: &UpdateStatement) -> Result<(), EmitError> {
         self.write("UPDATE ");
-        self.write_identifier(&stmt.table);
+        self.write_table_factor(&stmt.table);
         self.write(" SET ");
 
         // 代入リスト
@@ -422,7 +267,7 @@ impl PostgreSqlEmitter {
             if i > 0 {
                 self.write(", ");
             }
-            self.write_identifier(&assignment.column);
+            self.write_identifier(assignment.column.value());
             self.write(" = ");
             self.visit_expression(&assignment.value)?;
         }
@@ -437,12 +282,9 @@ impl PostgreSqlEmitter {
     }
 
     /// DELETE文を訪問
-    fn visit_delete_statement(
-        &mut self,
-        stmt: &tsql_parser::common::CommonDeleteStatement,
-    ) -> Result<(), EmitError> {
+    fn visit_delete_statement(&mut self, stmt: &DeleteStatement) -> Result<(), EmitError> {
         self.write("DELETE FROM ");
-        self.write_identifier(&stmt.table);
+        self.write_table_factor(&stmt.table);
 
         // WHERE
         if let Some(where_clause) = &stmt.where_clause {
@@ -454,12 +296,57 @@ impl PostgreSqlEmitter {
     }
 
     /// 式を訪問
-    fn visit_expression(
-        &mut self,
-        expr: &tsql_parser::common::CommonExpression,
-    ) -> Result<(), EmitError> {
+    fn visit_expression(&mut self, expr: &common_sql::ast::Expression) -> Result<(), EmitError> {
         self.write(&mappers::ExpressionEmitter::emit(expr));
         Ok(())
+    }
+
+    /// 修飾テーブル名 (schema.table or table) を書き込む
+    fn write_qualified_name(&mut self, name: &common_sql::ast::QualifiedName) {
+        match name.schema() {
+            Some(schema) => {
+                self.write_identifier(schema);
+                self.write(".");
+                self.write_identifier(name.name());
+            }
+            None => self.write_identifier(name.name()),
+        }
+    }
+
+    /// テーブル要素 (TableFactor) を書き込む
+    /// 旧 table: Identifier(String) → TableFactor への差替に対応。
+    fn write_table_factor(&mut self, factor: &common_sql::ast::TableFactor) {
+        match factor {
+            common_sql::ast::TableFactor::Table { name, alias } => {
+                self.write_qualified_name(name);
+                if let Some(alias_name) = alias {
+                    self.write(" AS ");
+                    self.write_identifier(alias_name.name());
+                }
+            }
+            common_sql::ast::TableFactor::Derived { subquery, alias } => {
+                self.write("(");
+                let rendered = mappers::SelectStatementRenderer::emit(subquery);
+                self.write(&rendered);
+                self.write(")");
+                if let Some(alias_name) = alias {
+                    self.write(" AS ");
+                    self.write_identifier(alias_name.name());
+                }
+            }
+            common_sql::ast::TableFactor::Join(join) => {
+                let kw = match join.join_type {
+                    common_sql::ast::JoinType::Inner => "INNER JOIN",
+                    common_sql::ast::JoinType::Left => "LEFT JOIN",
+                    common_sql::ast::JoinType::Right => "RIGHT JOIN",
+                    common_sql::ast::JoinType::Full => "FULL JOIN",
+                    common_sql::ast::JoinType::Cross => "CROSS JOIN",
+                };
+                self.write(kw);
+                self.write(" ");
+                self.write_table_factor(&join.table);
+            }
+        }
     }
 
     /// 識別子を書き込む（適切にクォート）
@@ -471,83 +358,18 @@ impl PostgreSqlEmitter {
             self.write(name);
         }
     }
+}
 
-    /// T-SQL方言固有構文をPostgreSQL (PL/pgSQL) 変換ヒント付きで出力する
-    ///
-    /// CommonStatement::DialectSpecific は元のT-SQL ASTのDebug文字列をdescriptionとして
-    /// 保持しているため、完全な変換は不可能。代わりに構文カテゴリに基づいて
-    /// PostgreSQLでの代替構文をガイドするコメントを生成する。
-    fn visit_dialect_specific(&mut self, description: &str) -> Result<(), EmitError> {
-        if description.starts_with("Declare(") || description.contains("Declare(") {
-            self.write("-- [T-SQL → PostgreSQL] 変数宣言\n");
-            self.write("-- T-SQL: DECLARE @var datatype [= default]\n");
-            self.write("-- PostgreSQL: DO $$ DECLARE var datatype; BEGIN ... END $$;\n");
-            self.write("-- 例: DECLARE @count INT → DECLARE count INTEGER;\n");
-            self.write("-- 注意: @ プレフィクスは不要。DOブロック内で宣言が必要。\n");
-        } else if description.starts_with("Set(")
-            || description.contains("VariableAssignment(")
-            || description.starts_with("Variable assignment:")
-        {
-            self.write("-- [T-SQL → PostgreSQL] 変数代入\n");
-            self.write("-- T-SQL: SET @var = expr または SELECT @var = expr\n");
-            self.write("-- PostgreSQL: var := expr; または SELECT expr INTO var;\n");
-            self.write("-- 注意: PostgreSQLの代入は := 演算子を使用。\n");
-        } else if description.starts_with("If(") || description.contains("If(") {
-            self.write("-- [T-SQL → PostgreSQL] IF条件分岐\n");
-            self.write("-- T-SQL: IF ... BEGIN ... END ELSE BEGIN ... END\n");
-            self.write("-- PostgreSQL: IF ... THEN ... ELSE ... END IF;\n");
-            self.write("-- 注意: PostgreSQLではTHEN/END IFが必須。BEGIN/ENDは不要。\n");
-        } else if description.starts_with("While(") || description.contains("While(") {
-            self.write("-- [T-SQL → PostgreSQL] WHILEループ\n");
-            self.write("-- T-SQL: WHILE ... BEGIN ... END\n");
-            self.write("-- PostgreSQL: WHILE ... LOOP ... END LOOP;\n");
-            self.write("-- 注意: PostgreSQLではLOOP/END LOOPが必須。\n");
-        } else if description.starts_with("Block(") || description.contains("Block(") {
-            self.write("-- [T-SQL → PostgreSQL] BEGIN...ENDブロック\n");
-            self.write("-- PostgreSQLでは複合文は不要。各文をセミコロンで区切る。\n");
-        } else if description.contains("TryCatch(") {
-            self.write("-- [T-SQL → PostgreSQL] TRY...CATCH例外処理\n");
-            self.write("-- T-SQL: BEGIN TRY ... END TRY BEGIN CATCH ... END CATCH\n");
-            self.write("-- PostgreSQL: BEGIN ... EXCEPTION WHEN ... THEN ... END;\n");
-            self.write("-- 注意: PostgreSQLの例外処理はPL/pgSQLブロック内でのみ使用可能。\n");
-        } else if description.contains("Transaction(") {
-            self.write("-- [T-SQL → PostgreSQL] トランザクション制御\n");
-            self.write("-- T-SQL: BEGIN TRAN / COMMIT / ROLLBACK\n");
-            self.write("-- PostgreSQL: BEGIN / COMMIT / ROLLBACK (構文は同等)\n");
-        } else if description.contains("Return(") {
-            self.write("-- [T-SQL → PostgreSQL] RETURN文\n");
-            self.write("-- T-SQL: RETURN [value]\n");
-            self.write("-- PostgreSQL: RETURN expression; (PL/pgSQL関数内)\n");
-        } else if description.contains("Throw(") || description.contains("Raiserror(") {
-            self.write("-- [T-SQL → PostgreSQL] エラー発生\n");
-            self.write("-- T-SQL: THROW / RAISERROR\n");
-            self.write("-- PostgreSQL: RAISE EXCEPTION 'message';\n");
-        } else if description.contains("CREATE statement:") {
-            self.write("-- [T-SQL → PostgreSQL] CREATE文\n");
-            self.write("-- DDLは方言間の差が大きいため手動変換が必要。\n");
-            self.write("-- 主な違い:\n");
-            self.write("--   IDENTITY → SERIAL または GENERATED ALWAYS AS IDENTITY\n");
-            self.write("--   NVARCHAR → VARCHAR (PostgreSQLはUnicodeネイティブ)\n");
-            self.write("--   DATETIME → TIMESTAMP\n");
-            self.write("--   GETDATE() → CURRENT_TIMESTAMP / NOW()\n");
-        } else if description.contains("ALTER TABLE") {
-            self.write("-- [T-SQL → PostgreSQL] ALTER TABLE文\n");
-            self.write("-- 基本構文は同等だが、データ型の変換が必要。\n");
-        } else if description.contains("EXEC statement:") {
-            self.write("-- [T-SQL → PostgreSQL] ストアドプロシージャ呼び出し\n");
-            self.write("-- T-SQL: EXEC proc_name arg1, @param = val\n");
-            self.write("-- PostgreSQL: SELECT proc_name(arg1, param => val);\n");
-            self.write("-- または PERFORM proc_name(...); (結果を破棄する場合)\n");
-        } else if description.contains("UPDATE with FROM") {
-            self.write("-- [T-SQL → PostgreSQL] UPDATE ... FROM構文\n");
-            self.write("-- PostgreSQLもUPDATE...FROMをサポートするが構文が異なる。\n");
-        } else {
-            self.write("-- [T-SQL → PostgreSQL] サポート対象外の構文\n");
-            self.write("-- 元のT-SQL: ");
-            self.write(description);
-            self.writeln();
-        }
-        Ok(())
+/// DDL 系の文種別名を返す (エラーメッセージ用)。
+fn statement_kind_name(stmt: &Statement) -> String {
+    match stmt {
+        Statement::CreateTable(_) => "CREATE TABLE".to_string(),
+        Statement::AlterTable(_) => "ALTER TABLE".to_string(),
+        Statement::DropTable(_) => "DROP TABLE".to_string(),
+        Statement::CreateIndex(_) => "CREATE INDEX".to_string(),
+        Statement::DropIndex(_) => "DROP INDEX".to_string(),
+        // DML/SELECT は呼び出し側で処理済みのため、ここでは到達しない。
+        _ => "UNKNOWN".to_string(),
     }
 }
 
@@ -563,6 +385,36 @@ impl Default for PostgreSqlEmitter {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+    use common_sql::ast::identifier::{Identifier, QualifiedName};
+    use common_sql::ast::{
+        Assignment, CreateTableStatement, Expression, InsertSource, Literal, SelectItem,
+        SelectStatement, TableFactor, TableOptions,
+    };
+
+    // ---- 構築ヘルパー ----
+
+    fn ident_expr(name: &str) -> Expression {
+        Expression::Identifier(Identifier::new(name.to_string()))
+    }
+
+    fn int_expr(n: i64) -> Expression {
+        Expression::Literal(Literal::Integer(n))
+    }
+
+    fn select_stmt() -> Statement {
+        Statement::Select(Box::new(SelectStatement::simple(vec![
+            SelectItem::Wildcard,
+        ])))
+    }
+
+    fn table(name: &str) -> TableFactor {
+        TableFactor::Table {
+            name: QualifiedName::new(None, name.to_string()),
+            alias: None,
+        }
+    }
+
+    // ===== Emitter 構築 =====
 
     #[test]
     fn test_new_emitter() {
@@ -577,104 +429,6 @@ mod tests {
         let emitter = PostgreSqlEmitter::default();
         assert!(emitter.config().quote_identifiers);
         assert_eq!(emitter.config().indent_size, 4);
-    }
-
-    #[test]
-    fn test_dialect_specific_declare() {
-        use tsql_parser::Span;
-        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
-            description:
-                "Declare(DeclareStatement { variables: [VariableDecl { name: \"@count\" }] })"
-                    .to_string(),
-            span: Span { start: 0, end: 20 },
-        };
-        let mut emitter = PostgreSqlEmitter::default();
-        let result = emitter.emit(&stmt);
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(
-            output.contains("変数宣言"),
-            "Should contain variable declaration hint"
-        );
-        assert!(
-            output.contains("DO $$ DECLARE"),
-            "Should contain PostgreSQL DO block syntax"
-        );
-        assert!(!output.contains("TODO"), "Should not contain TODO markers");
-    }
-
-    #[test]
-    fn test_dialect_specific_if() {
-        use tsql_parser::Span;
-        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
-            description: "If(IfStatement { condition: .. })".to_string(),
-            span: Span { start: 0, end: 20 },
-        };
-        let mut emitter = PostgreSqlEmitter::default();
-        let result = emitter.emit(&stmt);
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(output.contains("IF条件分岐"));
-        assert!(output.contains("IF ... THEN"));
-    }
-
-    #[test]
-    fn test_dialect_specific_while() {
-        use tsql_parser::Span;
-        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
-            description: "While(WhileStatement { .. })".to_string(),
-            span: Span { start: 0, end: 20 },
-        };
-        let mut emitter = PostgreSqlEmitter::default();
-        let result = emitter.emit(&stmt);
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(output.contains("WHILEループ"));
-        assert!(output.contains("LOOP ... END LOOP"));
-    }
-
-    #[test]
-    fn test_dialect_specific_create() {
-        use tsql_parser::Span;
-        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
-            description: "CREATE statement: Create(CreateStatement::Table(...))".to_string(),
-            span: Span { start: 0, end: 50 },
-        };
-        let mut emitter = PostgreSqlEmitter::default();
-        let result = emitter.emit(&stmt);
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(output.contains("CREATE文"));
-        assert!(output.contains("IDENTITY → SERIAL"));
-    }
-
-    #[test]
-    fn test_dialect_specific_try_catch() {
-        use tsql_parser::Span;
-        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
-            description: "TryCatch(TryCatchStatement { .. })".to_string(),
-            span: Span { start: 0, end: 30 },
-        };
-        let mut emitter = PostgreSqlEmitter::default();
-        let result = emitter.emit(&stmt);
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(output.contains("TRY...CATCH"));
-        assert!(output.contains("EXCEPTION WHEN"));
-    }
-
-    #[test]
-    fn test_dialect_specific_unknown() {
-        use tsql_parser::Span;
-        let stmt = tsql_parser::common::CommonStatement::DialectSpecific {
-            description: "SomeUnknown(construct)".to_string(),
-            span: Span { start: 0, end: 10 },
-        };
-        let mut emitter = PostgreSqlEmitter::default();
-        let result = emitter.emit(&stmt);
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(output.contains("サポート対象外"));
     }
 
     #[test]
@@ -705,5 +459,204 @@ mod tests {
 
         emitter.indent_level = 2;
         assert_eq!(emitter.current_indent(), "    ");
+    }
+
+    // ===== SELECT =====
+
+    #[test]
+    fn test_emit_select_wildcard() {
+        let mut emitter = PostgreSqlEmitter::default();
+        let sql = emitter.emit(&select_stmt()).unwrap();
+        assert_eq!(sql, "SELECT *");
+    }
+
+    #[test]
+    fn test_emit_select_with_from() {
+        let mut sel = SelectStatement::simple(vec![SelectItem::Wildcard]);
+        sel.from = Some(table("users"));
+        let stmt = Statement::Select(Box::new(sel));
+
+        let mut emitter = PostgreSqlEmitter::default();
+        let sql = emitter.emit(&stmt).unwrap();
+        assert_eq!(sql, "SELECT * FROM users");
+    }
+
+    #[test]
+    fn test_emit_select_with_where() {
+        let mut sel = SelectStatement::simple(vec![SelectItem::Wildcard]);
+        sel.from = Some(table("users"));
+        sel.where_clause = Some(int_expr(1));
+        let stmt = Statement::Select(Box::new(sel));
+
+        let mut emitter = PostgreSqlEmitter::default();
+        let sql = emitter.emit(&stmt).unwrap();
+        assert!(sql.contains("WHERE 1"));
+    }
+
+    // ===== INSERT =====
+
+    #[test]
+    fn test_emit_insert_values() {
+        // INSERT INTO users (id) VALUES (1)
+        let stmt = Statement::Insert(Box::new(InsertStatement {
+            span: common_sql::ast::Span::new(0, 30),
+            table: QualifiedName::new(None, "users".to_string()),
+            columns: vec![Identifier::new("id".to_string())],
+            source: InsertSource::Values(vec![vec![int_expr(1)]]),
+            on_conflict: None,
+        }));
+
+        let mut emitter = PostgreSqlEmitter::default();
+        let sql = emitter.emit(&stmt).unwrap();
+        assert_eq!(sql, "INSERT INTO users (id) VALUES (1)");
+    }
+
+    #[test]
+    fn test_emit_insert_multiple_rows() {
+        // INSERT INTO t (id) VALUES (1), (2)
+        let stmt = Statement::Insert(Box::new(InsertStatement {
+            span: common_sql::ast::Span::new(0, 40),
+            table: QualifiedName::new(None, "t".to_string()),
+            columns: vec![Identifier::new("id".to_string())],
+            source: InsertSource::Values(vec![vec![int_expr(1)], vec![int_expr(2)]]),
+            on_conflict: None,
+        }));
+
+        let mut emitter = PostgreSqlEmitter::default();
+        let sql = emitter.emit(&stmt).unwrap();
+        assert_eq!(sql, "INSERT INTO t (id) VALUES (1), (2)");
+    }
+
+    #[test]
+    fn test_emit_insert_no_columns() {
+        // INSERT INTO t VALUES (1)  (column list omitted)
+        let stmt = Statement::Insert(Box::new(InsertStatement {
+            span: common_sql::ast::Span::new(0, 20),
+            table: QualifiedName::new(None, "t".to_string()),
+            columns: vec![],
+            source: InsertSource::Values(vec![vec![int_expr(1)]]),
+            on_conflict: None,
+        }));
+
+        let mut emitter = PostgreSqlEmitter::default();
+        let sql = emitter.emit(&stmt).unwrap();
+        assert_eq!(sql, "INSERT INTO t VALUES (1)");
+    }
+
+    #[test]
+    fn test_emit_insert_select() {
+        // INSERT INTO archive (id) SELECT id FROM source
+        let mut sel = SelectStatement::simple(vec![SelectItem::Expression {
+            expr: ident_expr("id"),
+            alias: None,
+        }]);
+        sel.from = Some(table("source"));
+        let stmt = Statement::Insert(Box::new(InsertStatement {
+            span: common_sql::ast::Span::new(0, 50),
+            table: QualifiedName::new(None, "archive".to_string()),
+            columns: vec![Identifier::new("id".to_string())],
+            source: InsertSource::Select(Box::new(sel)),
+            on_conflict: None,
+        }));
+
+        let mut emitter = PostgreSqlEmitter::default();
+        let sql = emitter.emit(&stmt).unwrap();
+        assert!(sql.contains("INSERT INTO archive (id)"));
+        assert!(sql.contains("SELECT id FROM source"));
+    }
+
+    #[test]
+    fn test_emit_insert_default_values_falls_back_to_empty_values() {
+        // 旧 CommonInsertSource::DefaultValues は bridge で InsertSource::Values(vec![])
+        // にフォールバックされる。空 VALUES を出力する。
+        let stmt = Statement::Insert(Box::new(InsertStatement {
+            span: common_sql::ast::Span::new(0, 20),
+            table: QualifiedName::new(None, "t".to_string()),
+            columns: vec![],
+            source: InsertSource::Values(vec![]),
+            on_conflict: None,
+        }));
+
+        let mut emitter = PostgreSqlEmitter::default();
+        let sql = emitter.emit(&stmt).unwrap();
+        // 空 VALUES リスト: "VALUES " のみ (行がない)
+        assert!(sql.contains("VALUES"));
+    }
+
+    // ===== UPDATE =====
+
+    #[test]
+    fn test_emit_update() {
+        // UPDATE users SET name = 1 WHERE id
+        let stmt = Statement::Update(Box::new(UpdateStatement {
+            span: common_sql::ast::Span::new(0, 40),
+            table: table("users"),
+            assignments: vec![Assignment {
+                column: Identifier::new("name".to_string()),
+                value: int_expr(1),
+            }],
+            from: None,
+            where_clause: Some(ident_expr("id")),
+        }));
+
+        let mut emitter = PostgreSqlEmitter::default();
+        let sql = emitter.emit(&stmt).unwrap();
+        // "name" is PostgreSQL reserved → quoted
+        assert!(sql.contains("UPDATE users SET \"name\" = 1 WHERE id"));
+    }
+
+    // ===== DELETE =====
+
+    #[test]
+    fn test_emit_delete() {
+        let stmt = Statement::Delete(Box::new(DeleteStatement {
+            span: common_sql::ast::Span::new(0, 30),
+            table: table("users"),
+            using: None,
+            where_clause: Some(ident_expr("id")),
+        }));
+
+        let mut emitter = PostgreSqlEmitter::default();
+        let sql = emitter.emit(&stmt).unwrap();
+        assert_eq!(sql, "DELETE FROM users WHERE id");
+    }
+
+    // ===== バッチ =====
+
+    #[test]
+    fn test_emit_batch() {
+        let stmts = vec![select_stmt(), select_stmt()];
+        let mut emitter = PostgreSqlEmitter::default();
+        let sql = emitter.emit_batch(&stmts).unwrap();
+        assert!(sql.contains("SELECT *;\nSELECT *"));
+    }
+
+    // ===== DDL は Unsupported =====
+
+    #[test]
+    fn test_emit_ddl_returns_unsupported() {
+        // common_sql Statement に DialectSpecific はない。
+        // DDL 系は本 emitter が未対応のため Unsupported を返す。
+        let ddl = Statement::CreateTable(Box::new(CreateTableStatement {
+            span: common_sql::ast::Span::new(0, 10),
+            if_not_exists: false,
+            temporary: false,
+            name: QualifiedName::new(None, "t".to_string()),
+            columns: vec![],
+            constraints: vec![],
+            options: TableOptions {
+                engine: None,
+                charset: None,
+                collation: None,
+                comment: None,
+            },
+        }));
+        let mut emitter = PostgreSqlEmitter::default();
+        let result = emitter.emit(&ddl);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EmitError::Unsupported(msg) => assert_eq!(msg, "CREATE TABLE"),
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
     }
 }

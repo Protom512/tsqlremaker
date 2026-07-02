@@ -4,7 +4,7 @@
 
 use crate::mappers::ExpressionEmitter;
 use crate::EmitError;
-use tsql_parser::common::{CommonExpression, CommonIdentifier};
+use common_sql::ast::Expression;
 
 /// PostgreSQL 関数マッパー
 #[derive(Debug, Clone, Copy)]
@@ -72,7 +72,7 @@ impl FunctionMapper {
     /// # Errors
     ///
     /// サポートされていない関数の場合はエラーを返す
-    pub fn map_function_call(name: &str, args: &[CommonExpression]) -> Result<String, EmitError> {
+    pub fn map_function_call(name: &str, args: &[Expression]) -> Result<String, EmitError> {
         match name {
             // DATEADD: DATEADD(part, n, date) → date + INTERVAL 'n part'
             "DATEADD" => Self::convert_dateadd(args),
@@ -140,7 +140,7 @@ impl FunctionMapper {
     }
 
     /// DATEADD を変換
-    fn convert_dateadd(args: &[CommonExpression]) -> Result<String, EmitError> {
+    fn convert_dateadd(args: &[Expression]) -> Result<String, EmitError> {
         if args.len() != 3 {
             return Err(EmitError::SyntaxError {
                 message: "DATEADD requires exactly 3 arguments".to_string(),
@@ -149,7 +149,7 @@ impl FunctionMapper {
 
         // DATEADD(part, n, date) → date + INTERVAL 'n part'
         let part = match &args[0] {
-            CommonExpression::Identifier(CommonIdentifier { name }) => name,
+            Expression::Identifier(id) => id.value().to_string(),
             _ => {
                 return Err(EmitError::SyntaxError {
                     message: "DATEADD first argument must be an identifier".to_string(),
@@ -167,14 +167,14 @@ impl FunctionMapper {
             "HOUR" | "HH" => "hours",
             "MINUTE" | "MI" | "N" => "mins",
             "SECOND" | "SS" | "S" => "secs",
-            _ => part,
+            _ => part.as_str(),
         };
 
         Ok(format!("{date} + INTERVAL '{n} {postgres_part}'"))
     }
 
     /// DATEDIFF を変換
-    fn convert_datediff(args: &[CommonExpression]) -> Result<String, EmitError> {
+    fn convert_datediff(args: &[Expression]) -> Result<String, EmitError> {
         if args.len() != 3 {
             return Err(EmitError::SyntaxError {
                 message: "DATEDIFF requires exactly 3 arguments".to_string(),
@@ -183,7 +183,7 @@ impl FunctionMapper {
 
         // DATEDIFF(part, start, end) → DATE_PART('part', end - start)
         let part = match &args[0] {
-            CommonExpression::Identifier(CommonIdentifier { name }) => name,
+            Expression::Identifier(id) => id.value().to_string(),
             _ => {
                 return Err(EmitError::SyntaxError {
                     message: "DATEDIFF first argument must be an identifier".to_string(),
@@ -201,7 +201,7 @@ impl FunctionMapper {
             "HOUR" | "HH" => "hour",
             "MINUTE" | "MI" | "N" => "minute",
             "SECOND" | "SS" | "S" => "second",
-            _ => part,
+            _ => part.as_str(),
         };
 
         Ok(format!("DATE_PART('{postgres_part}', {end} - {start})"))
@@ -212,9 +212,25 @@ impl FunctionMapper {
 mod tests {
     #![allow(clippy::unwrap_used)]
     #![allow(clippy::panic)]
+    #![allow(clippy::expect_used)]
 
     use super::*;
-    use tsql_parser::common::CommonLiteral;
+    use common_sql::ast::{Identifier, Literal};
+
+    /// テスト用の識別子を構築するヘルパー。
+    fn ident(name: &str) -> Identifier {
+        Identifier::new(name.to_string())
+    }
+
+    /// テスト用の識別子式を構築するヘルパー。
+    fn id_expr(name: &str) -> Expression {
+        Expression::Identifier(ident(name))
+    }
+
+    /// テスト用の整数リテラル式を構築するヘルパー。
+    fn int_expr(n: i64) -> Expression {
+        Expression::Literal(Literal::Integer(n))
+    }
 
     #[test]
     fn test_map_getdate() {
@@ -283,116 +299,63 @@ mod tests {
 
     #[test]
     fn test_convert_len() {
-        let args = vec![CommonExpression::Identifier(CommonIdentifier {
-            name: "column_name".to_string(),
-        })];
+        let args = vec![id_expr("column_name")];
         let result = FunctionMapper::map_function_call("LEN", &args).unwrap();
         assert_eq!(result, "LENGTH(column_name)");
     }
 
     #[test]
     fn test_convert_isnull() {
-        let args = vec![
-            CommonExpression::Identifier(CommonIdentifier {
-                name: "expr".to_string(),
-            }),
-            CommonExpression::Literal(CommonLiteral::Integer(0)),
-        ];
+        let args = vec![id_expr("expr"), int_expr(0)];
         let result = FunctionMapper::map_function_call("ISNULL", &args).unwrap();
         assert_eq!(result, "COALESCE(expr, 0)");
     }
 
     #[test]
     fn test_convert_ceiling() {
-        let args = vec![CommonExpression::Identifier(CommonIdentifier {
-            name: "value".to_string(),
-        })];
+        let args = vec![id_expr("value")];
         let result = FunctionMapper::map_function_call("CEILING", &args).unwrap();
         assert_eq!(result, "CEIL(\"value\")");
     }
 
     #[test]
     fn test_convert_dateadd_day() {
-        let args = vec![
-            CommonExpression::Identifier(CommonIdentifier {
-                name: "DAY".to_string(),
-            }),
-            CommonExpression::Literal(CommonLiteral::Integer(7)),
-            CommonExpression::Identifier(CommonIdentifier {
-                name: "current_date".to_string(),
-            }),
-        ];
+        let args = vec![id_expr("DAY"), int_expr(7), id_expr("current_date")];
         let result = FunctionMapper::map_function_call("DATEADD", &args).unwrap();
         assert_eq!(result, "\"current_date\" + INTERVAL '7 days'");
     }
 
     #[test]
     fn test_convert_dateadd_month() {
-        let args = vec![
-            CommonExpression::Identifier(CommonIdentifier {
-                name: "MONTH".to_string(),
-            }),
-            CommonExpression::Literal(CommonLiteral::Integer(3)),
-            CommonExpression::Identifier(CommonIdentifier {
-                name: "start_date".to_string(),
-            }),
-        ];
+        let args = vec![id_expr("MONTH"), int_expr(3), id_expr("start_date")];
         let result = FunctionMapper::map_function_call("DATEADD", &args).unwrap();
         assert_eq!(result, "start_date + INTERVAL '3 months'");
     }
 
     #[test]
     fn test_convert_dateadd_year() {
-        let args = vec![
-            CommonExpression::Identifier(CommonIdentifier {
-                name: "YEAR".to_string(),
-            }),
-            CommonExpression::Literal(CommonLiteral::Integer(1)),
-            CommonExpression::Identifier(CommonIdentifier {
-                name: "hire_date".to_string(),
-            }),
-        ];
+        let args = vec![id_expr("YEAR"), int_expr(1), id_expr("hire_date")];
         let result = FunctionMapper::map_function_call("DATEADD", &args).unwrap();
         assert_eq!(result, "hire_date + INTERVAL '1 years'");
     }
 
     #[test]
     fn test_convert_datediff_day() {
-        let args = vec![
-            CommonExpression::Identifier(CommonIdentifier {
-                name: "DAY".to_string(),
-            }),
-            CommonExpression::Identifier(CommonIdentifier {
-                name: "start_date".to_string(),
-            }),
-            CommonExpression::Identifier(CommonIdentifier {
-                name: "end_date".to_string(),
-            }),
-        ];
+        let args = vec![id_expr("DAY"), id_expr("start_date"), id_expr("end_date")];
         let result = FunctionMapper::map_function_call("DATEDIFF", &args).unwrap();
         assert_eq!(result, "DATE_PART('day', end_date - start_date)");
     }
 
     #[test]
     fn test_convert_datediff_month() {
-        let args = vec![
-            CommonExpression::Identifier(CommonIdentifier {
-                name: "MONTH".to_string(),
-            }),
-            CommonExpression::Identifier(CommonIdentifier {
-                name: "start_date".to_string(),
-            }),
-            CommonExpression::Identifier(CommonIdentifier {
-                name: "end_date".to_string(),
-            }),
-        ];
+        let args = vec![id_expr("MONTH"), id_expr("start_date"), id_expr("end_date")];
         let result = FunctionMapper::map_function_call("DATEDIFF", &args).unwrap();
         assert_eq!(result, "DATE_PART('month', end_date - start_date)");
     }
 
     #[test]
     fn test_convert_unsupported_function() {
-        let args = vec![CommonExpression::Literal(CommonLiteral::Integer(1))];
+        let args = vec![int_expr(1)];
         let result = FunctionMapper::map_function_call("TSQL_CUSTOM", &args);
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -403,12 +366,7 @@ mod tests {
 
     #[test]
     fn test_convert_dateadd_wrong_args() {
-        let args = vec![
-            CommonExpression::Identifier(CommonIdentifier {
-                name: "DAY".to_string(),
-            }),
-            CommonExpression::Literal(CommonLiteral::Integer(7)),
-        ];
+        let args = vec![id_expr("DAY"), int_expr(7)];
         let result = FunctionMapper::map_function_call("DATEADD", &args);
         assert!(result.is_err());
     }
