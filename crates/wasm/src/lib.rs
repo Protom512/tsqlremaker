@@ -161,7 +161,9 @@ pub fn get_version() -> String {
 #[wasm_bindgen(js_name = convertTo)]
 pub fn convert_to(input: &str, dialect: TargetDialect) -> JsValue {
     use ast_js::JsConversionResult;
-    use tsql_parser::ToCommonAst;
+    // 直接コンバータ (Issue #163): 旧2段階チェーン (to_common_ast + convert) を
+    // 単一の to_common_sql に統合。レガシー bridge への依存を除去。
+    use tsql_parser::ast::to_common_sql::to_common_sql;
 
     // Parser で T-SQL をパース
     let result = tsql_parser::parse(input);
@@ -177,10 +179,10 @@ pub fn convert_to(input: &str, dialect: TargetDialect) -> JsValue {
         }
     };
 
-    // Common SQL AST に変換
+    // 直接 common_sql::ast::Statement へ変換 (非対応/DialectSpecific は None で除外)
     let common_stmts: Vec<_> = stmts
         .iter()
-        .filter_map(|stmt| stmt.to_common_ast())
+        .filter_map(|stmt| to_common_sql(stmt))
         .collect();
 
     if common_stmts.is_empty() && !stmts.is_empty() {
@@ -196,29 +198,12 @@ pub fn convert_to(input: &str, dialect: TargetDialect) -> JsValue {
     match dialect {
         TargetDialect::PostgreSQL => {
             use postgresql_emitter::{EmissionConfig, PostgreSqlEmitter};
-            // postgresql-emitter は common-sql のみに依存 (P1 結合負債是正 / PR #157) なので、
-            // レガシー CommonStatement をブリッジ (convert) で共通 AST へ変換してから渡す。
-            // MySQL ブランチ (下記) と同じパターン。
-            use tsql_parser::common::convert;
 
             let mut emitter = PostgreSqlEmitter::new(EmissionConfig::default());
             let mut results = Vec::new();
 
             for stmt in common_stmts {
-                let sql_stmt = match convert(stmt) {
-                    Some(s) => s,
-                    None => {
-                        let error_result = JsConversionResult::Error {
-                            message:
-                                "Statement contains unsupported features for PostgreSQL conversion"
-                                    .to_string(),
-                        };
-                        return serde_wasm_bindgen::to_value(&error_result).unwrap_or_else(|_| {
-                            JsValue::from_str(r#"{"error":"serialization_error"}"#)
-                        });
-                    }
-                };
-                match emitter.emit(&sql_stmt) {
+                match emitter.emit(&stmt) {
                     Ok(sql) => results.push(sql),
                     Err(e) => {
                         let error_result = JsConversionResult::Error {
@@ -239,27 +224,12 @@ pub fn convert_to(input: &str, dialect: TargetDialect) -> JsValue {
         }
         TargetDialect::MySQL => {
             use mysql_emitter::{EmitterConfig, MySqlEmitter};
-            // mysql-emitter は common-sql のみに依存 (P1 結合負債是正) なので、
-            // レガシー CommonStatement をブリッジ (convert) で共通 AST へ変換してから渡す。
-            use tsql_parser::common::convert;
 
             let mut emitter = MySqlEmitter::new(EmitterConfig::default());
             let mut results = Vec::new();
 
             for stmt in common_stmts {
-                let sql_stmt = match convert(stmt) {
-                    Some(s) => s,
-                    None => {
-                        let error_result = JsConversionResult::Error {
-                            message: "Statement contains unsupported features for MySQL conversion"
-                                .to_string(),
-                        };
-                        return serde_wasm_bindgen::to_value(&error_result).unwrap_or_else(|_| {
-                            JsValue::from_str(r#"{"error":"serialization_error"}"#)
-                        });
-                    }
-                };
-                match emitter.emit(&sql_stmt) {
+                match emitter.emit(&stmt) {
                     Ok(sql) => results.push(sql),
                     Err(e) => {
                         let error_result = JsConversionResult::Error {

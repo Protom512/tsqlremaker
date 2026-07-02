@@ -10,7 +10,25 @@
 #![allow(clippy::len_zero)]
 
 use tsql_parser::ast::ColumnConstraint;
+// 直接変換器 (Issue #163): 旧2段階チェーン (ToCommonAst + convert) は削除済み。
+use tsql_parser::ast::to_common_sql::to_common_sql as to_common_sql_fn;
 use tsql_parser::{parse, parse_one, Parser};
+
+/// 共通AST変換のエントリポイント (issue #163).
+///
+/// 直接変換器 `tsql_parser::ast::to_common_sql::to_common_sql` への薄いラッパ。
+/// 方言固有の構文 (DECLARE, IF, ASE 固有の UPDATE...FROM 等) は変換不能と
+/// みなし `None` を返す (設計決定: DialectSpecific -> None)。
+trait StatementExt {
+    /// T-SQL 文を方言非依存の `common_sql::ast::Statement` へ変換する。
+    fn to_common_sql(&self) -> Option<common_sql::ast::Statement>;
+}
+
+impl StatementExt for tsql_parser::Statement {
+    fn to_common_sql(&self) -> Option<common_sql::ast::Statement> {
+        to_common_sql_fn(self)
+    }
+}
 
 /// 複数の JOIN を含む複雑な SELECT 文
 #[test]
@@ -782,41 +800,39 @@ fn test_recursion_depth_limit() {
     assert!(result.is_err());
 }
 
-/// DialectSpecific変換のテスト
+/// 方言固有構文は共通ASTへ変換されず None となる (issue #163, T6).
+///
+/// 移行後、`common_sql::ast::Statement` には `DialectSpecific` バリアントが
+/// 存在しないため、DECLARE / SET / IF のような ASE 固有の制御フロー文は
+/// 変換不能となり `None` を返す。これは方言非依存 AST への損失のあるマッピング
+/// (lossy mapping) の設計決定 (a) である。
 #[test]
-fn test_dialect_specific_conversions() {
-    use tsql_parser::{common::ToCommonAst, parse};
+fn test_dialect_specific_conversions_return_none() {
+    use crate::StatementExt as _;
 
-    // DECLARE文は方言固有
+    // DECLARE文は方言固有 -> 変換不能 -> None
     let sql = "DECLARE @x INT";
     let statements = parse(sql).unwrap();
-    let converted = statements[0].to_common_ast();
-    assert!(converted.is_some());
+    assert!(
+        statements[0].to_common_sql().is_none(),
+        "DECLARE は共通ASTへ変換不能のため None となるべき"
+    );
 
-    match converted.unwrap() {
-        tsql_parser::common::CommonStatement::DialectSpecific { description, .. } => {
-            assert!(description.contains("DECLARE") || description.contains("variable"));
-        }
-        _ => panic!("方言固有としてマークされるべき"),
-    }
-
-    // SET文は方言固有
+    // SET文は方言固有 -> None
     let sql = "SET @x = 1";
     let statements = parse(sql).unwrap();
-    let converted = statements[0].to_common_ast();
-    assert!(converted.is_some());
+    assert!(statements[0].to_common_sql().is_none());
 
-    // IF文は方言固有
+    // IF文は方言固有 -> None
     let sql = "IF @x > 0 SELECT 1";
     let statements = parse(sql).unwrap();
-    let converted = statements[0].to_common_ast();
-    assert!(converted.is_some());
+    assert!(statements[0].to_common_sql().is_none());
 }
 
-/// UPDATE with FROM clause (ASE-specific)
+/// UPDATE with FROM clause (ASE-specific) は共通ASTへ変換されず None となる.
 #[test]
-fn test_update_with_from_dialect_specific() {
-    use tsql_parser::{common::ToCommonAst, parse_one};
+fn test_update_with_from_is_unconvertible() {
+    use crate::StatementExt as _;
 
     let sql = "UPDATE t SET x = 1 FROM table_t";
     let stmt = parse_one(sql).unwrap();
@@ -826,16 +842,11 @@ fn test_update_with_from_dialect_specific() {
         matches!(stmt, tsql_parser::Statement::Update(ref update) if update.from_clause.is_some());
     assert!(has_from, "UPDATE with FROM clause");
 
-    // しかしCommon AST変換ではDialectSpecificになる
-    let converted = stmt.to_common_ast();
-    assert!(converted.is_some());
-
-    match converted.unwrap() {
-        tsql_parser::common::CommonStatement::DialectSpecific { description, .. } => {
-            assert!(description.contains("FROM clause"));
-        }
-        _ => {}
-    }
+    // しかし共通AST変換では ASE 固有機能として扱われ None となる
+    assert!(
+        stmt.to_common_sql().is_none(),
+        "UPDATE with FROM は ASE 固有のため共通ASTへ変換不能 (None)"
+    );
 }
 
 /// ビット否定演算子のテスト

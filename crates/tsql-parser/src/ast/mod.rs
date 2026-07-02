@@ -9,10 +9,17 @@ mod data_modification;
 mod ddl;
 mod expression;
 mod select;
-mod to_common;
+pub mod to_common_sql;
+// 関数 to_common_sql を ast 直下で再エクスポート (モジュール名と同名だが
+// 型名前空間=モジュール、値名前空間=関数で共存する)。
+pub use to_common_sql::to_common_sql;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "to_common_sql_tests.rs"]
+mod to_common_sql_tests;
 
 // Core exports
 pub use base::AstNode;
