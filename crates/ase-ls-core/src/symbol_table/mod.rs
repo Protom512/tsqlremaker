@@ -237,15 +237,15 @@ pub struct SymbolTableBuilder;
 
 impl SymbolTableBuilder {
     /// ソースコードからシンボルテーブルを構築する
+    ///
+    /// エラー回復付きパーサーを使用するため、構文エラーがあっても
+    /// 正しくパースできた文からシンボルを収集する。
     #[must_use]
     pub fn build(source: &str) -> SymbolTable {
         let mut table = SymbolTable::default();
         let line_index = LineIndex::new(source);
 
-        let statements = match tsql_parser::Parser::new(source).parse() {
-            Ok(s) => s,
-            Err(_) => return table,
-        };
+        let (statements, _errors) = tsql_parser::Parser::new(source).parse_with_errors();
 
         for stmt in &statements {
             Self::collect_from_stmt(&line_index, stmt, &mut table);
@@ -260,10 +260,7 @@ impl SymbolTableBuilder {
         let mut table = SymbolTable::default();
         let line_index = LineIndex::new(source);
 
-        let statements = match tsql_parser::Parser::new(source).parse_with_errors() {
-            Ok((s, _)) => s,
-            Err(_) => return table,
-        };
+        let (statements, _errors) = tsql_parser::Parser::new(source).parse_with_errors();
 
         for stmt in &statements {
             Self::collect_from_stmt(&line_index, stmt, &mut table);

@@ -164,9 +164,17 @@ tsqlremaker/
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
-│   │       ├── parser.rs               # Main parser
-│   │       ├── expr.rs                 # Expression parsing
-│   │       ├── stmt.rs                 # Statement parsing
+│   │       ├── parser/                 # Main parser (split into submodules)
+│   │       │   ├── mod.rs              # Core dispatch & public API
+│   │       │   ├── select.rs           # SELECT statement parsing
+│   │       │   ├── dml.rs              # INSERT/UPDATE/DELETE parsing
+│   │       │   ├── ddl.rs              # CREATE/ALTER parsing
+│   │       │   ├── control_flow.rs     # IF/WHILE/TRY..CATCH parsing
+│   │       │   ├── misc.rs             # DECLARE/SET/TRANSACTION/EXEC parsing
+│   │       │   ├── helpers.rs          # Shared utilities
+│   │       │   └── tests.rs            # Inline tests
+│   │       ├── expression/             # Expression parsing
+│   │       ├── common/                 # Re-exports from common-sql crate
 │   │       └── error.rs                # Parser errors
 │   │
 │   ├── common-sql/                     # 共通 AST
