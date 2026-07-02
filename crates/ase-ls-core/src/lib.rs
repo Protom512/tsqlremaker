@@ -17,6 +17,7 @@ pub mod diagnostics;
 pub mod folding;
 pub mod formatting;
 pub mod hover;
+pub mod incremental;
 pub mod line_index;
 pub mod references;
 pub mod rename;
