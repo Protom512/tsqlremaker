@@ -191,14 +191,49 @@ impl PostgreSqlEmitter {
             Statement::Update(update) => self.visit_update_statement(update),
             Statement::Delete(delete) => self.visit_delete_statement(delete),
             // DDL 系は本 emitter が未対応のため Unsupported を返す。
-            // 旧 CommonStatement::DialectSpecific の T-SQL→PL/pgSQL ヒント生成は
-            // 削除された (common_sql Statement に等価バリアント不存在、別 Issue で扱う)。
             Statement::CreateTable(_)
             | Statement::AlterTable(_)
             | Statement::DropTable(_)
             | Statement::CreateIndex(_)
             | Statement::DropIndex(_) => Err(EmitError::Unsupported(statement_kind_name(stmt))),
+            // #158: DialectSpecific は common AST で表現できない T-SQL 制御構文等の
+            // エスケープハッチ (Option B: verbatim source text)。本 emitter は真の
+            // PL/pgSQL 変換を行わず、元ソースを構文カテゴリ別ガイドコメント付きで
+            // 出力する graceful fallback を返す (実質 no-op の有効 PostgreSQL)。
+            Statement::DialectSpecific { source, .. } => self.visit_dialect_specific(source),
         }
+    }
+
+    /// DialectSpecific 構文の graceful fallback (#158)。
+    ///
+    /// 元の T-SQL ソース (`source`) を構文カテゴリ別の PL/pgSQL 変換ガイドコメントと
+    /// 共にコメントアウトして出力する。出力は全行コメント化されるため、PostgreSQL で
+    /// 実行しても no-op となる (構文エラーを起こさない)。
+    fn visit_dialect_specific(&mut self, source: &str) -> Result<(), EmitError> {
+        let trimmed = source.trim_start();
+        let upper: String = trimmed
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .map(|c| c.to_ascii_uppercase())
+            .collect();
+        let category = match upper.as_str() {
+            "DECLARE" => "変数宣言 (DECLARE @v → DECLARE v)",
+            "SET" => "変数代入 (SET @v = expr → v := expr)",
+            "IF" => "条件分岐 (IF ... ELSE → IF ... THEN ... END IF)",
+            "WHILE" => "ループ (WHILE ... BEGIN END → WHILE ... LOOP END LOOP)",
+            "BEGIN" => "複合ブロック (BEGIN ... END)",
+            _ => "サポート対象外の T-SQL 構文",
+        };
+        self.write("-- [T-SQL → PostgreSQL] ");
+        self.write(category);
+        self.writeln();
+        self.write("-- 元の T-SQL:\n");
+        for line in source.lines() {
+            self.write("-- ");
+            self.write(line);
+            self.writeln();
+        }
+        Ok(())
     }
 
     /// SELECT文を訪問

@@ -154,40 +154,98 @@ fn delete_statement_maps_to_statement_delete() {
     assert!(matches!(got, SqlStmt::Delete(_)));
 }
 
-// --- None cases: DialectSpecific constructs (Stage-1 → DialectSpecific,
-//     Stage-2 → None) -----------------------------------------------
+// --- DialectSpecific escape-hatch: T-SQL control-flow variants carry their
+//     Debug-string classification + span into the common AST so a downstream
+//     emitter can re-implement them natively (#158, T3). DDL (Create /
+//     AlterTable) and BatchSeparator still map to None (dedicated variants /
+//     out of scope). -----------------------------------------------------
+
+/// Assert `to_common_sql` yields a `DialectSpecific` carrying a non-empty
+/// `source` classification for the given SQL. The span is the AST node's own
+/// span verbatim (the parser leaves `span.end = 0` for some multi-line
+/// control-flow constructs — a known limitation — so only `source` is checked
+/// here; the span-fidelity test below pins the round-trip separately).
+fn assert_dialect_specific(sql: &str, label: &str) {
+    let stmt = crate::parse_one(sql).unwrap_or_else(|e| panic!("parse {label}: {e}"));
+    match to_common_sql(&stmt) {
+        Some(SqlStmt::DialectSpecific { source, span: _ }) => {
+            assert!(
+                !source.is_empty(),
+                "{label} source classification must be non-empty"
+            );
+        }
+        other => panic!("{label} -> expected DialectSpecific, got {other:?}"),
+    }
+}
 
 #[test]
-fn declare_returns_none() {
-    // DECLARE is control-flow; we only need the discriminant. Build via parse
-    // to avoid constructing internal control-flow types by hand.
+fn declare_maps_to_dialect_specific() {
+    assert_dialect_specific("DECLARE @x INT", "DECLARE");
+}
+
+#[test]
+fn set_maps_to_dialect_specific() {
+    assert_dialect_specific("SET @x = 1", "SET");
+}
+
+#[test]
+fn if_maps_to_dialect_specific() {
+    assert_dialect_specific("IF 1 = 1 SELECT 1", "IF");
+}
+
+#[test]
+fn while_maps_to_dialect_specific() {
+    assert_dialect_specific("WHILE 1 = 1 SELECT 1", "WHILE");
+}
+
+#[test]
+fn begin_end_block_maps_to_dialect_specific() {
+    assert_dialect_specific("BEGIN SELECT 1 END", "Block");
+}
+
+#[test]
+fn exec_maps_to_dialect_specific() {
+    assert_dialect_specific("EXEC p", "EXEC");
+}
+
+#[test]
+fn variable_assignment_maps_to_dialect_specific() {
+    // SELECT @v = 1 is a variable assignment, not a real SELECT.
+    assert_dialect_specific("SELECT @v = 1", "VariableAssignment");
+}
+
+#[test]
+fn dialect_specific_source_classifies_variant_kind() {
+    // The `source` field carries the T-SQL variant Debug head so a downstream
+    // emitter can dispatch on construct kind (the deleted postgresql-emitter
+    // matched on `Declare(`/`If(` etc.). Pin the classification prefix.
     let stmt = crate::parse_one("DECLARE @x INT").expect("parse DECLARE");
-    assert!(to_common_sql(&stmt).is_none(), "DECLARE -> None");
+    let SqlStmt::DialectSpecific { source, .. } = to_common_sql(&stmt).expect("DialectSpecific")
+    else {
+        panic!("expected DialectSpecific");
+    };
+    assert!(
+        source.contains("Declare"),
+        "DECLARE source must classify as Declare, got: {source}"
+    );
 }
 
 #[test]
-fn set_returns_none() {
-    let stmt = crate::parse_one("SET @x = 1").expect("parse SET");
-    assert!(to_common_sql(&stmt).is_none(), "SET -> None");
-}
-
-#[test]
-fn if_returns_none() {
+fn dialect_specific_span_matches_ast_node_span() {
+    // The carried span must equal the T-SQL AST node's own span (not a
+    // placeholder), so emitters can locate the original construct.
+    use crate::ast::AstNode as _;
     let stmt = crate::parse_one("IF 1 = 1 SELECT 1").expect("parse IF");
-    assert!(to_common_sql(&stmt).is_none(), "IF -> None");
+    let expected_span = stmt.span();
+    let SqlStmt::DialectSpecific { span, .. } = to_common_sql(&stmt).expect("DialectSpecific")
+    else {
+        panic!("expected DialectSpecific");
+    };
+    assert_eq!(span.start, expected_span.start);
+    assert_eq!(span.end, expected_span.end);
 }
 
-#[test]
-fn while_returns_none() {
-    let stmt = crate::parse_one("WHILE 1 = 1 SELECT 1").expect("parse WHILE");
-    assert!(to_common_sql(&stmt).is_none(), "WHILE -> None");
-}
-
-#[test]
-fn begin_end_block_returns_none() {
-    let stmt = crate::parse_one("BEGIN SELECT 1 END").expect("parse BEGIN..END");
-    assert!(to_common_sql(&stmt).is_none(), "Block -> None");
-}
+// --- DDL / BatchSeparator: still None (dedicated variants / out of scope) -
 
 #[test]
 fn create_table_returns_none() {
@@ -206,19 +264,6 @@ fn create_procedure_returns_none() {
 fn alter_table_returns_none() {
     let stmt = crate::parse_one("ALTER TABLE t ADD c INT").expect("parse ALTER TABLE");
     assert!(to_common_sql(&stmt).is_none(), "ALTER TABLE -> None");
-}
-
-#[test]
-fn exec_returns_none() {
-    let stmt = crate::parse_one("EXEC p").expect("parse EXEC");
-    assert!(to_common_sql(&stmt).is_none(), "EXEC -> None");
-}
-
-#[test]
-fn variable_assignment_returns_none() {
-    // SELECT @v = 1 is a variable assignment, not a real SELECT.
-    let stmt = crate::parse_one("SELECT @v = 1").expect("parse var assign");
-    assert!(to_common_sql(&stmt).is_none(), "VariableAssignment -> None");
 }
 
 // ===================================================================

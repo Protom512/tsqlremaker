@@ -37,9 +37,11 @@
 //!
 //! ## 非スコープ
 //!
-//! 旧 `CommonStatement::DialectSpecific` (T-SQL→SQLite ヒント生成) は
-//! `common_sql::ast::Statement` に等価なバリアントが存在しないため扱いません。
-//! DDL 系 (CREATE/ALTER/DROP TABLE/INDEX) は [`EmitError::Unsupported`] を返します。
+//! `common_sql::ast::Statement::DialectSpecific` (T-SQL 制御構文等の方言固有文)
+//! は #158 で AST に再追加されたが、本 emitter は SQLite 向け native 変換を
+//! 行わないため [`EmitError::Unsupported`] を返します (旧実装の T-SQL→SQLite
+//! ヒント生成の復元は #158 で追跡)。DDL 系 (CREATE/ALTER/DROP TABLE/INDEX) も
+//! 同様に [`EmitError::Unsupported`] を返します。
 
 #![warn(missing_docs)]
 // workspace.lints から clippy 設定を継承
@@ -149,12 +151,17 @@ impl SqliteEmitter {
             Statement::Delete(delete) => self.visit_delete_statement(delete),
             // DDL 系は本 emitter が未対応のため Unsupported を返す。
             // 旧 CommonStatement::DialectSpecific に相当する逃げ道は
-            // common_sql::ast::Statement に存在しないため削除された。
+            // common_sql::ast::Statement に存在しなかったが、#158 で
+            // DialectSpecific バリアントが再追加された。SQLite は未対応のため
+            // Unsupported を返す (native 再実装は #158 で追跡)。
             Statement::CreateTable(_)
             | Statement::AlterTable(_)
             | Statement::DropTable(_)
             | Statement::CreateIndex(_)
-            | Statement::DropIndex(_) => Err(EmitError::Unsupported(statement_kind_name(stmt))),
+            | Statement::DropIndex(_)
+            | Statement::DialectSpecific { .. } => {
+                Err(EmitError::Unsupported(statement_kind_name(stmt)))
+            }
         }
     }
 
@@ -989,7 +996,7 @@ impl Default for SqliteEmitter {
     }
 }
 
-/// DDL 系の文種別名を返す (エラーメッセージ用)。
+/// DDL 系・方言固有の文種別名を返す (エラーメッセージ用)。
 fn statement_kind_name(stmt: &Statement) -> String {
     match stmt {
         Statement::CreateTable(_) => "CREATE TABLE".to_string(),
@@ -997,6 +1004,9 @@ fn statement_kind_name(stmt: &Statement) -> String {
         Statement::DropTable(_) => "DROP TABLE".to_string(),
         Statement::CreateIndex(_) => "CREATE INDEX".to_string(),
         Statement::DropIndex(_) => "DROP INDEX".to_string(),
+        // #158: DialectSpecific (T-SQL 制御構文等の方言固有文)。
+        // SQLite は native 変換しないため Unsupported。復元は #158 で追跡。
+        Statement::DialectSpecific { .. } => "DialectSpecific".to_string(),
         // DML/SELECT は呼び出し側で処理済みのため、ここでは到達しない。
         _ => "UNKNOWN".to_string(),
     }
@@ -2228,6 +2238,36 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             EmitError::Unsupported(msg) => assert_eq!(msg, "CREATE TABLE"),
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+    }
+
+    // T6 (#158): DialectSpecific バリアントのパリティ検証。
+    // common_sql::ast::Statement に #158 で DialectSpecific が再追加されたため、
+    // visit_statement は新 arm を要求する (exhaustiveness)。SQLite は native 変換を
+    // 行わないため Unsupported を返すが、種別名として意味のある文字列を返すこと。
+    // (旧実装の T-SQL→SQLite ヒント生成の復元は #158 で追跡。本 PR では arm 追加のみ。)
+    #[test]
+    fn test_emit_dialect_specific_returns_unsupported_with_descriptive_name() {
+        let stmt = Statement::DialectSpecific {
+            source: "DECLARE @v INT".to_string(),
+            span: Span::new(0, 15),
+        };
+        let mut emitter = SqliteEmitter::default();
+        let result = emitter.emit(&stmt);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EmitError::Unsupported(msg) => {
+                // "UNKNOWN" ではなく DialectSpecific 由来であることが分かる名称であること
+                assert_ne!(
+                    msg, "UNKNOWN",
+                    "DialectSpecific must produce a descriptive kind name, not UNKNOWN"
+                );
+                assert!(
+                    msg.contains("Dialect") || msg.contains("dialect"),
+                    "expected dialect-specific kind name, got: {msg}"
+                );
+            }
             other => panic!("expected Unsupported, got {other:?}"),
         }
     }

@@ -75,7 +75,10 @@ impl MySqlEmitter {
             | Statement::AlterTable(_)
             | Statement::DropTable(_)
             | Statement::CreateIndex(_)
-            | Statement::DropIndex(_) => Err(EmitError::UnsupportedStatement {
+            | Statement::DropIndex(_)
+            // DialectSpecific (T-SQL control-flow etc.) is out of MySQL emitter
+            // scope — tracked by #158 (postgresql-emitter PL/pgSQL restoration).
+            | Statement::DialectSpecific { .. } => Err(EmitError::UnsupportedStatement {
                 statement_type: statement_kind_name(stmt),
             }),
         }

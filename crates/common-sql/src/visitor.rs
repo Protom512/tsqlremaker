@@ -25,7 +25,7 @@ use crate::ast::literal::Literal;
 use crate::ast::statement::{
     DeleteStatement, InsertStatement, SelectStatement, Statement, UpdateStatement,
 };
-use crate::ast::Expression;
+use crate::ast::{Expression, Span};
 
 /// AST visitor.
 ///
@@ -67,6 +67,9 @@ pub trait Visitor: Sized {
             Statement::DropTable(s) => self.visit_drop_table_statement(s),
             Statement::CreateIndex(s) => self.visit_create_index_statement(s),
             Statement::DropIndex(s) => self.visit_drop_index_statement(s),
+            Statement::DialectSpecific { source, span } => {
+                self.visit_dialect_specific(source, span)
+            }
         }
     }
 
@@ -104,6 +107,15 @@ pub trait Visitor: Sized {
     }
     /// Visit a `DROP INDEX` statement (default: [`default_output`](Self::default_output)).
     fn visit_drop_index_statement(&mut self, _stmt: &DropIndexStatement) -> Self::Output {
+        self.default_output()
+    }
+    /// Visit a dialect-specific escape-hatch statement (default:
+    /// [`default_output`](Self::default_output)).
+    ///
+    /// `source` is the verbatim dialect-specific text and `span` its source
+    /// location. Emitters that re-implement dialect-specific constructs
+    /// natively (e.g. postgresql-emitter → PL/pgSQL) override this hook.
+    fn visit_dialect_specific(&mut self, _source: &str, _span: &Span) -> Self::Output {
         self.default_output()
     }
 
@@ -536,6 +548,96 @@ mod tests {
             stmt.accept(&mut v);
             assert_eq!(v.default_calls(), 1, "variant {stmt:?} did not dispatch");
         }
+    }
+
+    // -- DialectSpecific escape hatch dispatches through visit_statement ---
+    #[test]
+    fn visit_statement_dispatches_dialect_specific_to_default() {
+        let stmt = Statement::DialectSpecific {
+            source: "DECLARE @v INT".to_string(),
+            span: Span::new(0, 15),
+        };
+        let mut v = CountingVisitor::new();
+        stmt.accept(&mut v);
+        assert_eq!(v.default_calls(), 1);
+        assert_eq!(v.data_types(), 0);
+    }
+
+    /// A visitor that overrides only `visit_dialect_specific` proves the new
+    /// dispatch arm is a distinct path (not collapsed into another hook).
+    struct DialectCounter {
+        dialect_calls: Cell<u32>,
+        default_calls: Cell<u32>,
+    }
+
+    impl DialectCounter {
+        fn new() -> Self {
+            Self {
+                dialect_calls: Cell::new(0),
+                default_calls: Cell::new(0),
+            }
+        }
+    }
+
+    impl Visitor for DialectCounter {
+        type Output = ();
+
+        fn default_output(&self) -> Self::Output {
+            self.default_calls.set(self.default_calls.get() + 1);
+        }
+
+        fn visit_dialect_specific(&mut self, _source: &str, _span: &Span) -> Self::Output {
+            self.dialect_calls.set(self.dialect_calls.get() + 1);
+        }
+    }
+
+    #[test]
+    fn visit_dialect_specific_hook_is_distinct_path() {
+        let stmt = Statement::DialectSpecific {
+            source: "IF @v > 0 SELECT 1".to_string(),
+            span: Span::new(0, 19),
+        };
+        let mut v = DialectCounter::new();
+        stmt.accept(&mut v);
+        assert_eq!(v.dialect_calls.get(), 1);
+        assert_eq!(v.default_calls.get(), 0);
+        // A regular SELECT must NOT route to the dialect hook.
+        let mut v2 = DialectCounter::new();
+        minimal_select().accept(&mut v2);
+        assert_eq!(v2.dialect_calls.get(), 0);
+        assert_eq!(v2.default_calls.get(), 1);
+    }
+
+    #[test]
+    fn visit_dialect_specific_hook_receives_source_and_span() {
+        struct CapturingVisitor {
+            captured_source: Option<String>,
+            captured_span: Option<Span>,
+        }
+        impl CapturingVisitor {
+            fn new() -> Self {
+                Self {
+                    captured_source: None,
+                    captured_span: None,
+                }
+            }
+        }
+        impl Visitor for CapturingVisitor {
+            type Output = ();
+            fn default_output(&self) -> Self::Output {}
+            fn visit_dialect_specific(&mut self, source: &str, span: &Span) -> Self::Output {
+                self.captured_source = Some(source.to_string());
+                self.captured_span = Some(*span);
+            }
+        }
+        let stmt = Statement::DialectSpecific {
+            source: "WHILE 1=1 BREAK".to_string(),
+            span: Span::new(7, 22),
+        };
+        let mut v = CapturingVisitor::new();
+        stmt.accept(&mut v);
+        assert_eq!(v.captured_source.as_deref(), Some("WHILE 1=1 BREAK"));
+        assert_eq!(v.captured_span, Some(Span::new(7, 22)));
     }
 
     // -- Expression Visitable + visit_expression coverage -------------------
