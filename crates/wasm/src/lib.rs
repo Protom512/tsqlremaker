@@ -350,6 +350,54 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    // T6 (#158): convert_to の DialectSpecific パススルー契約の根拠を native で検証。
+    // T3 の意図通り、T-SQL 制御構文 (DECLARE / IF) は to_common_sql で
+    // `Some(DialectSpecific { .. })` に変換され、None-filter でドロップされない。
+    // これにより convert_to は DialectSpecific 文を emitter まで届け、emitter が
+    // Unsupported を返すことで "Emit error" を発行する (サイレントな空成功は起きない)。
+    // 一方、変換先のない DDL (CREATE TABLE) や BatchSeparator は None になり、
+    // filter_map 後に空になれば convert_to は "unsupported features" エラーを返す。
+    #[cfg(not(feature = "wasm"))]
+    #[test]
+    fn test_to_common_sql_control_flow_passes_through_as_dialect_specific() {
+        use tsql_parser::ast::to_common_sql::to_common_sql;
+
+        // DECLARE @v INT → パース成功、to_common_sql は DialectSpecific を返す (T3)
+        let stmts = tsql_parser::parse("DECLARE @v INT").unwrap_or_default();
+        assert_eq!(stmts.len(), 1, "DECLARE should parse to one statement");
+        let common = to_common_sql(&stmts[0]);
+        assert!(
+            common.is_some(),
+            "DECLARE must pass through as Some (DialectSpecific), not None — \
+             otherwise convert_to silently drops it"
+        );
+
+        // IF ... → パース成功、to_common_sql は DialectSpecific を返す (T3)
+        let stmts = tsql_parser::parse("IF 1 = 1 SELECT 1").unwrap_or_default();
+        assert_eq!(stmts.len(), 1, "IF should parse to one statement");
+        assert!(
+            to_common_sql(&stmts[0]).is_some(),
+            "IF must pass through as Some (DialectSpecific), not None"
+        );
+    }
+
+    // T6 (#158): 変換先のない DDL は None になる (T3: Create/AlterTable/BatchSeparator)。
+    // これが convert_to の "Statement contains unsupported features" エラー経路の根拠。
+    #[cfg(not(feature = "wasm"))]
+    #[test]
+    fn test_to_common_sql_unsupported_ddl_returns_none() {
+        use tsql_parser::ast::to_common_sql::to_common_sql;
+
+        // CREATE TABLE は T-SQL DDL shape が変換先なし → None (T3)
+        let stmts = tsql_parser::parse("CREATE TABLE t (id INT)").unwrap_or_default();
+        if let Some(stmt) = stmts.first() {
+            assert!(
+                to_common_sql(stmt).is_none(),
+                "CREATE TABLE should map to None (no destination variant)"
+            );
+        }
+    }
+
     #[cfg(feature = "wasm")]
     #[test]
     fn test_get_version() {
@@ -410,6 +458,50 @@ mod tests {
         let result_str = result.as_string().unwrap();
         // パースエラーが返るはず
         assert!(result_str.contains("Error") || result_str.contains("error"));
+    }
+
+    // T6 (#158): DialectSpecific パススルー検証。
+    // DECLARE 等、to_common_sql (T3) が None に変換する T-SQL 制御構文を
+    // PostgreSQL 変換にかけた際、None-filter で暗黙にドロップして空の成功結果を
+    // 返してはならない。convert_to は "Statement contains unsupported features"
+    // エラーを返さなければならない (サイレントな情報消失の防止)。
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn test_convert_to_postgresql_dialect_specific_not_silently_dropped() {
+        // DECLARE @v INT はパース成功するが to_common_sql は None を返す
+        // (T3 pinned lossy mapping: DialectSpecific → None)。
+        let input = "DECLARE @v INT";
+        let result = convert_to(input, TargetDialect::PostgreSQL);
+
+        let result_str = result.as_string().unwrap();
+        // 成功ステータスでなく、unsupported features エラーであること
+        assert!(
+            !result_str.contains(r#""status":"success""#) && !result_str.contains("Success"),
+            "DialectSpecific 文がサイレントにドロップされ成功結果になりました: {result_str}"
+        );
+        assert!(
+            result_str.contains("unsupported features"),
+            "unsupported features エラーが返るべきです: {result_str}"
+        );
+    }
+
+    // T6 (#158): 同一パススルー契約の SQLite 方言検証。
+    // PostgreSQL 以外の方言でも、None-filter によるサイレントドロップが起きないこと。
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn test_convert_to_sqlite_dialect_specific_not_silently_dropped() {
+        let input = "IF 1 = 1 SELECT 1";
+        let result = convert_to(input, TargetDialect::SQLite);
+
+        let result_str = result.as_string().unwrap();
+        assert!(
+            !result_str.contains(r#""status":"success""#) && !result_str.contains("Success"),
+            "DialectSpecific 文がサイレントにドロップされ成功結果になりました: {result_str}"
+        );
+        assert!(
+            result_str.contains("unsupported features"),
+            "unsupported features エラーが返るべきです: {result_str}"
+        );
     }
 
     #[cfg(feature = "wasm")]

@@ -800,33 +800,44 @@ fn test_recursion_depth_limit() {
     assert!(result.is_err());
 }
 
-/// 方言固有構文は共通ASTへ変換されず None となる (issue #163, T6).
+/// T-SQL 制御フロー文は `DialectSpecific` エスケープハッチへ変換される (#158, T3).
 ///
-/// 移行後、`common_sql::ast::Statement` には `DialectSpecific` バリアントが
-/// 存在しないため、DECLARE / SET / IF のような ASE 固有の制御フロー文は
-/// 変換不能となり `None` を返す。これは方言非依存 AST への損失のあるマッピング
-/// (lossy mapping) の設計決定 (a) である。
+/// `common_sql::ast::Statement` に `DialectSpecific { source, span }` バリアントが
+/// 追加されたため、DECLARE / SET / IF のような ASE 固有の制御フロー文は `None`
+/// ではなく `Some(DialectSpecific)` へ変換される。`source` は T-SQL バリアントの
+/// Debug 分類 (下流 emitter が種別 dispatch 可能)、`span` は AST ノード自身の
+/// ソース位置である。DDL (Create/AlterTable) と BatchSeparator は引き続き `None`。
 #[test]
-fn test_dialect_specific_conversions_return_none() {
+fn test_dialect_specific_conversions_return_dialect_specific() {
     use crate::StatementExt as _;
+    use common_sql::ast::Statement as CommonStatement;
 
-    // DECLARE文は方言固有 -> 変換不能 -> None
+    // DECLARE文は制御フロー -> DialectSpecific
     let sql = "DECLARE @x INT";
     let statements = parse(sql).unwrap();
     assert!(
-        statements[0].to_common_sql().is_none(),
-        "DECLARE は共通ASTへ変換不能のため None となるべき"
+        matches!(
+            statements[0].to_common_sql(),
+            Some(CommonStatement::DialectSpecific { .. })
+        ),
+        "DECLARE は DialectSpecific へ変換されるべき"
     );
 
-    // SET文は方言固有 -> None
+    // SET文は制御フロー -> DialectSpecific
     let sql = "SET @x = 1";
     let statements = parse(sql).unwrap();
-    assert!(statements[0].to_common_sql().is_none());
+    assert!(matches!(
+        statements[0].to_common_sql(),
+        Some(CommonStatement::DialectSpecific { .. })
+    ));
 
-    // IF文は方言固有 -> None
+    // IF文は制御フロー -> DialectSpecific
     let sql = "IF @x > 0 SELECT 1";
     let statements = parse(sql).unwrap();
-    assert!(statements[0].to_common_sql().is_none());
+    assert!(matches!(
+        statements[0].to_common_sql(),
+        Some(CommonStatement::DialectSpecific { .. })
+    ));
 }
 
 /// UPDATE with FROM clause (ASE-specific) は共通ASTへ変換されず None となる.

@@ -8,10 +8,12 @@
 //! E2E (T-SQL parse → common-sql → PostgreSQL) は別途ブリッジ網羅時に追加する
 //! (mysql-emitter と同一方針)。
 //!
-//! なお、旧テストのうち DialectSpecific 系 (DECLARE / SET 変数宣言・代入の
-//! 警告コメント出力) は common-sql AST に対応バリアントが存在せず、ブリッジを
-//! 介さなければ構築不能なため本ファイルでは扱わない。これらの T-SQL→PL/pgSQL
-//! コメント生成機能は別 Issue で追跡する。
+//! DialectSpecific 系 (DECLARE / IF...ELSE / 未対応構文) は #158 で
+//! `common_sql::ast::Statement::DialectSpecific { source, span }` (Option B:
+//! verbatim source text エスケープハッチ) が追加されたため、本ファイル末尾で
+//! 直接構築してテストする。本 emitter は真の PL/pgSQL 変換ではなく、元の
+//! T-SQL ソースを構文カテゴリ別のガイドコメント付きで出力する graceful
+//! fallback を行う (旧 visit_dialect_specific の挙動復元、#158 で追跡)。
 
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::panic)]
@@ -83,6 +85,19 @@ fn aliased_expr(expr: Expression, alias: &str) -> SelectItem {
 
 fn span() -> common_sql::ast::Span {
     common_sql::ast::Span::new(0, 0)
+}
+
+/// `DialectSpecific` ステートメント (Option B: verbatim source text) を構築する。
+/// #158 で追加された `common_sql::ast::Statement::DialectSpecific { source, span }`
+/// を直接組み立てる (DD-3 AST-construction パターン)。
+/// TODO(T5/#40): integration tests restored in this file will consume this helper;
+/// until then suppress dead-code so the workspace clippy gate stays green.
+#[allow(dead_code)]
+fn dialect_specific(source: &str) -> Statement {
+    Statement::DialectSpecific {
+        source: source.to_string(),
+        span: span(),
+    }
 }
 
 /// `expr = value` の比較式
@@ -675,4 +690,91 @@ fn emit_nested_subquery() {
         .unwrap();
     assert!(pg_sql.contains("customer_id IN (SELECT id FROM customers"));
     assert!(pg_sql.contains("region_id IN (SELECT id FROM regions"));
+}
+
+// ---------------------------------------------------------------------------
+// DialectSpecific 系テスト (#158: T-SQL → PL/pgSQL graceful fallback)
+// ---------------------------------------------------------------------------
+
+/// DECLARE 文の graceful fallback: 元の T-SQL ソースをガイドコメント付きで
+/// コメントアウトして出力する (真の PL/pgSQL 変換ではなく #158 Option B の
+/// fallback)。出力は有効な (no-op) PostgreSQL となること。
+#[test]
+fn emit_dialect_specific_declare_fallback() {
+    let stmt = dialect_specific("DECLARE @count INT");
+    let pg_sql = emitter(EmissionConfig::default()).emit(&stmt).unwrap();
+    // 変数宣言カテゴリのガイドマーカーが含まれること
+    assert!(
+        pg_sql.contains("DECLARE") && pg_sql.contains("--"),
+        "DECLARE fallback should emit a commented guidance marker: got {pg_sql}"
+    );
+    // 元の T-SQL ソースがコメント内に保持されること (verbatim)
+    assert!(
+        pg_sql.contains("DECLARE @count INT"),
+        "original T-SQL source must be preserved verbatim: got {pg_sql}"
+    );
+    // 出力はコメント化されているため、実行されても no-op であること
+    // (= 行頭が "--" コメント、または全体がコメントアウト済み)
+    assert!(
+        pg_sql
+            .lines()
+            .all(|line| line.trim_start().starts_with("--")),
+        "all output lines must be SQL comments (graceful no-op): got {pg_sql}"
+    );
+}
+
+/// IF ... ELSE 文の graceful fallback: 条件分岐カテゴリのガイドコメント付きで
+/// 元の T-SQL をコメントアウトして出力する。
+#[test]
+fn emit_dialect_specific_if_else_fallback() {
+    let source = "IF @count > 0\nBEGIN\n  SELECT 1\nEND\nELSE\nBEGIN\n  SELECT 0\nEND";
+    let stmt = dialect_specific(source);
+    let pg_sql = emitter(EmissionConfig::default()).emit(&stmt).unwrap();
+    // 条件分岐カテゴリのガイドマーカーが含まれること
+    assert!(
+        pg_sql.contains("IF") && pg_sql.contains("--"),
+        "IF/ELSE fallback should emit a commented guidance marker: got {pg_sql}"
+    );
+    // 元の T-SQL ソースがコメント内に保持されること (verbatim, 複数行含む)
+    assert!(
+        pg_sql.contains("IF @count > 0"),
+        "original IF condition must be preserved verbatim: got {pg_sql}"
+    );
+    // 全行コメント化 (graceful no-op)
+    assert!(
+        pg_sql
+            .lines()
+            .all(|line| line.trim_start().starts_with("--")),
+        "all output lines must be SQL comments (graceful no-op): got {pg_sql}"
+    );
+}
+
+/// 未対応構文の graceful fallback: カテゴリ判定に合致しない任意の
+/// dialect-specific 構文でもパニックせず、元ソースをコメントアウトして
+/// 出力すること (エラーを返さず妥当な no-op SQL を生成)。
+#[test]
+fn emit_dialect_specific_unsupported_construct_fallback() {
+    // TRY ... CATCH のようなカテゴリ未分類の構文例
+    let source = "RAISERROR('boom', 16, 1)";
+    let stmt = dialect_specific(source);
+    let result = emitter(EmissionConfig::default()).emit(&stmt);
+    // graceful fallback はエラーを返さず、コメント化された文字列を返すこと
+    assert!(
+        result.is_ok(),
+        "unsupported dialect-specific construct must not error, got {result:?}"
+    );
+    let pg_sql = result.unwrap();
+    assert!(!pg_sql.is_empty(), "fallback output must be non-empty");
+    // 元のソースがコメント内に保持されること
+    assert!(
+        pg_sql.contains("RAISERROR('boom', 16, 1)"),
+        "original source must be preserved verbatim in fallback: got {pg_sql}"
+    );
+    // 全行コメント化 (実質 no-op)
+    assert!(
+        pg_sql
+            .lines()
+            .all(|line| line.trim_start().starts_with("--")),
+        "all output lines must be SQL comments (graceful no-op): got {pg_sql}"
+    );
 }

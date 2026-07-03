@@ -28,11 +28,19 @@
 //! These are the union of the two former stages' documented lossy decisions.
 //! Any change here breaks downstream emitter parity and must be deliberate.
 //!
-//! * **`DialectSpecific → None`**: every statement variant that Stage-1 mapped
-//!   to `CommonStatement::DialectSpecific` (control flow, CREATE, ALTER TABLE,
-//!   EXEC, variable assignment) yields `None`, because the destination
-//!   `Statement` has no escape hatch. `BatchSeparator` also yields `None`
-//!   (Stage-1 returned `None` directly).
+//! * **T-SQL control-flow → `DialectSpecific` (intentional parity break,
+//!   #158/T3)**: every procedural/control-flow variant (`Declare`, `Set`,
+//!   `VariableAssignment`, `If`, `While`, `Block`, `Break`, `Continue`,
+//!   `Return`, `TryCatch`, `Transaction`, `Throw`, `Raiserror`, `Exec`) maps
+//!   to `Some(Statement::DialectSpecific { source, span })`. `source` is the
+//!   T-SQL variant's Debug classification (so a downstream emitter can
+//!   dispatch on construct kind) and `span` is the AST node's own source span.
+//!   This is a **deliberate divergence** from the former Stage-2 behavior,
+//!   which dropped these to `None` — the escape hatch now preserves the
+//!   construct for dialect-specific re-implementation (e.g. PL/pgSQL). DDL
+//!   (`Create`, `AlterTable`) and `BatchSeparator` still yield `None` (DDL has
+//!   dedicated destination variants / is out of scope; `BatchSeparator` is a
+//!   batch boundary, not a statement).
 //! * **`Vec<TableReference>` → `Option<TableFactor>` first-element**: the
 //!   legacy FROM clause is a flat list; the destination models FROM as a single
 //!   `TableFactor` (multi-table expressed via `Join`). Only the first table
@@ -75,8 +83,8 @@ use common_sql::ast::{
 
 use crate::ast::data_modification::Assignment as ColumnAssignment;
 use crate::ast::{
-    BinaryOperator, CaseExpression, ColumnReference, DeleteStatement, Expression, FromClause,
-    FunctionCall, InList, InsertSource, InsertStatement, IsValue, LimitClause, Literal,
+    AstNode, BinaryOperator, CaseExpression, ColumnReference, DeleteStatement, Expression,
+    FromClause, FunctionCall, InList, InsertSource, InsertStatement, IsValue, LimitClause, Literal,
     OrderByItem, SelectItem, SelectStatement, Statement, TableReference, UnaryOperator,
     UpdateStatement,
 };
@@ -110,13 +118,15 @@ pub fn to_common_sql(stmt: &Statement) -> Option<SqlStmt> {
         Statement::Insert(s) => Some(SqlStmt::Insert(Box::new(convert_insert(s)?))),
         Statement::Update(s) => Some(SqlStmt::Update(Box::new(convert_update(s)?))),
         Statement::Delete(s) => Some(SqlStmt::Delete(Box::new(convert_delete(s)?))),
-        // Stage-1 mapped all of these to DialectSpecific (or None for
-        // BatchSeparator); Stage-2 dropped DialectSpecific -> None.
-        // Therefore the direct converter returns None uniformly here.
-        Statement::Create(_)
-        | Statement::AlterTable(_)
-        | Statement::Declare(_)
+        // T-SQL control-flow / procedural variants have no representation in
+        // the dialect-independent AST. They are carried verbatim through the
+        // `DialectSpecific` escape hatch (#158): `source` is the T-SQL
+        // variant's Debug classification (so a downstream emitter can dispatch
+        // on construct kind — the deleted postgresql-emitter matched on
+        // `Declare(`/`If(` etc.), `span` is the AST node's own source span.
+        Statement::Declare(_)
         | Statement::Set(_)
+        | Statement::VariableAssignment(_)
         | Statement::If(_)
         | Statement::While(_)
         | Statement::Block(_)
@@ -127,9 +137,25 @@ pub fn to_common_sql(stmt: &Statement) -> Option<SqlStmt> {
         | Statement::Transaction(_)
         | Statement::Throw(_)
         | Statement::Raiserror(_)
-        | Statement::Exec(_)
-        | Statement::VariableAssignment(_)
-        | Statement::BatchSeparator(_) => None,
+        | Statement::Exec(_) => Some(dialect_specific(stmt)),
+        // DDL: Create has dedicated destination variants but T-SQL DDL shapes
+        // are out of scope here → None. AlterTable likewise (no source mapping).
+        // BatchSeparator (GO) is a batch boundary, not a statement → None.
+        Statement::Create(_) | Statement::AlterTable(_) | Statement::BatchSeparator(_) => None,
+    }
+}
+
+/// Build a `DialectSpecific` escape-hatch node from a T-SQL control-flow /
+/// procedural statement.
+///
+/// `source` carries the variant's Debug classification (e.g. `"Declare(...)"`)
+/// so downstream emitters can dispatch on construct kind, and `span` is the
+/// AST node's own source span (located via [`AstNode::span`]).
+fn dialect_specific(stmt: &Statement) -> SqlStmt {
+    let tsql_span = stmt.span();
+    SqlStmt::DialectSpecific {
+        source: format!("{stmt:?}"),
+        span: csql::Span::new(tsql_span.start, tsql_span.end),
     }
 }
 

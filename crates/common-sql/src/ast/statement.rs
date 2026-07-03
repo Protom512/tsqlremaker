@@ -34,6 +34,21 @@ pub enum Statement {
     CreateIndex(Box<CreateIndexStatement>),
     /// `DROP INDEX` statement.
     DropIndex(Box<DropIndexStatement>),
+    /// Dialect-specific statement that cannot be represented in the
+    /// dialect-independent AST.
+    ///
+    /// This is an escape hatch for constructs the common AST does not model
+    /// (e.g. T-SQL control-flow: `DECLARE @v`, `IF ... ELSE`, `WHILE`,
+    /// `TRY ... CATCH`, `CREATE PROCEDURE`). The original source text is
+    /// preserved verbatim so a downstream emitter can re-implement it natively
+    /// (e.g. postgresql-emitter emitting PL/pgSQL) or emit a graceful
+    /// fallback. Tracked by #158.
+    DialectSpecific {
+        /// Verbatim source text of the dialect-specific construct.
+        source: String,
+        /// Source span of the construct.
+        span: Span,
+    },
 }
 
 /// SELECT statement.
@@ -985,5 +1000,124 @@ mod tests {
         assert!(!matches!(stmt, Statement::Insert(_)));
         assert!(!matches!(stmt, Statement::Update(_)));
         assert_eq!(stmt.clone(), stmt);
+    }
+
+    // ===== DialectSpecific escape hatch (Task T2 / #158) =====
+
+    #[test]
+    fn dialect_specific_construct_and_match() {
+        let stmt = Statement::DialectSpecific {
+            source: "DECLARE @v INT".to_string(),
+            span: Span::new(0, 15),
+        };
+        assert!(matches!(stmt, Statement::DialectSpecific { .. }));
+        // Discriminant: distinct from every other Statement variant.
+        assert!(!matches!(stmt, Statement::Select(_)));
+        assert!(!matches!(stmt, Statement::Insert(_)));
+        assert!(!matches!(stmt, Statement::CreateTable(_)));
+    }
+
+    #[test]
+    fn dialect_specific_field_access() {
+        let stmt = Statement::DialectSpecific {
+            source: "IF @v > 0 SELECT 1".to_string(),
+            span: Span::new(10, 28),
+        };
+        if let Statement::DialectSpecific { source, span } = &stmt {
+            assert_eq!(source, "IF @v > 0 SELECT 1");
+            assert_eq!(*span, Span::new(10, 28));
+        } else {
+            panic!("expected DialectSpecific");
+        }
+    }
+
+    #[test]
+    fn dialect_specific_clone_equality() {
+        let stmt = Statement::DialectSpecific {
+            source: "WHILE @i < 10 SET @i = @i + 1".to_string(),
+            span: Span::new(0, 31),
+        };
+        let cloned = stmt.clone();
+        assert_eq!(stmt, cloned);
+    }
+
+    #[test]
+    fn dialect_specific_inequality_on_source() {
+        let a = Statement::DialectSpecific {
+            source: "DECLARE @v INT".to_string(),
+            span: Span::new(0, 15),
+        };
+        let b = Statement::DialectSpecific {
+            source: "DECLARE @w INT".to_string(),
+            span: Span::new(0, 15),
+        };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn dialect_specific_inequality_on_span() {
+        let a = Statement::DialectSpecific {
+            source: "DECLARE @v INT".to_string(),
+            span: Span::new(0, 15),
+        };
+        let b = Statement::DialectSpecific {
+            source: "DECLARE @v INT".to_string(),
+            span: Span::new(0, 16),
+        };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn dialect_specific_empty_source_edge_case() {
+        // Edge case: empty source text (degenerate but representable).
+        let stmt = Statement::DialectSpecific {
+            source: String::new(),
+            span: Span::new(0, 0),
+        };
+        if let Statement::DialectSpecific { source, span } = &stmt {
+            assert!(source.is_empty());
+            assert!(span.is_empty());
+        } else {
+            panic!("expected DialectSpecific");
+        }
+        assert_eq!(stmt.clone(), stmt);
+    }
+
+    #[test]
+    fn dialect_specific_distinct_from_all_other_variants() {
+        // Build one of each other variant and assert DialectSpecific is a new
+        // discriminant — guards against accidental collapse into an existing arm.
+        let others = vec![
+            Statement::Select(Box::new(SelectStatement::simple(vec![
+                SelectItem::Wildcard,
+            ]))),
+            Statement::Insert(Box::new(InsertStatement {
+                span: Span::new(0, 0),
+                table: qualified("t"),
+                columns: vec![],
+                source: InsertSource::Values(vec![]),
+                on_conflict: None,
+            })),
+            Statement::Update(Box::new(UpdateStatement {
+                span: Span::new(0, 0),
+                table: table_factor("t"),
+                assignments: vec![],
+                from: None,
+                where_clause: None,
+            })),
+            Statement::Delete(Box::new(DeleteStatement {
+                span: Span::new(0, 0),
+                table: table_factor("t"),
+                using: None,
+                where_clause: None,
+            })),
+        ];
+        let ds = Statement::DialectSpecific {
+            source: "x".to_string(),
+            span: Span::new(0, 1),
+        };
+        for other in &others {
+            assert_ne!(*other, ds, "DialectSpecific must not equal {other:?}");
+        }
     }
 }
