@@ -36,7 +36,6 @@
 
 pub mod ast;
 pub mod buffer;
-pub mod common;
 pub mod error;
 pub mod expression;
 pub mod parser;
@@ -49,10 +48,6 @@ pub use ast::{
     JoinType, Literal, OrderByItem, ParameterDefinition, ProcedureDefinition, ReturnStatement,
     SelectItem, SelectStatement, SetStatement, Statement, TableConstraint, TableDefinition,
     UnaryOperator, UpdateStatement, VariableDeclaration, WhileStatement,
-};
-pub use common::{
-    CommonDeleteStatement, CommonExpression, CommonInsertStatement, CommonSelectItem,
-    CommonSelectStatement, CommonStatement, CommonUpdateStatement, ToCommonAst,
 };
 pub use error::{ParseError, ParseErrors, ParseResult};
 pub use expression::ExpressionParser;

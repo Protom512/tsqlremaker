@@ -9,13 +9,16 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/your-org/tsqlremaker"
 
 [dependencies]
-# Workspace dependencies
-tsql-parser = { path = "../tsql-parser" }
-tsql-token = { path = "../tsql-token" }
+# P1 結合負債是正 (architecture §1.2 / Req 17): common-sql のみに依存し、
+# tsql-parser / tsql-token への直接依存を廃止した。
+# PR #152 (mysql-emitter) / PR #159 (postgresql-emitter) と同一パターン。
+common-sql = { path = "../common-sql" }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
+# テストでの T-SQL → common_sql 変換フィクスチャ構築のみに使用 (lib 本体は非依存)。
+tsql-parser = { path = "../tsql-parser" }
 
 [lints]
 workspace = true

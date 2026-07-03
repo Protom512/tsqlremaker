@@ -1359,10 +1359,10 @@ dependencies = [
 name = "sqlite-emitter"
 version = "0.1.0"
 dependencies = [
+ "common-sql",
  "rstest",
  "thiserror",
  "tsql-parser",
- "tsql-token",
 ]
 
 [[package]]
