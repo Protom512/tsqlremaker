@@ -955,6 +955,87 @@ async fn test_did_change_mixed_range_none_and_some_sequence() {
 }
 
 #[tokio::test]
+async fn test_did_change_unchanged_content_no_reparse() {
+    // UC-1 (no-reparse path): a `did_change` whose range patch produces an
+    // identical source string must not corrupt handler-visible state. When the
+    // content-equality short-circuit reuses the cached `DocumentAnalysis`, the
+    // `documentSymbol` handler must still resolve the same symbols and the
+    // request must respond without panic.
+    //
+    // The patch is a zero-width insert of the empty string at a valid ASCII
+    // char boundary: prefix + "" + suffix == source, byte-for-byte. This is the
+    // canonical "type-then-delete" / no-op edit that the short-circuit must
+    // handle gracefully.
+    let mut service = setup();
+    let initial = "CREATE TABLE users (id INT)";
+    init_and_open(&mut service, "file:///test.sql", initial).await;
+
+    // Baseline: the table symbol is resolvable from the open-time analysis.
+    let symbols_before = fetch_document_symbols(&mut service, "file:///test.sql", 2).await;
+    let names_before = top_level_symbol_names(&symbols_before);
+    assert!(
+        names_before.iter().any(|n| n == "users"),
+        "Baseline must expose the table symbol, got: {names_before:?}"
+    );
+
+    // No-op ranged edit: insert "" at the zero-width point (0,27), past the
+    // closing ")". ASCII content so byte offset == char offset; the patched
+    // source is byte-identical to `initial`.
+    send_did_change(
+        &mut service,
+        "file:///test.sql",
+        1,
+        serde_json::json!([{
+            "range": {
+                "start": { "line": 0, "character": 27 },
+                "end":   { "line": 0, "character": 27 }
+            },
+            "text": ""
+        }]),
+    )
+    .await;
+
+    // After the no-op edit, the cached analysis is reused (or rebuilt on an
+    // identical source). Either way the document symbol handler must return the
+    // same symbol set and must not panic. This is the handler-visible proof
+    // that the no-reparse path does not corrupt state.
+    let symbols_after = fetch_document_symbols(&mut service, "file:///test.sql", 3).await;
+    let names_after = top_level_symbol_names(&symbols_after);
+    assert!(
+        names_after.iter().any(|n| n == "users"),
+        "No-op edit must preserve the table symbol (cached analysis reused), got: {names_after:?}"
+    );
+    assert_eq!(
+        names_after, names_before,
+        "Symbol set must be identical before and after a no-op edit"
+    );
+
+    // A second no-op edit compounds the scenario: repeating an identical-source
+    // patch must remain stable (proves no accumulation of stale state across
+    // multiple no-reparse hits).
+    send_did_change(
+        &mut service,
+        "file:///test.sql",
+        2,
+        serde_json::json!([{
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end":   { "line": 0, "character": 0 }
+            },
+            "text": ""
+        }]),
+    )
+    .await;
+
+    let symbols_final = fetch_document_symbols(&mut service, "file:///test.sql", 4).await;
+    let names_final = top_level_symbol_names(&symbols_final);
+    assert_eq!(
+        names_final, names_before,
+        "Repeated no-op edits must keep the symbol set stable"
+    );
+}
+
+#[tokio::test]
 async fn test_did_change_incremental_multibyte_no_panic() {
     // Boundary safety: ranged change on a source containing a multibyte
     // (UTF-8) character must not panic and must keep the document usable.

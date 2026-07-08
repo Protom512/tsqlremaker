@@ -34,6 +34,13 @@ struct DocumentEntry {
     analysis: Arc<DocumentAnalysis>,
     // インクリメンタル同期 (#128) の後続タスクでデバウンス/不変条件チェックに
     // 使用する。現時点ではメタデータとして記録するのみ（テストから参照）。
+    //
+    // Note: `version` is written by `upsert()` on every did_open/did_change
+    // (including the content-equality short-circuit path) but is not yet READ
+    // from production code — only from unit tests. Keeping `#[allow(dead_code)]`
+    // avoids a clippy regression; the field becomes load-bearing in a later
+    // task (debounce/invariant check) at which point this allow should be
+    // removed (see Issue #130 approval conditions).
     #[allow(dead_code)]
     version: i32,
 }
@@ -46,10 +53,34 @@ impl DocumentStore {
     }
 
     /// Insert or replace a document's analysis with the given LSP document version.
-    fn upsert(&mut self, uri: &str, text: &str, version: i32) {
+    ///
+    /// Returns `true` when a fresh `DocumentAnalysis` was built (rebuild), or
+    /// `false` when the new text is byte-identical to the existing source — in
+    /// that case the existing `Arc<DocumentAnalysis>` is reused as-is and only
+    /// the LSP `version` metadata is advanced. This lets `did_change` skip the
+    /// expensive full re-parse (Lexer + parse_with_errors + symbol table build)
+    /// for keystrokes that produce no net content change (e.g. type-then-delete,
+    /// or clients that resend unchanged content on focus events).
+    fn upsert(&mut self, uri: &str, text: &str, version: i32) -> bool {
+        if let Some(entry) = self.docs.get(uri) {
+            if entry.analysis.source == text {
+                // Content-equality short-circuit: reuse the existing analysis,
+                // only advance the version metadata. No re-parse, no rebuild.
+                self.docs.insert(
+                    uri.to_string(),
+                    DocumentEntry {
+                        analysis: Arc::clone(&entry.analysis),
+                        version,
+                    },
+                );
+                return false;
+            }
+        }
+
         let analysis = Arc::new(DocumentAnalysis::new(text));
         self.docs
             .insert(uri.to_string(), DocumentEntry { analysis, version });
+        true
     }
 
     /// 現在のドキュメントソースを取得。未登録の場合は空文字列。
@@ -176,7 +207,7 @@ impl LanguageServer for AseLanguageServer {
 
         {
             let mut docs = self.documents.write().await;
-            docs.upsert(uri.as_str(), &text, version);
+            let _rebuilt = docs.upsert(uri.as_str(), &text, version);
         }
 
         self.publish_diagnostics_for(&uri).await;
@@ -204,7 +235,7 @@ impl LanguageServer for AseLanguageServer {
 
         {
             let mut docs = self.documents.write().await;
-            docs.upsert(uri.as_str(), &new_source, version);
+            let _rebuilt = docs.upsert(uri.as_str(), &new_source, version);
         }
 
         self.publish_diagnostics_for(&uri).await;
@@ -471,9 +502,12 @@ mod tests {
 
     #[test]
     fn test_upsert_stores_version_metadata() {
+        // First upsert always rebuilds (no prior entry to be equal to). Version
+        // is recorded as metadata and the analysis is freshly built.
         let mut store = DocumentStore::new();
-        store.upsert("file:///a.sql", "SELECT 1", 0);
+        let rebuilt = store.upsert("file:///a.sql", "SELECT 1", 0);
 
+        assert!(rebuilt, "first upsert must report a rebuild");
         let entry = store.docs.get("file:///a.sql").expect("entry should exist");
         assert_eq!(entry.version, 0);
         assert_eq!(entry.analysis.source, "SELECT 1");
@@ -481,23 +515,50 @@ mod tests {
 
     #[test]
     fn test_upsert_overwrite_replaces_version_and_analysis() {
+        // Different text forces a real rebuild: a fresh Arc<DocumentAnalysis> is
+        // constructed and both version and analysis source are replaced. This is
+        // the "real rebuild" path that the short-circuit must NOT suppress.
         let mut store = DocumentStore::new();
-        store.upsert("file:///a.sql", "SELECT 1", 0);
-        store.upsert("file:///a.sql", "CREATE TABLE t (id INT)", 3);
+        let _ = store.upsert("file:///a.sql", "SELECT 1", 0);
+        let before = store
+            .docs
+            .get("file:///a.sql")
+            .expect("entry should exist")
+            .analysis
+            .clone();
 
+        let rebuilt = store.upsert("file:///a.sql", "CREATE TABLE t (id INT)", 3);
+
+        assert!(
+            rebuilt,
+            "different text must trigger a real rebuild (no short-circuit)"
+        );
         let entry = store.docs.get("file:///a.sql").expect("entry should exist");
         assert_eq!(entry.version, 3);
         assert_eq!(entry.analysis.source, "CREATE TABLE t (id INT)");
+        // A new analysis was built, so the Arc handle must differ from the prior
+        // one — proving the overwrite truly rebuilt rather than reused.
+        assert!(
+            !Arc::ptr_eq(&before, &entry.analysis),
+            "overwrite with different text must allocate a fresh analysis Arc"
+        );
     }
 
     #[test]
     fn test_version_recorded_but_not_monotonic_enforced() {
         // Per accepted invariant: version is recorded only; non-monotonic updates
         // are tolerated gracefully (debounce/metadata use case, not validation).
+        // The short-circuit keys on source equality, NOT version monotonicity,
+        // so a non-monotonic version with different text still rebuilds and the
+        // out-of-order version (5 -> 2) is recorded without enforcement.
         let mut store = DocumentStore::new();
-        store.upsert("file:///a.sql", "SELECT 1", 5);
-        store.upsert("file:///a.sql", "SELECT 2", 2);
+        let _ = store.upsert("file:///a.sql", "SELECT 1", 5);
+        let rebuilt = store.upsert("file:///a.sql", "SELECT 2", 2);
 
+        assert!(
+            rebuilt,
+            "different text must rebuild regardless of version ordering"
+        );
         let entry = store.docs.get("file:///a.sql").expect("entry should exist");
         assert_eq!(entry.version, 2);
     }
@@ -540,5 +601,127 @@ mod tests {
             }
         }
         assert_eq!(table_count, 2);
+    }
+
+    // --- upsert() content-equality short-circuit (#130) ---
+    //
+    // Issue #130: did_change called upsert() unconditionally, rebuilding the
+    // full DocumentAnalysis (Lexer + parse_with_errors + symbol table) on every
+    // keystroke even when the net content did not change. The fix is a
+    // content-equality short-circuit: when the new text equals the existing
+    // source, reuse the existing Arc<DocumentAnalysis> and only advance version.
+    //
+    // These tests prove the contract via two complementary signals:
+    //   1. upsert() returns bool `rebuilt` (public contract).
+    //   2. Arc identity (Arc::as_ptr equality) is preserved on no-op rebuild
+    //      and changes on real rebuild. Arc::ptr_eq is the canonical way to
+    //      observe whether a fresh allocation happened; it asserts the
+    //      short-circuit behavior directly rather than an implementation detail.
+
+    #[test]
+    fn test_upsert_same_source_returns_false_and_preserves_arc_identity() {
+        let mut store = DocumentStore::new();
+        store.upsert("file:///a.sql", "SELECT 1", 0);
+
+        // Capture the Arc identity before the second upsert.
+        let before = store
+            .docs
+            .get("file:///a.sql")
+            .expect("entry should exist after first upsert");
+        let ptr_before = Arc::as_ptr(&before.analysis);
+
+        // Same source, new version — should be a no-op rebuild.
+        let rebuilt = store.upsert("file:///a.sql", "SELECT 1", 7);
+
+        assert!(
+            !rebuilt,
+            "upsert must return false (no rebuild) when source is unchanged"
+        );
+
+        let after = store
+            .docs
+            .get("file:///a.sql")
+            .expect("entry should still exist after second upsert");
+        let ptr_after = Arc::as_ptr(&after.analysis);
+
+        // The same Arc allocation must be reused — no re-parse happened.
+        assert!(
+            std::ptr::eq(ptr_before, ptr_after),
+            "Arc identity must be preserved when source is unchanged (no-op rebuild)"
+        );
+
+        // Version metadata must still advance even though analysis was reused.
+        assert_eq!(
+            after.version, 7,
+            "version must advance to the new value on a no-op rebuild"
+        );
+    }
+
+    #[test]
+    fn test_upsert_different_source_returns_true_and_changes_arc_identity() {
+        let mut store = DocumentStore::new();
+        store.upsert("file:///a.sql", "SELECT 1", 0);
+
+        let before = store
+            .docs
+            .get("file:///a.sql")
+            .expect("entry should exist after first upsert");
+        let ptr_before = Arc::as_ptr(&before.analysis);
+
+        // Different source — a real rebuild must happen.
+        let rebuilt = store.upsert("file:///a.sql", "SELECT 2", 1);
+
+        assert!(
+            rebuilt,
+            "upsert must return true (rebuilt) when source changes"
+        );
+
+        let after = store
+            .docs
+            .get("file:///a.sql")
+            .expect("entry should still exist after second upsert");
+        let ptr_after = Arc::as_ptr(&after.analysis);
+
+        assert!(
+            !std::ptr::eq(ptr_before, ptr_after),
+            "Arc identity must change when a real rebuild happens"
+        );
+        assert_eq!(after.version, 1);
+        assert_eq!(after.analysis.source, "SELECT 2");
+    }
+
+    #[test]
+    fn test_upsert_first_insert_always_rebuilds() {
+        // A brand-new document has no prior source to be equal to, so the first
+        // upsert must always report a rebuild (returns true).
+        let mut store = DocumentStore::new();
+        let rebuilt = store.upsert("file:///a.sql", "SELECT 1", 0);
+        assert!(rebuilt, "first upsert must always rebuild");
+    }
+
+    #[test]
+    fn test_upsert_noop_then_change_then_noop_round_trip() {
+        // Simulate a keystroke sequence: type a char, then delete it (net no
+        // change), then make a real edit. This exercises the short-circuit
+        // interleaved with real rebuilds — the UC-1 scenario for #130.
+        let mut store = DocumentStore::new();
+        let base = "CREATE TABLE users (id INT)";
+
+        assert!(store.upsert("file:///a.sql", base, 0)); // initial build
+        assert!(!store.upsert("file:///a.sql", base, 1)); // type-then-delete: noop
+        assert!(store.upsert(
+            "file:///a.sql",
+            "CREATE TABLE users (id INT, name VARCHAR(10))",
+            2
+        )); // real edit
+        assert!(!store.upsert(
+            "file:///a.sql",
+            "CREATE TABLE users (id INT, name VARCHAR(10))",
+            3
+        )); // another noop
+
+        let entry = store.docs.get("file:///a.sql").expect("entry exists");
+        assert_eq!(entry.version, 3);
+        assert!(entry.analysis.source.contains("name VARCHAR(10)"));
     }
 }
