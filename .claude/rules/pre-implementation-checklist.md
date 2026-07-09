@@ -142,6 +142,19 @@ rg "pub enum SemanticTokensResult" -A 5 ~/.cargo/registry/src/*/lsp-types-0.94.*
 
 ---
 
+## 6. 設計書の完全性（design.md / spec-tasks 基準）
+
+レトロスペクティブ 2026-07-09 テーマ8・11 で特定された反復問題: design.md が構造体フィールド形状を未規定のまま設計gateを通過し、参照される型（例: OnConflict）がどこにも定義されない「dangling参照」が実装者に推測を強いる。
+
+設計書（design.md / tasks.md）は以下を**全て**満たさなければならない:
+
+- [ ] **構造体フィールドの完全列挙**: enum のバリアント名だけでなく、各構造体の全フィールド（名前・型・pub/non-pub）を列挙する。`AlterTable { ... }` のように形状を省略しない。
+- [ ] **参照型の完全定義（dangling参照禁止）**: 設計書が参照する全ての型は同一設計書内か既存コード内で定義済みであること。未定義の型を参照した場合、`validate-design` / `kiro:spec-tasks` gate は**fail**させる。
+- [ ] **契約の文書化**: Visitor の no-auto-descent 等の暗黙契約は明示的に文書化する。
+- [ ] **float精度・型表現の一貫性**: 精度が意味を持つ値（金額等）の f64 vs String 等の表現を設計段階で確定する。
+
+CTO は design review で上記を満たさない設計を**REJECT**する（「後で決める」は却下）。これにより実装者への推測転嫁と、エミッタ期待との乖離による手戻りを防止する。
+
 ## チェックリスト（サマリー）
 
 実装開始前に全てにチェックを入れること：
@@ -152,3 +165,5 @@ rg "pub enum SemanticTokensResult" -A 5 ~/.cargo/registry/src/*/lsp-types-0.94.*
 - [ ] lsp-types 0.94 のバージョン固有APIを確認した
 - [ ] テストシナリオ（正常系＋エッジケース）を定義した
 - [ ] 影響を受ける既存モジュールを特定した
+- [ ] **設計書が構造体フィールドを完全列挙し、全参照型が定義済み（dangling参照なし）**
+- [ ] **完了宣言には `cargo nextest run --workspace` の貼り付け出力が伴う（lib-only check は不可）**
