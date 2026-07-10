@@ -9,9 +9,10 @@
 //! - インデックス参照 → CREATE INDEX定義
 
 use crate::analysis::DocumentAnalysis;
+use crate::symbol_store::{SymbolEntry, SymbolStore};
 use crate::symbol_table::SymbolTableBuilder;
 
-use lsp_types::{Position, Range};
+use lsp_types::{Location, Position, Range, Url};
 use tsql_token::TokenKind;
 
 /// カーソル位置のシンボルの定義箇所を検索する（DocumentAnalysis利用）
@@ -80,6 +81,97 @@ fn find_object_definition(table: &crate::symbol_table::SymbolTable, name: &str) 
     }
 
     results
+}
+
+/// cross-file 版 Go to Definition。
+///
+/// カーソル位置のシンボルから定義箇所を検索する。検索順序:
+///
+/// 1. **文書内優先（フォールバック）**: 開いている文書の `symbol_table` を
+///    [`definition_ranges_with_analysis`] と同じロジックで検索し、ヒットすれば
+///    その範囲を `current_uri` の [`Location`] として返す。変数 (`@var`) は
+///    常にこのパスのみ（スコープは文書ローカル）。
+/// 2. **cross-file 背景インデックス**: 文書内にオブジェクト定義が無い場合、
+///    `store`（[`SymbolStore`]）から他ファイルの CREATE 定義を検索して返す。
+///    このとき変数カテゴリのエントリは文書ローカル制約により除外する。
+///
+/// # 引数
+///
+/// - `store`: ワークスペース全体の cross-file シンボルインデックス。
+/// - `analysis`: カーソル位置の文書の解析結果。
+/// - `current_uri`: カーソル位置の文書の URI（文書内ヒットの Location に使用）。
+/// - `position`: カーソル位置。
+///
+/// # 戻り値
+///
+/// 定義 [`Location`] のリスト。文書内ヒットがあればそれら（`current_uri` 配下）
+/// のみを返す（背景インデックスは参照しない）。文書内に無ければ背景インデックスの
+/// エントリ（変数を除く）をすべて返す。いずれもヒットしなければ空 `Vec`。
+///
+/// # graceful degradation
+///
+/// 不完全 SQL の場合も [`DocumentAnalysis`] は部分 AST + tolerant symbol table を
+/// 持つため、`definition_ranges_with_analysis` のフォールバック経路がそのまま
+/// 機能する。トークンが取れない位置では空 `Vec` を返す。
+#[must_use]
+pub fn definition_locations(
+    store: &SymbolStore,
+    analysis: &DocumentAnalysis,
+    current_uri: &Url,
+    position: Position,
+) -> Vec<Location> {
+    let (target_kind, target_text) = match analysis.find_token_at_position(position) {
+        Some((t, _)) => (t.kind, &*t.text),
+        None => return Vec::new(),
+    };
+
+    // 変数は常に文書ローカル（スコープ）。背景インデックスは参照しない。
+    if target_kind == TokenKind::LocalVar {
+        let ranges = find_variable_definition(&analysis.symbol_table, target_text);
+        return ranges_to_locations(ranges, current_uri);
+    }
+
+    // オブジェクト: まず文書内 symbol_table を優先。
+    let local_ranges = find_object_definition(&analysis.symbol_table, target_text);
+    if !local_ranges.is_empty() {
+        return ranges_to_locations(local_ranges, current_uri);
+    }
+
+    // 文書内に無ければ cross-file 背景インデックス（変数を除く）。
+    store
+        .lookup(target_text)
+        .iter()
+        .filter(|e| !is_variable_entry(e))
+        .map(|e| Location {
+            uri: e.uri.clone(),
+            range: e.range,
+        })
+        .collect()
+}
+
+/// [`SymbolEntry`] が変数カテゴリかどうか。cross-file 候補から変数を除外するために使用。
+fn is_variable_entry(entry: &SymbolEntry) -> bool {
+    use lsp_types::SymbolKind;
+    entry.kind == SymbolKind::VARIABLE
+}
+
+/// `Vec<Range>` を単一 URI 配下の `Vec<Location>` に変換するヘルパ。
+fn ranges_to_locations(ranges: Vec<Range>, uri: &Url) -> Vec<Location> {
+    ranges
+        .into_iter()
+        .map(|range| Location {
+            uri: uri.clone(),
+            range,
+        })
+        .collect()
+}
+
+/// cross-file テストヘルパ: 1ファイル解析結果を背景インデックスとして store に登録。
+#[cfg(test)]
+fn index_background(store: &mut SymbolStore, uri: &Url, source: &str) {
+    use crate::symbol_store::DocumentSource;
+    let analysis = crate::analysis::DocumentAnalysis::new(source);
+    store.upsert(uri, &analysis, DocumentSource::Background);
 }
 
 #[cfg(test)]
@@ -267,5 +359,287 @@ mod tests {
             },
         );
         assert!(!ranges.is_empty(), "Should find view definition");
+    }
+
+    // ===== definition_locations (cross-file) =====
+
+    fn u(p: &str) -> Url {
+        Url::parse(p).unwrap()
+    }
+
+    #[test]
+    fn test_cross_def_variable_is_document_local() {
+        // UC: 変数は文書ローカル。背景ストアに同名変数があっても無視し、
+        // 文書内の DECLARE だけを返す。
+        let current = crate::analysis::DocumentAnalysis::new(
+            "DECLARE @count INT\nSET @count = 1\nSELECT @count",
+        );
+        let mut store = SymbolStore::new();
+        // 別ファイルに同名変数がある（背景インデックス）。
+        index_background(&mut store, &u("file:///other.sql"), "DECLARE @count INT");
+
+        let locs = definition_locations(
+            &store,
+            &current,
+            &u("file:///cur.sql"),
+            Position {
+                line: 2,
+                character: 8,
+            },
+        );
+        assert_eq!(locs.len(), 1, "variable resolves doc-locally only");
+        assert_eq!(locs[0].uri, u("file:///cur.sql"));
+        assert_eq!(locs[0].range.start.line, 0, "points at DECLARE line");
+    }
+
+    #[test]
+    fn test_cross_def_variable_not_in_store_when_undeclared() {
+        // 変数が文書内で未宣言の場合、背景ストアを参照せず空を返す。
+        let current = crate::analysis::DocumentAnalysis::new("SELECT @ghost");
+        let mut store = SymbolStore::new();
+        index_background(&mut store, &u("file:///other.sql"), "DECLARE @ghost INT");
+
+        let locs = definition_locations(
+            &store,
+            &current,
+            &u("file:///cur.sql"),
+            Position {
+                line: 0,
+                character: 8,
+            },
+        );
+        assert!(
+            locs.is_empty(),
+            "undeclared variable must not cross-resolve"
+        );
+    }
+
+    #[test]
+    fn test_cross_def_table_from_other_file() {
+        // UC: テーブルが文書内に無く、他ファイルの CREATE TABLE に解決する。
+        let current = crate::analysis::DocumentAnalysis::new("SELECT * FROM remote_table");
+        let mut store = SymbolStore::new();
+        index_background(
+            &mut store,
+            &u("file:///schema.sql"),
+            "CREATE TABLE remote_table (id INT)",
+        );
+
+        // 'remote_table' is at "SELECT * FROM " = 14 chars
+        let locs = definition_locations(
+            &store,
+            &current,
+            &u("file:///cur.sql"),
+            Position {
+                line: 0,
+                character: 16,
+            },
+        );
+        assert_eq!(locs.len(), 1, "should resolve cross-file table");
+        assert_eq!(locs[0].uri, u("file:///schema.sql"));
+    }
+
+    #[test]
+    fn test_cross_def_procedure_from_other_file() {
+        // UC: プロシージャが他ファイルの CREATE PROCEDURE に解決する。
+        let current = crate::analysis::DocumentAnalysis::new("EXEC do_thing");
+        let mut store = SymbolStore::new();
+        index_background(
+            &mut store,
+            &u("file:///procs.sql"),
+            "CREATE PROCEDURE do_thing AS BEGIN SELECT 1 END",
+        );
+
+        // 'do_thing' starts at "EXEC " = 5
+        let locs = definition_locations(
+            &store,
+            &current,
+            &u("file:///cur.sql"),
+            Position {
+                line: 0,
+                character: 7,
+            },
+        );
+        assert_eq!(locs.len(), 1, "should resolve cross-file procedure");
+        assert_eq!(locs[0].uri, u("file:///procs.sql"));
+    }
+
+    #[test]
+    fn test_cross_def_view_from_other_file() {
+        // UC: ビューが他ファイルの CREATE VIEW に解決する。
+        let current = crate::analysis::DocumentAnalysis::new("SELECT * FROM v_report");
+        let mut store = SymbolStore::new();
+        index_background(
+            &mut store,
+            &u("file:///views.sql"),
+            "CREATE VIEW v_report AS SELECT 1",
+        );
+
+        // 'v_report' is at "SELECT * FROM " = 14
+        let locs = definition_locations(
+            &store,
+            &current,
+            &u("file:///cur.sql"),
+            Position {
+                line: 0,
+                character: 16,
+            },
+        );
+        assert_eq!(locs.len(), 1, "should resolve cross-file view");
+        assert_eq!(locs[0].uri, u("file:///views.sql"));
+    }
+
+    #[test]
+    fn test_cross_def_nonexistent_returns_empty() {
+        // UC: 存在しない名前 → 空。文書内・ストアともにヒットしない。
+        let current = crate::analysis::DocumentAnalysis::new("SELECT * FROM nowhere");
+        let store = SymbolStore::new();
+
+        let locs = definition_locations(
+            &store,
+            &current,
+            &u("file:///cur.sql"),
+            Position {
+                line: 0,
+                character: 16,
+            },
+        );
+        assert!(locs.is_empty());
+    }
+
+    #[test]
+    fn test_cross_def_incomplete_sql_graceful() {
+        // UC: 不完全 SQL でもクラッシュせず、フォールバックが機能する。
+        let current = crate::analysis::DocumentAnalysis::new("SELECT * FROM un");
+        let mut store = SymbolStore::new();
+        index_background(&mut store, &u("file:///s.sql"), "CREATE TABLE un (id INT)");
+
+        let locs = definition_locations(
+            &store,
+            &current,
+            &u("file:///cur.sql"),
+            Position {
+                line: 0,
+                character: 15,
+            },
+        );
+        // 'un' matches the background-indexed table.
+        assert_eq!(locs.len(), 1);
+        assert_eq!(locs[0].uri, u("file:///s.sql"));
+    }
+
+    #[test]
+    fn test_cross_def_empty_source_returns_empty() {
+        let current = crate::analysis::DocumentAnalysis::new("");
+        let store = SymbolStore::new();
+
+        let locs = definition_locations(
+            &store,
+            &current,
+            &u("file:///cur.sql"),
+            Position {
+                line: 0,
+                character: 0,
+            },
+        );
+        assert!(locs.is_empty());
+    }
+
+    #[test]
+    fn test_cross_def_no_token_at_position_returns_empty() {
+        let current = crate::analysis::DocumentAnalysis::new("SELECT  FROM t");
+        let store = SymbolStore::new();
+
+        let locs = definition_locations(
+            &store,
+            &current,
+            &u("file:///cur.sql"),
+            Position {
+                line: 0,
+                character: 7,
+            },
+        );
+        assert!(locs.is_empty());
+    }
+
+    #[test]
+    fn test_cross_def_document_local_takes_precedence_over_store() {
+        // 文書内に同名オブジェクトがあれば、ストアの背景エントリより優先される。
+        let current =
+            crate::analysis::DocumentAnalysis::new("CREATE TABLE dup (id INT)\nSELECT * FROM dup");
+        let mut store = SymbolStore::new();
+        // 別ファイルにも同名テーブル（背景）。
+        index_background(
+            &mut store,
+            &u("file:///bg.sql"),
+            "CREATE TABLE dup (id INT)",
+        );
+
+        // 'dup' on line 1 "FROM dup" at char 14
+        let locs = definition_locations(
+            &store,
+            &current,
+            &u("file:///cur.sql"),
+            Position {
+                line: 1,
+                character: 16,
+            },
+        );
+        // Document-local wins: returns current uri only.
+        assert_eq!(locs.len(), 1);
+        assert_eq!(locs[0].uri, u("file:///cur.sql"));
+    }
+
+    #[test]
+    fn test_cross_def_aggregates_multiple_store_entries() {
+        // ストアに同名オブジェクトが複数ファイルにある場合、すべて返す。
+        let current = crate::analysis::DocumentAnalysis::new("SELECT * FROM shared");
+        let mut store = SymbolStore::new();
+        index_background(
+            &mut store,
+            &u("file:///a.sql"),
+            "CREATE TABLE shared (id INT)",
+        );
+        index_background(
+            &mut store,
+            &u("file:///b.sql"),
+            "CREATE TABLE shared (id INT)",
+        );
+
+        let locs = definition_locations(
+            &store,
+            &current,
+            &u("file:///cur.sql"),
+            Position {
+                line: 0,
+                character: 16,
+            },
+        );
+        assert_eq!(locs.len(), 2);
+        let uris: Vec<Url> = locs.iter().map(|l| l.uri.clone()).collect();
+        assert!(uris.contains(&u("file:///a.sql")));
+        assert!(uris.contains(&u("file:///b.sql")));
+    }
+
+    #[test]
+    fn test_cross_def_case_insensitive() {
+        let current = crate::analysis::DocumentAnalysis::new("SELECT * FROM Users");
+        let mut store = SymbolStore::new();
+        index_background(
+            &mut store,
+            &u("file:///s.sql"),
+            "CREATE TABLE users (id INT)",
+        );
+
+        let locs = definition_locations(
+            &store,
+            &current,
+            &u("file:///cur.sql"),
+            Position {
+                line: 0,
+                character: 16,
+            },
+        );
+        assert_eq!(locs.len(), 1);
     }
 }

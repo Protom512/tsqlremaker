@@ -1075,3 +1075,302 @@ async fn test_did_change_incremental_multibyte_no_panic() {
         "Hover after a multibyte ranged edit must respond (no panic)"
     );
 }
+
+// --- Cross-file symbol index tests (Issue #169 / T8) ---
+//
+// These tests exercise the multi-document symbol aggregation that the
+// SymbolStore foundation (T1-T7) builds on. Two of the three scenarios are
+// valid against the current DocumentStore-based aggregation today:
+//
+//   (A) workspace/symbol across multiple OPEN files — the `symbol()` handler
+//       already iterates every entry in DocumentStore, so opening two files
+//       and querying must surface symbols from both.
+//   (C) Single-file open with no background index (unsupported environment)
+//       must degrade gracefully: goto_definition for a symbol whose definition
+//       lives in another (unopened, un-indexed) file returns null without
+//       crashing.
+//
+// Scenario (B) — goto_definition jumping from one open file into another open
+// file's CREATE TABLE — is covered by the cross-file definition provider
+// (T2: `definition_locations` backed by SymbolStore), wired in server.rs.
+// Cross-file *references* (Find All References across files) is deferred to a
+// follow-up issue; references stay document-local for now.
+
+/// Open two files, then query workspace/symbol and confirm symbols from BOTH
+/// files appear in the result. This is the integration-level proof that the
+/// symbol aggregation loop spans documents (the same loop T1's SymbolStore
+/// will eventually back by a reverse map).
+#[tokio::test]
+async fn test_workspace_symbol_spans_multiple_open_files() {
+    let mut service = setup();
+    // Initialize once.
+    let init = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    });
+    send(&mut service, &init.to_string()).await;
+
+    // Open file A defining `users`.
+    let open_a = serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///ws/a.sql",
+                "languageId": "sql",
+                "version": 0,
+                "text": "CREATE TABLE users (id INT)"
+            }
+        }
+    });
+    send(&mut service, &open_a.to_string()).await;
+
+    // Open file B defining `orders`.
+    let open_b = serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///ws/b.sql",
+                "languageId": "sql",
+                "version": 0,
+                "text": "CREATE TABLE orders (id INT)"
+            }
+        }
+    });
+    send(&mut service, &open_b.to_string()).await;
+
+    // Query a fragment that matches BOTH table names.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "workspace/symbol",
+        "params": { "query": "" }
+    });
+    // An empty query is treated as "no match" by the current provider (it
+    // short-circuits on empty). Use a broad query that matches neither name
+    // to confirm the cross-file loop still returns null gracefully.
+    let req_none = serde_json::json!({
+        "jsonrpc": "2.0", "id": 3, "method": "workspace/symbol",
+        "params": { "query": "zzznomatch" }
+    });
+    let resp_none = send(&mut service, &req_none.to_string()).await;
+    let resp_none = resp_none.expect("workspace/symbol must respond");
+    let val_none: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&resp_none.result()).unwrap()).unwrap();
+    assert!(
+        val_none.is_null(),
+        "Cross-file query with no match must return null gracefully, got: {val_none}"
+    );
+
+    // Query "user" — should find the table in file A only.
+    let req_a = serde_json::json!({
+        "jsonrpc": "2.0", "id": 4, "method": "workspace/symbol",
+        "params": { "query": "user" }
+    });
+    let resp_a = send(&mut service, &req_a.to_string()).await;
+    let resp_a = resp_a.expect("workspace/symbol must respond for 'user'");
+    let val_a: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&resp_a.result()).unwrap()).unwrap();
+    let arr_a = val_a
+        .as_array()
+        .expect("'user' query must yield a symbol array across open files");
+    assert!(
+        arr_a
+            .iter()
+            .any(|s| s.get("name").is_some_and(|n| n == "users") && s.get("location").is_some()),
+        "Cross-file symbol search must surface 'users' from file A, got: {val_a}"
+    );
+
+    // Query "order" — should find the table in file B only.
+    let req_b = serde_json::json!({
+        "jsonrpc": "2.0", "id": 5, "method": "workspace/symbol",
+        "params": { "query": "order" }
+    });
+    let resp_b = send(&mut service, &req_b.to_string()).await;
+    let resp_b = resp_b.expect("workspace/symbol must respond for 'order'");
+    let val_b: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&resp_b.result()).unwrap()).unwrap();
+    let arr_b = val_b
+        .as_array()
+        .expect("'order' query must yield a symbol array across open files");
+    assert!(
+        arr_b
+            .iter()
+            .any(|s| s.get("name").is_some_and(|n| n == "orders") && s.get("location").is_some()),
+        "Cross-file symbol search must surface 'orders' from file B, got: {val_b}"
+    );
+
+    // Sanity: each result must carry a location whose URI points at the file
+    // that actually defines the symbol — proving the aggregation preserves
+    // the symbol→origin-file link (the invariant T1's SymbolStore will keep).
+    for sym in arr_a {
+        let uri = sym
+            .get("location")
+            .and_then(|l| l.get("uri"))
+            .and_then(|u| u.as_str())
+            .expect("symbol must carry a location.uri");
+        assert!(
+            uri == "file:///ws/a.sql",
+            "'users' symbol must be attributed to file A, got uri={uri}"
+        );
+    }
+    for sym in arr_b {
+        let uri = sym
+            .get("location")
+            .and_then(|l| l.get("uri"))
+            .and_then(|u| u.as_str())
+            .expect("symbol must carry a location.uri");
+        assert!(
+            uri == "file:///ws/b.sql",
+            "'orders' symbol must be attributed to file B, got uri={uri}"
+        );
+    }
+
+    // Suppress unused warning for `req` (the empty-query variant kept for
+    // documentation of the short-circuit behavior).
+    let _ = &req;
+}
+
+/// Single-file open with NO workspace folder / NO background indexer must
+/// degrade gracefully: a goto_definition request for a symbol whose
+/// definition is NOT in the open document returns null (UC for the
+/// "unsupported environment" fallback path).
+#[tokio::test]
+async fn test_single_file_goto_def_unknown_symbol_returns_null() {
+    let mut service = setup();
+    // Open a single file that only REFERENCES `orders` but never defines it.
+    init_and_open(
+        &mut service,
+        "file:///ws/only_queries.sql",
+        "SELECT * FROM orders",
+    )
+    .await;
+
+    // Click on `orders` (line 0, char 14 — past "SELECT * FROM ").
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": "file:///ws/only_queries.sql" },
+            "position": { "line": 0, "character": 14 }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    assert!(
+        response.is_some(),
+        "goto_definition must always return a response object"
+    );
+
+    let result = response.unwrap();
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    // `orders` is not defined anywhere the single-file server knows about, so
+    // the result must be null (graceful — no crash, no spurious location).
+    assert!(
+        result_val.is_null(),
+        "goto_definition for an unknown symbol in single-file mode must return null, got: {result_val}"
+    );
+}
+
+/// Single-file open: goto_definition for a symbol defined in a SECOND,
+/// UNOPENED file must return null. In an environment without background
+/// indexing (no workspace folder, or indexer unavailable), the unopened file
+/// is invisible to the server and the request degrades gracefully.
+#[tokio::test]
+async fn test_goto_def_into_unopened_file_returns_null() {
+    let mut service = setup();
+    // Open file A that references `shared_table`, but never open file B that
+    // defines it. Without a background indexer the server cannot know about
+    // file B, so the definition lookup must return null.
+    init_and_open(
+        &mut service,
+        "file:///ws/a.sql",
+        "SELECT * FROM shared_table",
+    )
+    .await;
+
+    // Cursor on `shared_table` (line 0, char 14).
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": "file:///ws/a.sql" },
+            "position": { "line": 0, "character": 14 }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("goto_definition must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    assert!(
+        result_val.is_null(),
+        "Definition in an unopened/un-indexed file must degrade to null, got: {result_val}"
+    );
+}
+
+/// UC (B): goto_definition jumping from one open file into ANOTHER open
+/// file's CREATE TABLE. This is the headline cross-file feature of #169.
+///
+/// T2 (cross-file `definition_locations` backed by SymbolStore) is wired in
+/// server.rs (definition::definition_locations); this test exercises the
+/// end-to-end cross-file jump.
+#[tokio::test]
+async fn test_cross_file_goto_definition_into_other_open_file() {
+    let mut service = setup();
+    // File B defines `shared_table`.
+    let open_b = serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///ws/b.sql",
+                "languageId": "sql",
+                "version": 0,
+                "text": "CREATE TABLE shared_table (id INT)"
+            }
+        }
+    });
+    // File A references it.
+    let open_a = serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///ws/a.sql",
+                "languageId": "sql",
+                "version": 0,
+                "text": "SELECT * FROM shared_table"
+            }
+        }
+    });
+    let init = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    });
+    send(&mut service, &init.to_string()).await;
+    send(&mut service, &open_b.to_string()).await;
+    send(&mut service, &open_a.to_string()).await;
+
+    // Cursor on `shared_table` in file A (line 0, char 14).
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": "file:///ws/a.sql" },
+            "position": { "line": 0, "character": 14 }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("cross-file goto_definition must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+
+    // The definition must be a non-null location whose URI is file B.
+    let target_uri = result_val
+        .get("uri")
+        .or_else(|| {
+            // GotoDefinitionResponse::Array wraps locations in an array.
+            result_val
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|l| l.get("uri"))
+        })
+        .and_then(|u| u.as_str())
+        .expect("cross-file goto_definition must return a location");
+    assert!(
+        target_uri == "file:///ws/b.sql",
+        "Cross-file goto_definition must jump into file B, got uri={target_uri}"
+    );
+}
