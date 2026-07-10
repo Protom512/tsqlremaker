@@ -793,7 +793,7 @@ fn test_recursion_depth_limit() {
         expr = format!("({} + 1)", expr);
     }
 
-    let sql = format!("SELECT {}", &expr);
+    let sql = format!("SELECT {}", expr);
     let result = parse_one(&sql);
 
     // 深度制限(1000)を超えるとエラーになる

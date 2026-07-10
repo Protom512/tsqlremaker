@@ -23,8 +23,10 @@ pub mod references;
 pub mod rename;
 pub mod semantic_tokens;
 pub mod signature_help;
+pub mod span_resolve;
 pub mod symbol_table;
 pub mod symbols;
+pub mod workspace_index;
 pub mod workspace_symbols;
 
 pub use tsql_parser::Parser;

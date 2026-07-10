@@ -6,6 +6,7 @@
 //! - BEGIN/END → TRY...CATCH ラッパー
 
 use crate::analysis::DocumentAnalysis;
+use crate::span_resolve::resolve_block_end;
 use crate::symbol_table::SymbolTableBuilder;
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, Position, Range, TextEdit, WorkspaceEdit,
@@ -568,58 +569,6 @@ fn find_block_at_offset<'a>(
     }
 }
 
-/// Resolve potentially broken span.end using depth-aware forward token scan.
-///
-/// Returns `Some(end_offset)` when the matching END token is found, `None` otherwise.
-fn resolve_span_end_fallback(start_offset: usize, analysis: &DocumentAnalysis) -> Option<usize> {
-    let mut depth = 0;
-    let mut found_begin = false;
-    for t in &analysis.tokens {
-        let ts = t.span.start as usize;
-        if ts < start_offset {
-            continue;
-        }
-        let te = t.span.end as usize;
-        if ts > start_offset + 5000 {
-            break;
-        }
-        if !found_begin && ts <= start_offset && te > start_offset {
-            found_begin = true;
-            depth = 1;
-            continue;
-        }
-        if found_begin {
-            if t.text.eq_ignore_ascii_case("BEGIN") {
-                depth += 1;
-            } else if t.text.eq_ignore_ascii_case("END") {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(te);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Resolve the end offset for a Block, using span.end when valid,
-/// falling back to child-statement spans, and finally to depth-aware token scan.
-fn resolve_block_end(
-    block: &tsql_parser::ast::Block,
-    analysis: &DocumentAnalysis,
-) -> Option<usize> {
-    let span = &block.span;
-    if span.end > span.start {
-        return Some(span.end as usize);
-    }
-    if let Some(last) = block.statements.last() {
-        let s = last.span();
-        if s.end > s.start {
-            return Some(s.end as usize);
-        }
-    }
-    resolve_span_end_fallback(span.start as usize, analysis)
-}
 /// WorkspaceEdit を生成するヘルパー
 fn make_text_edit(uri: &lsp_types::Url, range: Range, new_text: String) -> WorkspaceEdit {
     #[allow(clippy::mutable_key_type)]
