@@ -3,20 +3,52 @@
 //! tower-lsp を使用した Language Server のハンドラー実装。
 
 use ase_ls_core::{
-    analysis::DocumentAnalysis, code_actions, completion, definition, diagnostics, folding,
-    formatting, hover, incremental::apply_content_change, line_index::LineIndex, references,
-    rename, semantic_tokens, signature_help, symbols, workspace_symbols,
+    analysis::DocumentAnalysis,
+    code_actions, completion, definition, diagnostics, folding, formatting, hover,
+    incremental::apply_content_change,
+    line_index::LineIndex,
+    references, rename, semantic_tokens, signature_help,
+    symbol_store::{DocumentSource, SymbolStore},
+    symbols, workspace_symbols,
 };
+use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-/// SAP ASE Language Server
+/// SAP ASE Language Server.
+///
+/// # Lock-ordering convention (DocumentStore BEFORE SymbolStore)
+///
+/// The server owns two `tokio::sync::RwLock`-guarded stores: `documents`
+/// (`DocumentStore`) and `symbols` (`SymbolStore`). To avoid deadlock, any
+/// handler that takes write locks on **both** MUST acquire the `DocumentStore`
+/// write lock **before** the `SymbolStore` write lock. This ordering is enforced
+/// by construction inside [`DocumentStores::with_both`] — the only place that
+/// holds both write guards at once — so callers cannot invert it by accident.
+/// Single-store handlers (`get_analysis`, `symbol`) take only one lock and are
+/// unaffected.
 pub struct AseLanguageServer {
     client: Client,
+    /// The live editor buffers + per-document analysis.
     documents: Arc<RwLock<DocumentStore>>,
+    /// Workspace-wide cross-file symbol index (Open/Live + Background entries).
+    ///
+    /// Kept in sync with `documents` by every `did_open` / `did_change` /
+    /// `did_close` handler via [`DocumentStores::with_both`], and by
+    /// [`LanguageServer::did_change_watched_files`] for on-disk `*.sql` files
+    /// the editor has not opened (tagged `Background`).
+    symbols: Arc<RwLock<SymbolStore>>,
+    /// Workspace folders supplied by the client in `initialize`.
+    ///
+    /// Captured (no longer discarded) so background indexing and watched-files
+    /// handling can scope `*.sql` discovery. Empty when the server runs in
+    /// single-file mode (no `workspace_folders` in [`InitializeParams`]); in
+    /// that mode the cross-file store stays empty and every handler gracefully
+    /// falls back to its document-local behaviour (condition #6).
+    workspace_folders: Arc<RwLock<Vec<WorkspaceFolder>>>,
 }
 
 /// メモリ上のドキュメント管理
@@ -97,12 +129,112 @@ impl DocumentStore {
     }
 }
 
+/// Co-owned pair of the live document store and the cross-file symbol index.
+///
+/// This type exists to make the **lock-ordering convention** (DocumentStore
+/// write-lock acquired BEFORE SymbolStore write-lock) a structural invariant
+/// rather than caller discipline: the only method that holds both write guards
+/// ([`Self::with_both`]) takes them in the prescribed order, so a did_open /
+/// did_change / did_close handler cannot deadlock or invert the order.
+///
+/// `did_open` / `did_change` keep the `SymbolStore` in sync with the live
+/// buffer by tagging the freshly-built analysis as `Open` / `Live`
+/// (both shadow `Background`). `did_close` removes the live entry; if a
+/// `Background` version for the same URI is still known (e.g. produced by a
+/// background indexer in a later task), it is re-inserted so the symbol stays
+/// addressable workspace-wide, otherwise the URI is fully dropped.
+struct DocumentStores {
+    documents: Arc<RwLock<DocumentStore>>,
+    symbols: Arc<RwLock<SymbolStore>>,
+}
+
+impl DocumentStores {
+    /// Acquire both write locks in the canonical order (documents then symbols)
+    /// and run `f` with mutable access to both. Used by the sync handlers.
+    async fn with_both<R>(&self, f: impl FnOnce(&mut DocumentStore, &mut SymbolStore) -> R) -> R {
+        // DocumentStore write lock FIRST — see the lock-ordering convention on
+        // [`AseLanguageServer`]. Acquiring the SymbolStore lock first would risk
+        // deadlock against any future reader that takes them in this order.
+        let mut docs = self.documents.write().await;
+        let mut syms = self.symbols.write().await;
+        f(&mut docs, &mut syms)
+    }
+
+    /// Sync handler for `did_open` / `did_change`.
+    ///
+    /// Rebuilds the document analysis (honouring the content-equality
+    /// short-circuit in `DocumentStore::upsert`), then — only when a real
+    /// rebuild happened — refreshes the `SymbolStore` entry for `uri` tagged
+    /// `Open` (did_open) or `Live` (did_change). No-op rebuilds leave the
+    /// symbol index untouched, mirroring the analysis reuse.
+    async fn sync_live(&self, uri: &Url, text: &str, version: i32, source: DocumentSource) {
+        self.with_both(|docs, syms| {
+            let rebuilt = docs.upsert(uri.as_str(), text, version);
+            if rebuilt {
+                // upsert() with a rebuild always inserts an entry under `uri`,
+                // so .get() cannot miss here; reach for get_mut to reborrow the
+                // analysis without cloning the Arc.
+                if let Some(entry) = docs.docs.get_mut(uri.as_str()) {
+                    syms.upsert(uri, &entry.analysis, source);
+                }
+            }
+        })
+        .await;
+    }
+
+    /// Sync handler for `did_close`.
+    ///
+    /// Drops the document from `DocumentStore` and removes its live (`Open` /
+    /// `Live`) contribution from the `SymbolStore`. If `background_source`
+    /// supplies on-disk contents for the same URI (background indexer, a later
+    /// task), the `Background`-tagged version is re-inserted so the symbol
+    /// remains addressable across the workspace; otherwise the URI is fully
+    /// evicted from the symbol index.
+    async fn sync_close(&self, uri: &Url, background_source: Option<&str>) {
+        self.with_both(|docs, syms| {
+            docs.close(uri.as_str());
+            syms.close(uri);
+            if let Some(src) = background_source {
+                let analysis = DocumentAnalysis::new(src);
+                syms.upsert(uri, &analysis, DocumentSource::Background);
+            }
+        })
+        .await;
+    }
+
+    /// Build a `DocumentStores` from a pair of fresh, empty stores.
+    ///
+    /// Test-only constructor so unit tests can exercise the sync handlers and
+    /// the watched-files incremental update without standing up a live
+    /// [`Client`] (which tower-lsp only mints via [`LspService::new`]).
+    #[cfg(test)]
+    fn for_test() -> Self {
+        Self {
+            documents: Arc::new(RwLock::new(DocumentStore::new())),
+            symbols: Arc::new(RwLock::new(SymbolStore::new())),
+        }
+    }
+}
+
 impl AseLanguageServer {
     /// Create a new language server instance with the given LSP client.
     pub fn new(client: Client) -> Self {
         Self {
             client,
             documents: Arc::new(RwLock::new(DocumentStore::new())),
+            symbols: Arc::new(RwLock::new(SymbolStore::new())),
+            workspace_folders: Arc::new(RwLock::new(Vec::new())),
+        }
+    }
+
+    /// The bundled document + symbol stores, used by the sync handlers.
+    ///
+    /// Both `Arc`s are cheap to clone and share the same underlying locks, so
+    /// building this view does not copy any document state.
+    fn stores(&self) -> DocumentStores {
+        DocumentStores {
+            documents: Arc::clone(&self.documents),
+            symbols: Arc::clone(&self.symbols),
         }
     }
 
@@ -125,9 +257,202 @@ impl AseLanguageServer {
     }
 }
 
+// ---- T5: workspace symbol index wiring (#169) ----
+//
+// Pure helpers that decouple the watched-files / registration logic from the
+// LSP client so they can be unit-tested without a live server. The server's
+// `initialized()` calls [`watched_files_registration`] to build the
+// `client/register` payload, and `did_change_watched_files()` drives
+// [`apply_watched_file_events`] to keep the [`SymbolStore`] in sync with the
+// on-disk world — never overwriting an Open/Live document (condition #6).
+
+/// The glob pattern advertised to the client for watched-file registration.
+///
+/// `*.sql` (simple [`Pattern`] form — `Pattern` is a `String` newtype alias in
+/// lsp-types 0.94). The client forwards only SQL file events. Matching on the
+/// final path segment is case-insensitive on the client side; here we only
+/// emit the literal pattern.
+fn sql_watcher_glob() -> GlobPattern {
+    GlobPattern::String(String::from("*.sql"))
+}
+
+/// Build the [`DidChangeWatchedFilesRegistrationOptions`] sent to the client
+/// via `client/register` in [`LanguageServer::initialized`].
+fn watched_files_registration_options() -> DidChangeWatchedFilesRegistrationOptions {
+    DidChangeWatchedFilesRegistrationOptions {
+        watchers: vec![FileSystemWatcher {
+            glob_pattern: sql_watcher_glob(),
+            // kind None => default WatchKind 7 (Create | Change | Delete).
+            kind: None,
+        }],
+    }
+}
+
+/// Build the [`Registration`] for `workspace/didChangeWatchedFiles`.
+///
+/// The `register_options` carry the `*.sql` watcher; `method` is the
+/// notification name the client must re-route to us.
+fn watched_files_registration() -> Registration {
+    Registration {
+        id: String::from("ase-ls-watched-sql"),
+        method: String::from("workspace/didChangeWatchedFiles"),
+        register_options: Some(json!(watched_files_registration_options())),
+    }
+}
+
+/// Returns `true` iff `uri`'s path ends with `.sql` (case-insensitive ASCII).
+///
+/// The `*.sql` glob is a client-side filter, not a guarantee — a misbehaving
+/// client may still forward non-SQL events, so the handler re-checks before
+/// touching the symbol store.
+fn is_sql_uri(uri: &Url) -> bool {
+    uri.path()
+        .rsplit('/')
+        .next()
+        .map(|name| {
+            name.rsplit_once('.')
+                .map(|(_, ext)| ext.eq_ignore_ascii_case("sql"))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
+/// Convert a `file://` URI to a local filesystem path, or `None` if the URI
+/// is not a file URI or cannot be converted.
+///
+/// Used by [`LanguageServer::did_change_watched_files`] to map a watched-file
+/// event back to the on-disk path it must read. Non-`file:` schemes (untitled
+/// buffers, etc.) yield `None` and are silently skipped.
+fn uri_to_path(uri: &Url) -> Option<std::path::PathBuf> {
+    if uri.scheme() != "file" {
+        return None;
+    }
+    uri.to_file_path().ok()
+}
+
+/// Abstracts "is this URI currently Open in the editor?".
+///
+/// In production this is backed by a read-lock snapshot of the live
+/// [`DocumentStore`]; tests supply a fixed answer. The indirection lets
+/// [`apply_watched_file_events`] be a pure function of `(store, events,
+/// contents, open-set)` and therefore unit-testable without a server.
+trait OpenUriPredicate {
+    /// Returns `true` if `uri` is Open (live buffer authoritative).
+    fn is_open(&self, uri: &Url) -> bool;
+}
+
+/// Test/standalone implementation of [`OpenUriPredicate`].
+#[cfg(test)]
+struct OpenUriChecker {
+    open: std::collections::HashSet<String>,
+}
+
+#[cfg(test)]
+impl OpenUriChecker {
+    /// A predicate that reports no URI as open (pure background indexing).
+    fn none_open() -> Self {
+        Self {
+            open: std::collections::HashSet::new(),
+        }
+    }
+
+    /// A predicate that reports the given URIs as open.
+    fn some_open(uris: Vec<String>) -> Self {
+        Self {
+            open: uris.into_iter().collect(),
+        }
+    }
+
+    /// Build a predicate from a snapshot of the live `DocumentStore`'s keys.
+    async fn from_documents(documents: &Arc<RwLock<DocumentStore>>) -> Self {
+        // Async read: the watched-files handler and tests run inside a tokio
+        // runtime, so blocking_read would panic. The key set is small and the
+        // lock is held only for the snapshot.
+        let open: std::collections::HashSet<String> =
+            documents.read().await.docs.keys().cloned().collect();
+        Self { open }
+    }
+}
+
+#[cfg(test)]
+impl OpenUriPredicate for OpenUriChecker {
+    fn is_open(&self, uri: &Url) -> bool {
+        self.open.contains(uri.as_str())
+    }
+}
+
+/// Snapshot the open-URI set from the live [`DocumentStore`].
+///
+/// Production predicate for [`apply_pre_read_watched_file_events`]: a file
+/// counts as Open iff it currently has a live entry in `documents`. Built once
+/// per watched-files notification (cheap: clones only the string keys).
+struct DocumentOpenSnapshot {
+    open: std::collections::HashSet<String>,
+}
+
+impl DocumentOpenSnapshot {
+    async fn from_documents(documents: &Arc<RwLock<DocumentStore>>) -> Self {
+        let open = documents.read().await.docs.keys().cloned().collect();
+        Self { open }
+    }
+}
+
+impl OpenUriPredicate for DocumentOpenSnapshot {
+    fn is_open(&self, uri: &Url) -> bool {
+        self.open.contains(uri.as_str())
+    }
+}
+
+/// Apply a batch of watched-file events whose on-disk contents have already
+/// been read (the production path: reads happen on a `spawn_blocking` thread,
+/// then the `(event, Option<contents>)` pairs are applied here under a single
+/// write lock).
+///
+/// Semantics mirror [`apply_watched_file_events`]: CREATED/CHANGED re-index as
+/// `Background` (skipped when the URI is Open), DELETED closes the URI,
+/// non-`*.sql` URIs ignored, `None` contents is a silent no-op.
+fn apply_pre_read_watched_file_events<P>(
+    store: &mut SymbolStore,
+    pairs: &[(FileEvent, Option<String>)],
+    open: &P,
+) where
+    P: OpenUriPredicate + ?Sized,
+{
+    for (event, text) in pairs {
+        // Re-filter: the glob is a client hint, not a contract.
+        if !is_sql_uri(&event.uri) {
+            continue;
+        }
+        match event.typ {
+            FileChangeType::CREATED | FileChangeType::CHANGED => {
+                if open.is_open(&event.uri) {
+                    continue;
+                }
+                let Some(text) = text else {
+                    continue;
+                };
+                let analysis = DocumentAnalysis::new(text);
+                store.upsert(&event.uri, &analysis, DocumentSource::Background);
+            }
+            FileChangeType::DELETED => {
+                store.close(&event.uri);
+            }
+            _ => {}
+        }
+    }
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for AseLanguageServer {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        // Capture the workspace folders the client advertised (previously
+        // discarded via `_: InitializeParams`). They scope background `*.sql`
+        // discovery. Absent (single-file mode) => empty vec; the cross-file
+        // store then stays empty and every handler falls back to doc-local
+        // behaviour (condition #6).
+        if let Some(folders) = params.workspace_folders {
+            *self.workspace_folders.write().await = folders;
+        }
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 position_encoding: Some(PositionEncodingKind::UTF8),
@@ -181,6 +506,18 @@ impl LanguageServer for AseLanguageServer {
                         work_done_progress: None,
                     },
                 })),
+                // Advertise workspace-folder support so the client sends us
+                // `workspace_folders` in `initialize` and lets us register
+                // `workspace/didChangeWatchedFiles` dynamically.
+                workspace: Some(WorkspaceServerCapabilities {
+                    workspace_folders: Some(WorkspaceFoldersServerCapabilities {
+                        supported: Some(true),
+                        change_notifications: Some(OneOf::Right(String::from(
+                            "workspace/didChangeWorkspaceFolders",
+                        ))),
+                    }),
+                    file_operations: None,
+                }),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -194,6 +531,26 @@ impl LanguageServer for AseLanguageServer {
         self.client
             .log_message(MessageType::INFO, "ASE Language Server initialized")
             .await;
+
+        // Dynamically register workspace/didChangeWatchedFiles with a '*.sql'
+        // glob so the client forwards SQL file events. The protocol has no
+        // static capability for this — it MUST be registered via
+        // client/register (see DidChangeWatchedFilesClientCapabilities docs in
+        // lsp-types 0.94). A registration failure (e.g. client lacks dynamic
+        // registration) is logged and tolerated: the server still works in
+        // single-file mode via the did_open/did_change sync path.
+        if let Err(err) = self
+            .client
+            .register_capability(vec![watched_files_registration()])
+            .await
+        {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!("could not register watched-files: {err}"),
+                )
+                .await;
+        }
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -205,10 +562,11 @@ impl LanguageServer for AseLanguageServer {
         let text = params.text_document.text;
         let version = params.text_document.version;
 
-        {
-            let mut docs = self.documents.write().await;
-            let _rebuilt = docs.upsert(uri.as_str(), &text, version);
-        }
+        // DocumentStore と SymbolStore を排他順序（documents → symbols）で同期。
+        // Live バッファを Open タグで投入し、Background 版を上書きする。
+        self.stores()
+            .sync_live(&uri, &text, version, DocumentSource::Open)
+            .await;
 
         self.publish_diagnostics_for(&uri).await;
     }
@@ -233,24 +591,96 @@ impl LanguageServer for AseLanguageServer {
                 apply_content_change(&source, &index, change)
             });
 
-        {
-            let mut docs = self.documents.write().await;
-            let _rebuilt = docs.upsert(uri.as_str(), &new_source, version);
-        }
+        // apply_content_change で生成された new_source を DocumentStore と
+        // SymbolStore の両方へ伝播。Live タグで投入し、Background 版を上書きする。
+        // 内容同一 short-circuit 時は SymbolStore も更新しない（analysis 再利用に整合）。
+        self.stores()
+            .sync_live(&uri, &new_source, version, DocumentSource::Live)
+            .await;
 
         self.publish_diagnostics_for(&uri).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
-        {
-            let mut docs = self.documents.write().await;
-            docs.close(uri.as_str());
-        }
+        // Live 版を削除し、Background 版（workspace 内の on-disk 内容）があれば
+        // それを再投入する。現時点では背景インデックス（別タスク）が未実装のため
+        // background_source = None で、URI は SymbolStore から完全に削除される。
+        // 背景インデックス導入後はここへ on-disk 内容を渡すことで降格が成立する。
+        self.stores().sync_close(&uri, None).await;
         // ドキュメントクローズ時に診断をクリア
         self.client
             .publish_diagnostics(uri.clone(), Vec::new(), None)
             .await;
+    }
+
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        // On-disk `*.sql` changes from the client. We keep the SymbolStore in
+        // sync with the background world: CREATED/CHANGED re-index the file
+        // (tagged Background), DELETED evicts it. An Open/Live document always
+        // wins — its live entry is never overwritten by the disk copy
+        // (condition #6).
+        //
+        // File reads are blocking I/O, so they run on a spawn_blocking thread
+        // (T6 / estimate risk #2): the on-disk reads happen off the async
+        // executor, then the resulting `(event, Option<contents>)` pairs are
+        // applied to the SymbolStore under a single write lock. Non-*.sql
+        // events are filtered here too (the glob is a client hint, not a
+        // guarantee). Failures (vanished file, non-UTF-8) map to `None` and
+        // become silent no-ops.
+        let events: Vec<FileEvent> = params
+            .changes
+            .into_iter()
+            .filter(|ev| is_sql_uri(&ev.uri))
+            .collect();
+        if events.is_empty() {
+            return;
+        }
+
+        // Snapshot the open-URI set under a read lock, then release it before
+        // the blocking reads. This also enforces lock-ordering: we never hold
+        // the DocumentStore lock while taking the SymbolStore write lock.
+        let open_snapshot = DocumentOpenSnapshot::from_documents(&self.documents).await;
+
+        // Read each event's on-disk contents on a blocking thread (DELETED
+        // needs no read). The blocking task returns the (event, text) pairs;
+        // a JoinError (task panic / cancellation) is logged and the whole
+        // batch is dropped rather than panic the server.
+        let read_pairs: Vec<(FileEvent, Option<String>)> =
+            match tokio::task::spawn_blocking(move || {
+                events
+                    .into_iter()
+                    .map(|ev| {
+                        let text = if ev.typ == FileChangeType::DELETED {
+                            None
+                        } else {
+                            uri_to_path(&ev.uri).and_then(|p| std::fs::read_to_string(&p).ok())
+                        };
+                        (ev, text)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .await
+            {
+                Ok(pairs) => pairs,
+                Err(err) => {
+                    self.client
+                        .log_message(
+                            MessageType::WARNING,
+                            format!("watched-files read task failed: {err}"),
+                        )
+                        .await;
+                    Vec::new()
+                }
+            };
+
+        // Apply under a single SymbolStore write lock. open_snapshot enforces
+        // Open/Live precedence; each pair's pre-read text is applied directly
+        // (no further I/O under the lock).
+        {
+            let mut syms = self.symbols.write().await;
+            apply_pre_read_watched_file_events(&mut syms, &read_pairs, &open_snapshot);
+        }
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
@@ -377,25 +807,22 @@ impl LanguageServer for AseLanguageServer {
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = &params.text_document_position_params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
-            let ranges = definition::definition_ranges_with_analysis(
-                &analysis,
-                params.text_document_position_params.position,
-            );
-            if ranges.is_empty() {
-                Ok(None)
-            } else {
-                let locations: Vec<Location> = ranges
-                    .into_iter()
-                    .map(|range| Location {
-                        uri: uri.clone(),
-                        range,
-                    })
-                    .collect();
-                Ok(Some(GotoDefinitionResponse::Array(locations)))
-            }
-        } else {
+        let position = params.text_document_position_params.position;
+        // DocumentAnalysis が無ければ即座にフォールバック（単一ファイルモード等）。
+        let Some(analysis) = self.get_analysis(uri).await else {
+            return Ok(None);
+        };
+        // SymbolStore を read lock で参照し、cross-file 版 goto definition へ。
+        // 文書内定義が優先（definition_locations が current_uri 配下で解決）し、
+        // 無ければ背景インデックスの CREATE 定義を返す。ストアが空（単一ファイル
+        // モード）でも文書内フォールバックが機能する（条件 #6）。
+        let syms = self.symbols.read().await;
+        let locations = definition::definition_locations(&syms, &analysis, uri, position);
+        drop(syms);
+        if locations.is_empty() {
             Ok(None)
+        } else {
+            Ok(Some(GotoDefinitionResponse::Array(locations)))
         }
     }
 
@@ -471,24 +898,18 @@ impl LanguageServer for AseLanguageServer {
         &self,
         params: WorkspaceSymbolParams,
     ) -> Result<Option<Vec<SymbolInformation>>> {
-        let docs = self.documents.read().await;
-        let mut all_symbols = Vec::new();
-
-        for (uri_str, entry) in &docs.docs {
-            if let Ok(uri) = Url::parse(uri_str) {
-                let symbols = workspace_symbols::workspace_symbols_with_analysis(
-                    &entry.analysis,
-                    &params.query,
-                    &uri,
-                );
-                all_symbols.extend(symbols);
-            }
-        }
-
-        if all_symbols.is_empty() {
+        // Workspace symbol search now reads from the cross-file SymbolStore,
+        // which aggregates Open/Live documents (kept in sync by did_open /
+        // did_change) AND background-indexed files (did_change_watched_files).
+        // In single-file mode the store still holds the one open document, so
+        // symbol search keeps working (condition #6). The empty-query contract
+        // (returns None) is preserved by workspace_symbols_with_store.
+        let syms = self.symbols.read().await;
+        let results = workspace_symbols::workspace_symbols_with_store(&syms, &params.query);
+        if results.is_empty() {
             Ok(None)
         } else {
-            Ok(Some(all_symbols))
+            Ok(Some(results))
         }
     }
 }
@@ -723,5 +1144,233 @@ mod tests {
         let entry = store.docs.get("file:///a.sql").expect("entry exists");
         assert_eq!(entry.version, 3);
         assert!(entry.analysis.source.contains("name VARCHAR(10)"));
+    }
+
+    // --- T5: workspace symbol index wiring (#169) ---
+    //
+    // These tests cover the new cross-file infrastructure the server must wire:
+    // workspace_folders retention, the *.sql glob registration payload, the
+    // watched-files → SymbolStore incremental update with Open/Live precedence
+    // over Background, and the cross-file workspace_symbol / goto_definition
+    // switches. The pure helpers are unit-tested directly; the precedence rule
+    // (condition #6: an Open document must never be overwritten by a Background
+    // watched-files event) is asserted via the store.
+
+    fn url(s: &str) -> Url {
+        Url::parse(s).expect("valid url in test")
+    }
+
+    #[test]
+    fn test_sql_glob_pattern_is_wildcard_relative() {
+        // Condition: notify/register must advertise a '*.sql' glob so the client
+        // only forwards SQL file events. We use the simple Pattern form.
+        let pat = sql_watcher_glob();
+        match pat {
+            GlobPattern::String(p) => {
+                assert_eq!(p.as_str(), "*.sql");
+            }
+            other => panic!("expected String glob, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_registration_options_advertise_sql_watcher() {
+        let opts = watched_files_registration_options();
+        assert_eq!(opts.watchers.len(), 1, "exactly one *.sql watcher");
+        let watcher = &opts.watchers[0];
+        assert!(
+            matches!(&watcher.glob_pattern, GlobPattern::String(p) if p.as_str() == "*.sql"),
+            "watcher glob must be *.sql"
+        );
+        // kind None => default WatchKind 7 (Create|Change|Delete).
+        assert!(
+            watcher.kind.is_none(),
+            "watcher kind defaults to all events"
+        );
+    }
+
+    #[test]
+    fn test_apply_pre_read_events_indexes_created_file_as_background() {
+        // A CREATED event for a SQL file the server has never seen must insert
+        // its symbols into the SymbolStore tagged Background.
+        let mut syms = SymbolStore::new();
+        let pairs = vec![(
+            FileEvent {
+                uri: url("file:///ws/created.sql"),
+                typ: FileChangeType::CREATED,
+            },
+            Some(String::from("CREATE TABLE new_table (id INT)")),
+        )];
+        apply_pre_read_watched_file_events(&mut syms, &pairs, &OpenUriChecker::none_open());
+        let entries = syms.lookup("new_table");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].source, DocumentSource::Background);
+        assert_eq!(entries[0].uri.as_str(), "file:///ws/created.sql");
+    }
+
+    #[test]
+    fn test_apply_pre_read_events_changed_event_refreshes_entry() {
+        // A CHANGED event re-analyzes on-disk contents and replaces the prior
+        // contribution for that URI (idempotent re-index).
+        let mut syms = SymbolStore::new();
+        let uri = url("file:///ws/changed.sql");
+        // Seed a stale Background entry.
+        syms.upsert(
+            &uri,
+            &DocumentAnalysis::new("CREATE TABLE old_table (id INT)"),
+            DocumentSource::Background,
+        );
+        let pairs = vec![(
+            FileEvent {
+                uri: uri.clone(),
+                typ: FileChangeType::CHANGED,
+            },
+            Some(String::from("CREATE TABLE new_table (id INT)")),
+        )];
+        apply_pre_read_watched_file_events(&mut syms, &pairs, &OpenUriChecker::none_open());
+        assert!(
+            syms.lookup("old_table").is_empty(),
+            "stale table must be evicted by re-index"
+        );
+        assert_eq!(syms.lookup("new_table").len(), 1);
+    }
+
+    #[test]
+    fn test_apply_pre_read_events_deleted_event_evicts_uri() {
+        // A DELETED event must remove the URI's contribution from the store.
+        let mut syms = SymbolStore::new();
+        let uri = url("file:///ws/deleted.sql");
+        syms.upsert(
+            &uri,
+            &DocumentAnalysis::new("CREATE TABLE doomed (id INT)"),
+            DocumentSource::Background,
+        );
+        let pairs = vec![(
+            FileEvent {
+                uri: uri.clone(),
+                typ: FileChangeType::DELETED,
+            },
+            None,
+        )];
+        apply_pre_read_watched_file_events(&mut syms, &pairs, &OpenUriChecker::none_open());
+        assert!(syms.lookup("doomed").is_empty());
+    }
+
+    #[test]
+    fn test_apply_pre_read_events_skips_open_documents() {
+        // Condition #6: when a file is Open in the editor, a watched-files
+        // notification must NOT overwrite the live version. The CREATED/CHANGED
+        // event is ignored entirely for open URIs.
+        let mut syms = SymbolStore::new();
+        let open_uri = url("file:///ws/open.sql");
+        // Live Open entry — authoritative.
+        syms.upsert(
+            &open_uri,
+            &DocumentAnalysis::new("CREATE TABLE live_table (id INT)"),
+            DocumentSource::Open,
+        );
+        // The watched-files contents would introduce a DIFFERENT table.
+        let pairs = vec![(
+            FileEvent {
+                uri: open_uri.clone(),
+                typ: FileChangeType::CHANGED,
+            },
+            Some(String::from("CREATE TABLE disk_only_table (id INT)")),
+        )];
+        let checker = OpenUriChecker::some_open(vec![open_uri.as_str().to_string()]);
+        apply_pre_read_watched_file_events(&mut syms, &pairs, &checker);
+        // Live table intact; disk table NOT introduced.
+        assert_eq!(syms.lookup("live_table").len(), 1);
+        assert!(
+            syms.lookup("disk_only_table").is_empty(),
+            "watched-files must not overwrite an Open document"
+        );
+    }
+
+    #[test]
+    fn test_apply_pre_read_events_missing_contents_is_noop_for_create() {
+        // If the read fails (race: file vanished), CREATED/CHANGED must not
+        // panic and must leave the store untouched.
+        let mut syms = SymbolStore::new();
+        let pairs = vec![(
+            FileEvent {
+                uri: url("file:///ws/ghost.sql"),
+                typ: FileChangeType::CREATED,
+            },
+            None,
+        )];
+        apply_pre_read_watched_file_events(&mut syms, &pairs, &OpenUriChecker::none_open());
+        assert!(syms.is_empty());
+    }
+
+    #[test]
+    fn test_apply_pre_read_events_non_sql_uri_is_ignored() {
+        // Non-SQL URIs (e.g. .txt) must be ignored even if the client forwards
+        // them — the glob is a hint, not a guarantee.
+        let mut syms = SymbolStore::new();
+        let pairs = vec![(
+            FileEvent {
+                uri: url("file:///ws/notes.txt"),
+                typ: FileChangeType::CREATED,
+            },
+            Some(String::from("CREATE TABLE should_not_index (id INT)")),
+        )];
+        apply_pre_read_watched_file_events(&mut syms, &pairs, &OpenUriChecker::none_open());
+        assert!(syms.is_empty(), "non-*.sql events must be ignored");
+    }
+
+    #[test]
+    fn test_workspace_symbol_via_store_includes_background_entries() {
+        // The symbol() handler must read from the SymbolStore, so background
+        // (cross-file) tables are discoverable even when no document is open.
+        let mut syms = SymbolStore::new();
+        let uri = url("file:///ws/schema.sql");
+        syms.upsert(
+            &uri,
+            &DocumentAnalysis::new("CREATE PROCEDURE compute_total AS BEGIN SELECT 1 END"),
+            DocumentSource::Background,
+        );
+        let results = workspace_symbols::workspace_symbols_with_store(&syms, "compute");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "compute_total");
+        assert_eq!(results[0].location.uri, uri);
+    }
+
+    #[tokio::test]
+    async fn test_stores_sync_live_then_watch_close_restores_background() {
+        // Integration of the precedence lifecycle:
+        //   did_open (Open) -> watched CHANGED ignored -> did_close evicts live
+        // This proves the Open/Live precedence helper used by the watched-files
+        // handler and the sync handlers compose correctly. Built from raw Arcs
+        // so the test does not need a live LSP Client.
+        let stores = DocumentStores::for_test();
+        let uri = url("file:///ws/x.sql");
+        stores
+            .sync_live(&uri, "CREATE TABLE t (id INT)", 0, DocumentSource::Open)
+            .await;
+        // While open, a watched CHANGED event must not overwrite.
+        let pairs = vec![(
+            FileEvent {
+                uri: uri.clone(),
+                typ: FileChangeType::CHANGED,
+            },
+            Some(String::from("CREATE TABLE disk_version (id INT)")),
+        )];
+        {
+            let checker = OpenUriChecker::from_documents(&stores.documents).await;
+            let mut syms = stores.symbols.write().await;
+            apply_pre_read_watched_file_events(&mut syms, &pairs, &checker);
+        }
+        let syms = stores.symbols.read().await;
+        assert_eq!(syms.lookup("t").len(), 1, "live entry preserved while open");
+        assert!(
+            syms.lookup("disk_version").is_empty(),
+            "disk version must not shadow live"
+        );
+        drop(syms);
+        // did_close fully evicts (no background source wired yet).
+        stores.sync_close(&uri, None).await;
+        let syms = stores.symbols.read().await;
+        assert!(syms.lookup("t").is_empty(), "close evicts the live entry");
     }
 }
