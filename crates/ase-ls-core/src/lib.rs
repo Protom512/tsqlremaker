@@ -11,6 +11,7 @@
 pub mod analysis;
 pub mod code_actions;
 pub mod completion;
+pub mod config;
 pub mod db_docs;
 pub mod definition;
 pub mod diagnostics;
