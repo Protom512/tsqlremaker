@@ -4,7 +4,9 @@
 
 use ase_ls_core::{
     analysis::DocumentAnalysis,
-    code_actions, completion, definition, diagnostics, folding, formatting, hover,
+    code_actions, completion,
+    config::Config,
+    definition, diagnostics, folding, formatting, hover,
     incremental::apply_content_change,
     line_index::LineIndex,
     references, rename, semantic_tokens, signature_help,
@@ -49,6 +51,13 @@ pub struct AseLanguageServer {
     /// that mode the cross-file store stays empty and every handler gracefully
     /// falls back to its document-local behaviour (condition #6).
     workspace_folders: Arc<RwLock<Vec<WorkspaceFolder>>>,
+    /// User configuration received via `workspace/didChangeConfiguration` (#132).
+    ///
+    /// Drives formatting (indent width, keyword case), diagnostics (`SELECT *`
+    /// severity) and completion (snippet emission). Defaults reproduce the
+    /// pre-#132 hardcoded behaviour, so an unconfigured server is unchanged.
+    /// Read by every relevant handler under a short read lock and cloned out.
+    config: Arc<RwLock<Config>>,
 }
 
 /// メモリ上のドキュメント管理
@@ -260,6 +269,7 @@ impl AseLanguageServer {
             documents: Arc::new(RwLock::new(DocumentStore::new())),
             symbols: Arc::new(RwLock::new(SymbolStore::new())),
             workspace_folders: Arc::new(RwLock::new(Vec::new())),
+            config: Arc::new(RwLock::new(Config::default())),
         }
     }
 
@@ -277,7 +287,9 @@ impl AseLanguageServer {
     /// ドキュメントの診断情報をパブリッシュする
     async fn publish_diagnostics_for(&self, uri: &Url) {
         if let Some(analysis) = self.get_analysis(uri).await {
-            let diags = diagnostics::diagnose(&analysis);
+            // 設定（#132: SELECT * severity 等）を読んで診断に反映。
+            let diag_config = self.config.read().await.diagnostics.clone();
+            let diags = diagnostics::diagnose(&analysis, &diag_config);
             self.client
                 .publish_diagnostics(uri.clone(), diags, None)
                 .await;
@@ -290,6 +302,29 @@ impl AseLanguageServer {
         docs.docs
             .get(uri.as_str())
             .map(|entry| entry.analysis.clone())
+    }
+
+    /// 現在 open している全ドキュメントの URI スナップショットを返す。
+    ///
+    /// 設定変更 (#132) 後の診断再公開などで、ロックを長く保持せずに全文書へ
+    /// アクセスするために使用する。
+    async fn open_uris(&self) -> Vec<Url> {
+        let docs = self.documents.read().await;
+        docs.docs
+            .keys()
+            .filter_map(|s| Url::parse(s).ok())
+            .collect()
+    }
+
+    /// 全 open ドキュメントの診断を再公開する（設定変更後の即時反映・#132）。
+    ///
+    /// 診断 severity はサーバー主導で publish されるため、`did_change_configuration`
+    /// 後に呼び出して新しい設定を即座に反映する。フォーマット/補完は各リクエスト
+    /// 時に設定を読むため再公開不要。
+    async fn refresh_all_diagnostics(&self) {
+        for uri in self.open_uris().await {
+            self.publish_diagnostics_for(&uri).await;
+        }
     }
 }
 
@@ -650,6 +685,23 @@ impl LanguageServer for AseLanguageServer {
             .await;
     }
 
+    /// `workspace/didChangeConfiguration` (#132): クライアントからの設定変更を
+    /// 受け取り、即座に反映する。
+    ///
+    /// `params.settings` から [`Config`] を寛容に構築（欠損/不正値はデフォルト）
+    /// し、`config` へ書き込んだうえで、診断 severity の変更を即時反映するため
+    /// 全 open ドキュメントの診断を再公開する。フォーマット/補完は次回リクエスト
+    /// 時に新しい設定が読まれるため追加の通知は不要。
+    async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        let new_config = Config::from_value(&params.settings);
+        {
+            let mut cfg = self.config.write().await;
+            *cfg = new_config;
+        }
+        // 設定反映後、診断を即時再公開（severity 変更などをクライアントへ伝播）。
+        self.refresh_all_diagnostics().await;
+    }
+
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
         // On-disk `*.sql` changes from the client. We keep the SymbolStore in
         // sync with the background world: CREATED/CHANGED re-index the file
@@ -722,6 +774,8 @@ impl LanguageServer for AseLanguageServer {
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
+        // 補完設定（#132: スニペット有効/無効）を読む。
+        let comp_config = self.config.read().await.completion.clone();
         if let Some(analysis) = self.get_analysis(uri).await {
             // カーソル直前までの行テキストから補完コンテキストを推定 (#126)。
             // LSP position.character は UTF-16 単位だが、ASCII 主体の SQL では
@@ -731,9 +785,13 @@ impl LanguageServer for AseLanguageServer {
             Ok(Some(completion::complete_for_context(
                 &prefix,
                 &analysis.symbol_table,
+                &comp_config,
             )))
         } else {
-            Ok(Some(completion::complete_all().clone()))
+            Ok(Some(completion::apply_snippet_config(
+                completion::complete_all().clone(),
+                comp_config.enable_snippets,
+            )))
         }
     }
 
@@ -802,7 +860,9 @@ impl LanguageServer for AseLanguageServer {
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let uri = &params.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
-            let edits = formatting::format(&analysis.source);
+            // フォーマット設定（#132: インデント幅・キーワード大小）を読む。
+            let fmt_config = self.config.read().await.formatting.clone();
+            let edits = formatting::format(&analysis.source, &fmt_config);
             if edits.is_empty() {
                 Ok(None)
             } else {
@@ -819,8 +879,13 @@ impl LanguageServer for AseLanguageServer {
     ) -> Result<Option<Vec<TextEdit>>> {
         let uri = &params.text_document.uri;
         if let Some(analysis) = self.get_analysis(uri).await {
+            // フォーマット設定（#132）を読む。
+            let fmt_config = self.config.read().await.formatting.clone();
             // 選択範囲のみを整形した単一 TextEdit を返す (#129)。
-            Ok(formatting::format_range(&analysis.source, params.range).map(|edit| vec![edit]))
+            Ok(
+                formatting::format_range(&analysis.source, params.range, &fmt_config)
+                    .map(|edit| vec![edit]),
+            )
         } else {
             Ok(None)
         }

@@ -2,9 +2,12 @@
 //!
 //! SQL キーワード、データ型、組み込み関数の補完候補を提供する。
 
-use lsp_types::{CompletionItem, CompletionItemKind, CompletionList, CompletionResponse};
+use lsp_types::{
+    CompletionItem, CompletionItemKind, CompletionList, CompletionResponse, InsertTextFormat,
+};
 use std::sync::LazyLock;
 
+use crate::config::CompletionConfig;
 use crate::symbol_table::{SymbolTable, TableSymbol};
 
 /// 全補完候補のグローバルキャッシュ。初回アクセス時のみ構築される。
@@ -193,18 +196,24 @@ pub(crate) fn detect_context(prefix: &str) -> CompletionContext {
     CompletionContext::Expression
 }
 
-/// カーソルコンテキストに応じた補完候補を返す (#126)。
+/// カーソルコンテキストに応じた補完候補を返す (#126, #132: `config` 駆動)。
 ///
 /// * `Table` → シンボルテーブル内のテーブル名
 /// * `VariableDeclaration` → 空 (新規変数名入力中)
-/// * `Expression` → [`complete_all`] の全候補
+/// * `Expression` → [`complete_all`] の全候補（`config.enable_snippets` が
+///   `false` ならスニペットをプレーンテキストに展開）
 ///
 /// # Arguments
 ///
 /// * `prefix` - 行頭〜カーソル位置までのテキスト
 /// * `symbol_table` - 現ドキュメントのシンボルテーブル (テーブル名参照用)
+/// * `config` - 補完設定 (スニペット有効/無効)
 #[must_use]
-pub fn complete_for_context(prefix: &str, symbol_table: &SymbolTable) -> CompletionResponse {
+pub fn complete_for_context(
+    prefix: &str,
+    symbol_table: &SymbolTable,
+    config: &CompletionConfig,
+) -> CompletionResponse {
     match detect_context(prefix) {
         CompletionContext::VariableDeclaration => CompletionResponse::List(CompletionList {
             is_incomplete: false,
@@ -221,8 +230,42 @@ pub fn complete_for_context(prefix: &str, symbol_table: &SymbolTable) -> Complet
                 items,
             })
         }
-        CompletionContext::Expression => complete_all().clone(),
+        CompletionContext::Expression => {
+            apply_snippet_config(complete_all().clone(), config.enable_snippets)
+        }
     }
+}
+
+/// 補完候補リストのスニペット挙動を `enable_snippets` に従って調整する (#132)。
+///
+/// `enable_snippets == true` なら何もしない（キャッシュ済みリストをそのまま返す・
+/// pre-#132 挙動）。`false` の場合、スニペット形式（`InsertTextFormat::SNIPPET`）の
+/// 関数補完をプレーンテキスト（`name()`）に展開する。キーワード/型/変数は元々
+/// スニペットではないため影響を受けない。
+#[must_use]
+pub fn apply_snippet_config(resp: CompletionResponse, enable_snippets: bool) -> CompletionResponse {
+    if enable_snippets {
+        return resp;
+    }
+    let CompletionResponse::List(list) = resp else {
+        return resp;
+    };
+    let items = list
+        .items
+        .into_iter()
+        .map(|mut item| {
+            if item.insert_text_format == Some(InsertTextFormat::SNIPPET) {
+                // スニペットを関数名＋括弧のプレーンテキストに置換。
+                item.insert_text = Some(format!("{}()", item.label));
+                item.insert_text_format = Some(InsertTextFormat::PLAIN_TEXT);
+            }
+            item
+        })
+        .collect();
+    CompletionResponse::List(CompletionList {
+        is_incomplete: list.is_incomplete,
+        items,
+    })
 }
 
 /// テーブルシンボルから補完アイテムを構築する。
@@ -245,8 +288,10 @@ fn table_completion_item(t: &TableSymbol) -> CompletionItem {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::panic)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::config::CompletionConfig;
     use crate::symbol_table::SymbolTableBuilder;
     use lsp_types::InsertTextFormat;
 
@@ -580,7 +625,7 @@ mod tests {
     #[test]
     fn complete_for_context_returns_table_names() {
         let st = SymbolTableBuilder::build("CREATE TABLE users (id INT)");
-        let resp = complete_for_context("SELECT * FROM ", &st);
+        let resp = complete_for_context("SELECT * FROM ", &st, &CompletionConfig::default());
         match resp {
             CompletionResponse::List(list) => {
                 assert!(
@@ -595,7 +640,7 @@ mod tests {
     #[test]
     fn complete_for_context_variable_decl_is_empty() {
         let st = SymbolTableBuilder::build("");
-        let resp = complete_for_context("DECLARE @", &st);
+        let resp = complete_for_context("DECLARE @", &st, &CompletionConfig::default());
         match resp {
             CompletionResponse::List(list) => {
                 assert!(
@@ -610,7 +655,7 @@ mod tests {
     #[test]
     fn complete_for_context_expression_returns_full_list() {
         let st = SymbolTableBuilder::build("");
-        let resp = complete_for_context("SELECT ", &st);
+        let resp = complete_for_context("SELECT ", &st, &CompletionConfig::default());
         match resp {
             CompletionResponse::List(list) => {
                 // Expression context returns the full cached list (e.g. SELECT keyword).
@@ -618,5 +663,53 @@ mod tests {
             }
             _ => panic!("Expected List"),
         }
+    }
+
+    // === configuration-driven snippets (#132) ===
+
+    #[test]
+    fn config_snippets_disabled_strips_function_placeholders() {
+        let st = SymbolTableBuilder::build("");
+        let cfg = CompletionConfig {
+            enable_snippets: false,
+        };
+        let resp = complete_for_context("SELECT ", &st, &cfg);
+        let CompletionResponse::List(list) = resp else {
+            panic!("Expected List");
+        };
+        // A comma-separated function (e.g. SUBSTRING) must be plain text, not a snippet.
+        let substring = list.items.iter().find(|i| i.label == "SUBSTRING");
+        let substring =
+            substring.unwrap_or_else(|| panic!("SUBSTRING should be in completion list: {list:?}"));
+        assert_eq!(
+            substring.insert_text_format,
+            Some(InsertTextFormat::PLAIN_TEXT),
+            "snippets disabled → plain text"
+        );
+        assert_eq!(substring.insert_text.as_deref(), Some("SUBSTRING()"));
+    }
+
+    #[test]
+    fn config_snippets_enabled_keeps_default_behaviour() {
+        let st = SymbolTableBuilder::build("");
+        let resp = complete_for_context("SELECT ", &st, &CompletionConfig::default());
+        let CompletionResponse::List(list) = resp else {
+            panic!("Expected List");
+        };
+        let substring = list
+            .items
+            .iter()
+            .find(|i| i.label == "SUBSTRING")
+            .expect("SUBSTRING present");
+        // Default (enabled) keeps the snippet with placeholders.
+        assert_eq!(
+            substring.insert_text_format,
+            Some(InsertTextFormat::SNIPPET)
+        );
+        assert!(substring
+            .insert_text
+            .as_deref()
+            .unwrap_or("")
+            .contains("${1:"));
     }
 }

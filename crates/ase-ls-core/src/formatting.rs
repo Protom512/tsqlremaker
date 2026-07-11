@@ -3,15 +3,16 @@
 //! T-SQL ソースコードの自動フォーマット機能を提供する。
 //! キーワード大文字化、インデント、改行の挿入を行う。
 
+use crate::config::{FormattingConfig, KeywordCase};
 use lsp_types::{Position, Range, TextEdit};
 use std::borrow::Cow;
 use tsql_lexer::Lexer;
 use tsql_token::TokenKind;
 
-/// SQL文をフォーマットし、TextEditのリストを返す
+/// SQL文をフォーマットし、TextEditのリストを返す (#132: `config` 駆動)。
 #[must_use]
-pub fn format(source: &str) -> Vec<TextEdit> {
-    let formatted = format_sql(source);
+pub fn format(source: &str, config: &FormattingConfig) -> Vec<TextEdit> {
+    let formatted = format_sql_configured(source, config);
     if formatted == source {
         return Vec::new();
     }
@@ -40,8 +41,8 @@ pub fn format(source: &str) -> Vec<TextEdit> {
 /// その範囲だけを置換する単一の [`TextEdit`] を返す。範囲外は変更されない。
 /// 指定範囲が既に整形済み（フォーマット前後で変化ない）場合は `None`。
 #[must_use]
-pub fn format_range(source: &str, range: Range) -> Option<TextEdit> {
-    let formatted = format_sql(source);
+pub fn format_range(source: &str, range: Range, config: &FormattingConfig) -> Option<TextEdit> {
+    let formatted = format_sql_configured(source, config);
     let formatted_lines: Vec<&str> = formatted.lines().collect();
     if formatted_lines.is_empty() {
         return None;
@@ -64,9 +65,14 @@ pub fn format_range(source: &str, range: Range) -> Option<TextEdit> {
     Some(TextEdit { range, new_text })
 }
 
-/// SQL文字列をフォーマットする
-fn format_sql(source: &str) -> String {
+/// SQL文字列をフォーマットする（`config` 駆動・#132）。
+///
+/// インデント幅は `config.indent_unit()`、キーワードの大小は
+/// `config.keyword_case` に従う。それ以外の整形ルール（改行位置・スペース挿入・
+/// トークン順）は変更なし。
+fn format_sql_configured(source: &str, config: &FormattingConfig) -> String {
     let lexer = Lexer::new(source).with_comments(true);
+    let indent = config.indent_unit();
 
     let mut result = String::new();
     let mut indent_level = 0u32;
@@ -91,9 +97,8 @@ fn format_sql(source: &str) -> String {
 
         // インデント挿入
         if at_line_start {
-            const INDENT: &str = "    ";
             for _ in 0..indent_level {
-                result.push_str(INDENT);
+                result.push_str(&indent);
             }
             at_line_start = false;
         }
@@ -101,14 +106,14 @@ fn format_sql(source: &str) -> String {
         // トークン間のスペース
         if !result.is_empty()
             && !result.ends_with('\n')
-            && !result.ends_with("    ")
+            && !result.ends_with(&indent)
             && needs_space_before(&token.kind, prev_kind.as_ref())
         {
             result.push(' ');
         }
 
         // トークンテキストの書き換え
-        let text = format_token(&token.kind, token.text);
+        let text = format_token(&token.kind, token.text, config.keyword_case);
         result.push_str(&text);
 
         // BEGIN/CASE の後にインデントを増やす
@@ -127,12 +132,18 @@ fn format_sql(source: &str) -> String {
     result
 }
 
-/// キーワードを大文字化する
+/// テスト便利ヘルパ: デフォルト設定（= pre-#132 挙動）でフォーマットする。
+#[cfg(test)]
+fn format_sql(source: &str) -> String {
+    format_sql_configured(source, &FormattingConfig::default())
+}
+
+/// キーワードの大小を `case` に従って変換する (#132)。
 ///
 /// 変換が不要なトークン（識別子、演算子、数字等）は `Cow::Borrowed` を返し、
-/// アロケーションを回避する。キーワードの大文字化と文字列/コメントの
-/// コピーにのみ `Cow::Owned` を使用する。
-fn format_token<'a>(kind: &TokenKind, text: &'a str) -> Cow<'a, str> {
+/// アロケーションを回避する。`KeywordCase::Preserve` ではキーワードも借用のまま。
+/// 文字列/コメントは内容保存のため常に `Cow::Owned` でコピーする。
+fn format_token<'a>(kind: &TokenKind, text: &'a str, case: KeywordCase) -> Cow<'a, str> {
     match kind {
         TokenKind::String | TokenKind::NString | TokenKind::HexString => {
             Cow::Owned(text.to_owned())
@@ -140,7 +151,12 @@ fn format_token<'a>(kind: &TokenKind, text: &'a str) -> Cow<'a, str> {
         TokenKind::LineComment | TokenKind::BlockComment => Cow::Owned(text.to_owned()),
         _ => {
             if kind.is_keyword() {
-                Cow::Owned(text.to_uppercase())
+                match case {
+                    KeywordCase::Upper => Cow::Owned(text.to_uppercase()),
+                    KeywordCase::Lower => Cow::Owned(text.to_lowercase()),
+                    // 大小変換なしでも借用を返せる（アロケーション回避）。
+                    KeywordCase::Preserve => Cow::Borrowed(text),
+                }
             } else {
                 Cow::Borrowed(text)
             }
@@ -249,6 +265,7 @@ const fn should_decrease_indent(kind: &TokenKind) -> bool {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::config::{FormattingConfig, KeywordCase};
 
     #[test]
     fn test_format_keyword_uppercase() {
@@ -280,7 +297,7 @@ mod tests {
     #[test]
     fn test_format_returns_text_edit() {
         let source = "select * from t";
-        let edits = format(source);
+        let edits = format(source, &FormattingConfig::default());
         assert_eq!(edits.len(), 1);
         assert!(edits[0].new_text.contains("SELECT"));
     }
@@ -491,7 +508,7 @@ mod tests {
         // This is hard to trigger since we always add trailing newline,
         // so test the function behavior
         let source = format_sql("SELECT * FROM t");
-        let edits = format(&source);
+        let edits = format(&source, &FormattingConfig::default());
         // If already formatted (with newline), should return empty or single edit
         // The key is: no crash, valid result
         assert!(edits.len() <= 1);
@@ -541,7 +558,8 @@ mod tests {
                 character: 9,
             },
         };
-        let edit = format_range(source, range).expect("should produce a range edit");
+        let edit = format_range(source, range, &FormattingConfig::default())
+            .expect("should produce a range edit");
         assert_eq!(edit.range, range, "edit must cover only the selected range");
         assert!(
             edit.new_text.contains("SELECT"),
@@ -565,8 +583,62 @@ mod tests {
             },
         };
         assert!(
-            format_range(source, range).is_none(),
+            format_range(source, range, &FormattingConfig::default()).is_none(),
             "already-formatted range should yield no edit"
         );
+    }
+
+    // ===== configuration-driven formatting (#132) =====
+
+    fn cfg(indent: u32, case: KeywordCase) -> FormattingConfig {
+        FormattingConfig {
+            indent_width: indent,
+            keyword_case: case,
+        }
+    }
+
+    #[test]
+    fn config_indent_width_two_uses_two_spaces() {
+        let result = format_sql_configured("BEGIN SELECT 1 END", &cfg(2, KeywordCase::Upper));
+        // Inner SELECT line is indented by exactly 2 spaces (not the default 4).
+        let select_line = result
+            .lines()
+            .find(|l| l.trim_start().starts_with("SELECT"))
+            .unwrap_or_else(|| panic!("SELECT line missing: {result:?}"));
+        assert!(
+            select_line.starts_with("  ") && !select_line.starts_with("   "),
+            "expected 2-space indent, got: '{select_line}'"
+        );
+    }
+
+    #[test]
+    fn config_keyword_case_lower_lowercases_keywords() {
+        let result = format_sql_configured("select * from t", &cfg(4, KeywordCase::Lower));
+        assert!(
+            result.contains("select") && !result.contains("SELECT"),
+            "keywords should be lower-cased: {result:?}"
+        );
+    }
+
+    #[test]
+    fn config_keyword_case_preserve_leaves_source_case() {
+        // Mixed-case source is left untouched under Preserve (no upper, no lower).
+        let result = format_sql_configured("Select * From t", &cfg(4, KeywordCase::Preserve));
+        assert!(
+            result.contains("Select") && result.contains("From"),
+            "keywords should keep source case: {result:?}"
+        );
+        assert!(
+            !result.contains("SELECT") && !result.contains("select"),
+            "Preserve must not alter keyword case: {result:?}"
+        );
+    }
+
+    #[test]
+    fn config_default_matches_legacy_behaviour() {
+        // Default config reproduces the pre-#132 uppercase + 4-space behaviour.
+        let via_config = format_sql_configured("select * from t", &FormattingConfig::default());
+        let via_legacy = format_sql("select * from t");
+        assert_eq!(via_config, via_legacy);
     }
 }

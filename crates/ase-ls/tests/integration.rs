@@ -197,6 +197,62 @@ async fn test_formatting_after_open() {
     assert!(response.is_some(), "Should return formatting edits");
 }
 
+/// Extract the first TextEdit's `newText` from a formatting response (#132 test helper).
+fn formatting_new_text(resp: Option<tower_lsp::jsonrpc::Response>) -> String {
+    let value = serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null);
+    value
+        .pointer("/result/0/newText")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+#[tokio::test]
+async fn test_did_change_configuration_updates_formatting_indent() {
+    let mut service = setup();
+    // Multi-line SQL so indentation is observable.
+    init_and_open(&mut service, "file:///test.sql", "begin select 1 end").await;
+
+    // Default formatting (4-space indent).
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/formatting",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "options": { "tabSize": 4, "insertSpaces": true }
+        }
+    });
+    let default_text = formatting_new_text(send(&mut service, &req.to_string()).await);
+    assert!(
+        default_text.contains("    SELECT"),
+        "default config should use 4-space indent: {default_text:?}"
+    );
+
+    // Push a config change: indentWidth = 2.
+    let cfg = serde_json::json!({
+        "jsonrpc": "2.0", "method": "workspace/didChangeConfiguration",
+        "params": { "settings": { "ase-ls": { "formatting": { "indentWidth": 2 } } } }
+    });
+    send(&mut service, &cfg.to_string()).await;
+
+    // Request formatting again — the new config must take effect immediately.
+    let req2 = serde_json::json!({
+        "jsonrpc": "2.0", "id": 3, "method": "textDocument/formatting",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "options": { "tabSize": 4, "insertSpaces": true }
+        }
+    });
+    let configured_text = formatting_new_text(send(&mut service, &req2.to_string()).await);
+    assert!(
+        configured_text.contains("  SELECT") && !configured_text.contains("    SELECT"),
+        "indentWidth=2 should produce 2-space indent: {configured_text:?}"
+    );
+    assert_ne!(
+        default_text, configured_text,
+        "config change must alter formatting output"
+    );
+}
+
 #[tokio::test]
 async fn test_did_close_clears_document() {
     let mut service = setup();
