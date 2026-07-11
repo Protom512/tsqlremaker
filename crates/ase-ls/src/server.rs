@@ -127,6 +127,42 @@ impl DocumentStore {
     fn close(&mut self, uri: &str) {
         self.docs.remove(uri);
     }
+
+    /// Snapshot of every known document as `(Url, Arc<DocumentAnalysis>)` pairs.
+    ///
+    /// Designed for cross-file Find All References (#170): the `references()`
+    /// handler needs to scan the tokens of *every* open/indexed document, but
+    /// must NOT hold the `DocumentStore` `RwLock` read guard across the
+    /// (potentially slow) cross-file scan. This method runs entirely under a
+    /// short-lived read lock held by the caller, producing an owned `Vec` the
+    /// caller can iterate freely once the guard is dropped.
+    ///
+    /// The snapshot is cheap: it clones each `Url` key and `Arc::clone`s each
+    /// analysis — no analysis is rebuilt and no source `String` is deep-copied.
+    /// A malformed URI key (which can only arise from a corrupted store, never
+    /// from `upsert` — that stores `uri.as_str()` of an already-parsed `Url`)
+    /// is skipped rather than panicking, keeping the lock-acquire path panic-free
+    /// per the workspace lint policy.
+    ///
+    /// The returned `Url`s are re-parsed from the stored `String` keys rather
+    /// than cached, because `DocumentStore` keys on `String` (the URI is parsed
+    /// at the `did_open` / `did_change` boundary and stored as a string). This
+    /// mirrors how `get_source` / `get_analysis` round-trip through `&str`.
+    ///
+    /// Note: `analyses_snapshot` is consumed by the `references()` handler for
+    /// cross-file Find All References (#170). It snapshots every known document
+    /// so the handler can scan usages workspace-wide without holding the
+    /// `DocumentStore` read guard across the scan.
+    fn analyses_snapshot(&self) -> Vec<(Url, Arc<DocumentAnalysis>)> {
+        self.docs
+            .iter()
+            .filter_map(|(uri_str, entry)| {
+                Url::parse(uri_str)
+                    .ok()
+                    .map(|url| (url, Arc::clone(&entry.analysis)))
+            })
+            .collect()
+    }
 }
 
 /// Co-owned pair of the live document store and the cross-file symbol index.
@@ -826,28 +862,59 @@ impl LanguageServer for AseLanguageServer {
         }
     }
 
+    /// Find All References — cross-file for objects, document-local for variables.
+    ///
+    /// Mirrors [`Self::goto_definition`]: acquire the `DocumentStore` read lock
+    /// first (documents-before-symbols ordering — the canonical invariant on
+    /// [`AseLanguageServer`]), snapshot every known document's analysis via
+    /// [`DocumentStore::analyses_snapshot`], drop the lock, then take the
+    /// `SymbolStore` read lock and delegate to
+    /// [`references::reference_locations`].
+    ///
+    /// - **Objects** (table/proc/view/index/trigger): usages are scanned across
+    ///   every known document; when `include_declaration` is set the CREATE
+    ///   definitions from the store are added. Results span multiple files.
+    /// - **Variables** (`@var`): scope is document-local — the pure-fn
+    ///   short-circuits to `current_uri` only and never crosses files, even if
+    ///   another open file declares a same-named variable (#169 design decision).
+    ///
+    /// Returns `None` on empty, `Some(Vec<Location>)` otherwise. In single-file
+    /// mode (empty store/snapshot) the document-local fallback still works.
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let uri = &params.text_document_position.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
-            let ranges = references::reference_ranges_with_analysis(
+        // DocumentAnalysis が無ければ即座にフォールバック（単一ファイルモード等）。
+        let Some(analysis) = self.get_analysis(uri).await else {
+            return Ok(None);
+        };
+        // ロック順序（documents-read-before-symbols-read）を遵守するため、
+        // 最初に DocumentStore の read lock を取って全文書の解析スナップショットを
+        // 取得してからロックを解放し、その後に SymbolStore の read lock を取得する。
+        // これにより、クロスファイル参照走査中はどちらのロックも保持しない。
+        // goto_definition ハンドラ(server.rs:843) と同じ acquire/drop パターン。
+        let docs_snapshot = {
+            let docs = self.documents.read().await;
+            docs.analyses_snapshot()
+        };
+        // SymbolStore を read lock で参照し、cross-file 版 Find All References へ。
+        // reference_locations は既知の各文書のトークン列を走査して使用箇所を集め、
+        // include_declaration が真ならストアの CREATE 定義を付加する。変数は
+        // 文書ローカル（current_uri 配下のみ）。ストア/スナップショットが空
+        // （単一ファイルモード）でも文書内フォールバックが機能する（条件 #6）。
+        let locations = {
+            let syms = self.symbols.read().await;
+            references::reference_locations(
+                &syms,
                 &analysis,
+                uri,
                 params.text_document_position.position,
                 params.context.include_declaration,
-            );
-            if ranges.is_empty() {
-                Ok(None)
-            } else {
-                let locations: Vec<Location> = ranges
-                    .into_iter()
-                    .map(|range| Location {
-                        uri: uri.clone(),
-                        range,
-                    })
-                    .collect();
-                Ok(Some(locations))
-            }
-        } else {
+                &docs_snapshot,
+            )
+        };
+        if locations.is_empty() {
             Ok(None)
+        } else {
+            Ok(Some(locations))
         }
     }
 
@@ -1022,6 +1089,75 @@ mod tests {
             }
         }
         assert_eq!(table_count, 2);
+    }
+
+    // --- analyses_snapshot() cross-file document set accessor (#170) ---
+    //
+    // Find All References (#170) needs to scan the tokens of EVERY known
+    // document without holding the DocumentStore RwLock across the (potentially
+    // slow) cross-file scan. analyses_snapshot() takes a read-locked snapshot:
+    // it clones the Url keys and Arc::clones each analysis (cheap — no analysis
+    // rebuild, no deep source clone), returning an owned Vec the caller can
+    // iterate freely after the read guard is dropped.
+
+    #[test]
+    fn test_analyses_snapshot_empty_store() {
+        let store = DocumentStore::new();
+        let snapshot = store.analyses_snapshot();
+        assert!(snapshot.is_empty(), "empty store must yield empty snapshot");
+    }
+
+    #[test]
+    fn test_analyses_snapshot_returns_all_entries_as_url_arc_pairs() {
+        let mut store = DocumentStore::new();
+        store.upsert("file:///a.sql", "CREATE TABLE users (id INT)", 0);
+        store.upsert("file:///b.sql", "SELECT * FROM users", 1);
+
+        let snapshot = store.analyses_snapshot();
+
+        // Both documents are present.
+        assert_eq!(snapshot.len(), 2);
+
+        // Keys are parsed Urls, not raw Strings.
+        let uris: Vec<Url> = snapshot.iter().map(|(u, _)| u.clone()).collect();
+        assert!(uris.contains(&url("file:///a.sql")));
+        assert!(uris.contains(&url("file:///b.sql")));
+
+        // Each analysis is addressable and shared (Arc) rather than rebuilt.
+        let a = snapshot
+            .iter()
+            .find(|(u, _)| u.as_str() == "file:///a.sql")
+            .map(|(_, a)| Arc::clone(a))
+            .expect("a.sql analysis should be in snapshot");
+        assert_eq!(a.source, "CREATE TABLE users (id INT)");
+    }
+
+    #[test]
+    fn test_analyses_snapshot_shares_arc_identity_with_store() {
+        // The snapshot must Arc::clone the existing analysis rather than
+        // rebuild it, so a later reference_locations scan observes the SAME
+        // analysis the store holds (no divergence, cheap clone).
+        let mut store = DocumentStore::new();
+        store.upsert("file:///a.sql", "SELECT 1", 0);
+
+        let stored = store
+            .docs
+            .get("file:///a.sql")
+            .expect("entry should exist")
+            .analysis
+            .clone();
+
+        let snapshot = store.analyses_snapshot();
+        let snap = snapshot
+            .iter()
+            .find(|(u, _)| u.as_str() == "file:///a.sql")
+            .map(|(_, a)| Arc::clone(a))
+            .expect("a.sql analysis should be in snapshot");
+
+        assert!(
+            Arc::ptr_eq(&stored, &snap),
+            "snapshot must share Arc identity with the store (no rebuild)"
+        );
     }
 
     // --- upsert() content-equality short-circuit (#130) ---

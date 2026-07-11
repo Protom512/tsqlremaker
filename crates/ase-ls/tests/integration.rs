@@ -1093,8 +1093,14 @@ async fn test_did_change_incremental_multibyte_no_panic() {
 // Scenario (B) — goto_definition jumping from one open file into another open
 // file's CREATE TABLE — is covered by the cross-file definition provider
 // (T2: `definition_locations` backed by SymbolStore), wired in server.rs.
-// Cross-file *references* (Find All References across files) is deferred to a
-// follow-up issue; references stay document-local for now.
+// Cross-file *references* (Find All References across files) is now
+// implemented (#170): the `references()` handler takes a DocumentStore
+// snapshot under the read lock, releases it, then calls
+// `reference_locations` under the SymbolStore read lock — mirroring
+// goto_definition's acquire/drop pattern. See
+// `test_cross_file_references_from_usage_file_returns_both_files` and
+// `test_cross_file_references_from_definition_file_returns_other_file_usages`
+// below. Variables (@var) stay document-local by design.
 
 /// Open two files, then query workspace/symbol and confirm symbols from BOTH
 /// files appear in the result. This is the integration-level proof that the
@@ -1372,5 +1378,233 @@ async fn test_cross_file_goto_definition_into_other_open_file() {
     assert!(
         target_uri == "file:///ws/b.sql",
         "Cross-file goto_definition must jump into file B, got uri={target_uri}"
+    );
+}
+
+/// UC1 (T5 / #170): Find All References on a table USAGE in file A must
+/// return locations whose URIs span BOTH file A (the usages: SELECT/INSERT/
+/// DELETE) AND file B (the CREATE TABLE definition, because
+/// `includeDeclaration` is true).
+///
+/// File B defines `shared_table`; file A references it via SELECT/INSERT/
+/// DELETE. `textDocument/references` is issued from file A with the cursor on
+/// a usage. `reference_locations` (references.rs) scans the tokens of every
+/// known document (snapshot taken under the DocumentStore read lock, then
+/// released before the SymbolStore read lock — lock-ordering convention).
+/// Before the #170 rewire the handler mapped every result onto the single
+/// requesting URI, so no `file:///ws/b.sql` location could ever appear. This
+/// is the references-direction mirror of
+/// `test_cross_file_goto_definition_into_other_open_file`.
+#[tokio::test]
+async fn test_cross_file_references_from_usage_file_returns_both_files() {
+    let mut service = setup();
+    // File B defines `shared_table`.
+    let open_b = serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///ws/b.sql",
+                "languageId": "sql",
+                "version": 0,
+                "text": "CREATE TABLE shared_table (id INT)"
+            }
+        }
+    });
+    // File A references it via SELECT / INSERT / DELETE.
+    let open_a = serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///ws/a.sql",
+                "languageId": "sql",
+                "version": 0,
+                "text": "SELECT * FROM shared_table\nINSERT INTO shared_table VALUES (1)\nDELETE FROM shared_table"
+            }
+        }
+    });
+    let init = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    });
+    send(&mut service, &init.to_string()).await;
+    send(&mut service, &open_b.to_string()).await;
+    send(&mut service, &open_a.to_string()).await;
+
+    // Cursor on `shared_table` usage in file A line 0. "SELECT * FROM " = 14 chars.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": "file:///ws/a.sql" },
+            "position": { "line": 0, "character": 14 },
+            "context": { "includeDeclaration": true }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("cross-file references must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+
+    // Result is an array of locations. Collect every URI the server returned.
+    let locations = result_val
+        .as_array()
+        .expect("references result must be an array of locations");
+    assert!(
+        !locations.is_empty(),
+        "cross-file references must return at least one location"
+    );
+    let uris: Vec<&str> = locations
+        .iter()
+        .filter_map(|l| l.get("uri").and_then(|u| u.as_str()))
+        .collect();
+    // Both files must contribute at least one reference.
+    assert!(
+        uris.contains(&"file:///ws/a.sql"),
+        "references must include file A usages, got uris={uris:?}"
+    );
+    assert!(
+        uris.contains(&"file:///ws/b.sql"),
+        "references must include file B definition, got uris={uris:?}"
+    );
+}
+
+/// UC2 (T5 / #170): Find All References on the table name in file B — the
+/// DEFINITION file — must still return the usages that live in file A. The
+/// cross-file scan is symmetric: querying from either the definition or a
+/// usage file surfaces every known occurrence workspace-wide.
+#[tokio::test]
+async fn test_cross_file_references_from_definition_file_returns_other_file_usages() {
+    let mut service = setup();
+    // File B defines `shared_table`.
+    let open_b = serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///ws/b.sql",
+                "languageId": "sql",
+                "version": 0,
+                "text": "CREATE TABLE shared_table (id INT)"
+            }
+        }
+    });
+    // File A references it.
+    let open_a = serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///ws/a.sql",
+                "languageId": "sql",
+                "version": 0,
+                "text": "SELECT * FROM shared_table"
+            }
+        }
+    });
+    let init = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    });
+    send(&mut service, &init.to_string()).await;
+    send(&mut service, &open_b.to_string()).await;
+    send(&mut service, &open_a.to_string()).await;
+
+    // Cursor on `shared_table` in file B (the definition). "CREATE TABLE " = 13
+    // chars, so the identifier starts at char 13; aim mid-identifier at char 17.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": "file:///ws/b.sql" },
+            "position": { "line": 0, "character": 17 },
+            "context": { "includeDeclaration": true }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("cross-file references must respond from definition file");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    let refs = result_val
+        .as_array()
+        .expect("references from definition file must return a non-null array");
+
+    let uris: Vec<&str> = refs
+        .iter()
+        .filter_map(|l| l.get("uri").and_then(|u| u.as_str()))
+        .collect();
+    assert!(
+        uris.contains(&"file:///ws/a.sql"),
+        "Find All References from file B (definition) must include file A usages, got uris={uris:?}"
+    );
+    assert!(
+        uris.contains(&"file:///ws/b.sql"),
+        "Find All References from file B must include file B definition, got uris={uris:?}"
+    );
+}
+
+/// UC (T5): Find All References on a variable (@var) stays document-local.
+/// Even when another open file declares the same `@var` name, only the current
+/// file's references are returned (#169 design decision: variables are scoped
+/// document-locally; mirrors definition.rs:129).
+#[tokio::test]
+async fn test_references_variable_stays_document_local() {
+    let mut service = setup();
+    // File B declares and uses @count.
+    let open_b = serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///ws/b.sql",
+                "languageId": "sql",
+                "version": 0,
+                "text": "DECLARE @count INT\nSET @count = 1"
+            }
+        }
+    });
+    // File A declares and uses @count independently.
+    let open_a = serde_json::json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": "file:///ws/a.sql",
+                "languageId": "sql",
+                "version": 0,
+                "text": "DECLARE @count INT\nSET @count = 1\nSELECT @count"
+            }
+        }
+    });
+    let init = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    });
+    send(&mut service, &init.to_string()).await;
+    send(&mut service, &open_b.to_string()).await;
+    send(&mut service, &open_a.to_string()).await;
+
+    // Cursor on @count in file A line 2 "SELECT @count" (char 7).
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": "file:///ws/a.sql" },
+            "position": { "line": 2, "character": 7 },
+            "context": { "includeDeclaration": true }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("references must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+
+    let locations = result_val
+        .as_array()
+        .expect("variable references result must be an array");
+    let uris: Vec<&str> = locations
+        .iter()
+        .filter_map(|l| l.get("uri").and_then(|u| u.as_str()))
+        .collect();
+    // Only a.sql; b.sql's @count is a different scope and must NOT appear.
+    assert!(
+        uris.iter().all(|u| *u == "file:///ws/a.sql"),
+        "variable references must stay in a.sql only, got uris={uris:?}"
+    );
+    assert!(
+        !uris.contains(&"file:///ws/b.sql"),
+        "variable references must NOT cross into b.sql"
     );
 }
