@@ -4,7 +4,7 @@
 
 use ase_ls_core::{
     analysis::DocumentAnalysis,
-    code_actions, completion,
+    code_actions, code_lens, completion,
     config::Config,
     definition, diagnostics, folding, formatting, hover,
     incremental::apply_content_change,
@@ -570,6 +570,12 @@ impl LanguageServer for AseLanguageServer {
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
+                // #117: code lens with deferred resolution. Lenses are returned
+                // unresolved (definition ranges only) and the count is filled in
+                // lazily by `codeLens/resolve`.
+                code_lens_provider: Some(CodeLensOptions {
+                    resolve_provider: Some(true),
+                }),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     prepare_provider: Some(true),
@@ -994,6 +1000,41 @@ impl LanguageServer for AseLanguageServer {
             }
         } else {
             Ok(None)
+        }
+    }
+
+    async fn code_lens(&self, params: CodeLensParams) -> Result<Option<Vec<CodeLens>>> {
+        let uri = &params.text_document.uri;
+        if let Some(analysis) = self.get_analysis(uri).await {
+            // #117: 未解決レンズ（定義範囲 + data のみ）を返す。command は
+            // `codeLens/resolve` で参照数を埋めるまで空。
+            Ok(Some(code_lens::code_lenses(&analysis, uri)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn code_lens_resolve(&self, params: CodeLens) -> Result<CodeLens> {
+        // resolve リクエストは textDocument を持たないため、URI は lens.data から復元。
+        match code_lens::lens_uri(&params).and_then(|s| Url::parse(&s).ok()) {
+            Some(uri) => {
+                if let Some(analysis) = self.get_analysis(&uri).await {
+                    // Option A: clone `params` at the move site so the fallthrough
+                    // below can still return the original lens unresolved when
+                    // resolve_lens returns None (malformed data / symbol gone).
+                    // CodeLens derives Clone and the clone is cheap (a Range, an
+                    // Option<Command>, an Option<serde_json::Value>); the borrow
+                    // alternative would require changing the pure-fn signature,
+                    // which the CTO approval explicitly disallowed.
+                    if let Some(resolved) = code_lens::resolve_lens(params.clone(), &analysis) {
+                        return Ok(resolved);
+                    }
+                }
+                // 解決できない（data 不正・文書未ロード・シンボル消失）場合は
+                // 入力レンズをそのまま返し、クライアントは未解決表示とする。
+                Ok(params)
+            }
+            None => Ok(params),
         }
     }
 

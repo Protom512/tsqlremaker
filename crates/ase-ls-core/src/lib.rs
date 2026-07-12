@@ -10,6 +10,7 @@
 
 pub mod analysis;
 pub mod code_actions;
+pub mod code_lens;
 pub mod completion;
 pub mod config;
 pub mod db_docs;

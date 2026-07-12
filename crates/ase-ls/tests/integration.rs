@@ -1664,3 +1664,167 @@ async fn test_references_variable_stays_document_local() {
         "variable references must NOT cross into b.sql"
     );
 }
+
+// --- Code Lens tests (#117) ---
+
+/// A lens is "resolved" when its `command` field is a JSON object (carrying a
+/// `title`). An unresolved lens has `command` absent or null — lsp-types
+/// serializes `Option<Command>::None` as an omitted key, so both forms mean
+/// "no command yet".
+fn command_is_resolved(lens: &serde_json::Value) -> bool {
+    lens.get("command").is_some_and(|c| c.is_object())
+}
+
+/// (a) `textDocument/codeLens` returns one unresolved lens per CREATE
+/// TABLE/PROCEDURE/VIEW definition. Each lens has `command: null` (deferred
+/// resolution) and carries `data` for the resolve phase.
+#[tokio::test]
+async fn test_code_lens_returns_unresolved_lenses() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "CREATE TABLE t1 (id INT)\n\
+         CREATE VIEW v1 AS SELECT * FROM t1\n\
+         CREATE PROC p1 AS SELECT * FROM t1",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/codeLens",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("codeLens must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+
+    let lenses = result_val
+        .as_array()
+        .expect("codeLens result must be an array");
+    assert_eq!(
+        lenses.len(),
+        3,
+        "one lens per TABLE/VIEW/PROC definition, got {lenses:?}"
+    );
+    // All lenses start unresolved (no command object) and carry data.
+    assert!(
+        lenses.iter().all(|l| !command_is_resolved(l)),
+        "unresolved lenses must not carry a command object: {lenses:?}"
+    );
+    assert!(
+        lenses
+            .iter()
+            .all(|l| l.get("data").is_some_and(|d| !d.is_null())),
+        "unresolved lenses must carry data for resolution"
+    );
+}
+
+#[tokio::test]
+async fn test_code_lens_resolve_sets_references_title() {
+    let mut service = setup();
+    // t defined once, used in SELECT + INSERT (2 usages; CREATE line excluded).
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "CREATE TABLE t (id INT)\n\
+         SELECT * FROM t\n\
+         INSERT INTO t VALUES (1)",
+    )
+    .await;
+
+    // Stage 1: fetch the unresolved lens.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/codeLens",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("codeLens must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    let lens = result_val
+        .as_array()
+        .and_then(|arr| arr.first())
+        .expect("at least one lens");
+
+    // Stage 2: resolve it. The resolve request carries the lens as params.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 3, "method": "codeLens/resolve",
+        "params": lens
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("codeLens/resolve must respond");
+    let resolved: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+
+    let title = resolved
+        .get("command")
+        .and_then(|c| c.get("title"))
+        .and_then(|t| t.as_str())
+        .expect("resolved lens must have a command.title");
+    assert!(
+        title.contains("references"),
+        "resolved title must contain 'references', got: {title}"
+    );
+    assert!(
+        title.contains('2'),
+        "expected 2 references (SELECT + INSERT usages), got: {title}"
+    );
+}
+
+#[tokio::test]
+async fn test_code_lens_resolve_unloaded_document_returns_input_lens() {
+    let mut service = setup();
+    // Build a valid lens for a document that was never opened. The server
+    // cannot find an analysis for its URI, so resolve must fall back to
+    // returning the input lens unchanged (the Ok(params) branch guarded by
+    // the task-1 params.clone() fix).
+    let lens = serde_json::json!({
+        "range": {
+            "start": { "line": 0, "character": 0 },
+            "end": { "line": 0, "character": 1 }
+        },
+        "command": null,
+        "data": {
+            "uri": "file:///never-opened.sql",
+            "line": 0,
+            "character": 0
+        }
+    });
+
+    let init = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    });
+    send(&mut service, &init.to_string()).await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "codeLens/resolve",
+        "params": lens
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("codeLens/resolve must respond");
+    let resolved: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+
+    // Fallback contract: the input lens is returned verbatim. command stays
+    // unset (unresolved — absent or null, both mean "no command object") and
+    // the embedded data URI is preserved.
+    assert!(
+        !command_is_resolved(&resolved),
+        "fallback lens must remain unresolved (no command object), got {resolved:?}"
+    );
+    let data_uri = resolved
+        .get("data")
+        .and_then(|d| d.get("uri"))
+        .and_then(|u| u.as_str());
+    assert_eq!(
+        data_uri,
+        Some("file:///never-opened.sql"),
+        "fallback lens must preserve the embedded data URI, got {resolved:?}"
+    );
+}
