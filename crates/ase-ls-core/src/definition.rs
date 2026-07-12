@@ -642,4 +642,96 @@ mod tests {
         );
         assert_eq!(locs.len(), 1);
     }
+
+    // ===== temporary table (#temp / ##global) definition jump =====
+    //
+    // definition_ranges_with_analysis は find_token_at_position と symbol_table を直接
+    // 使用し、token_matches_symbol を経由しない。そのため #temp の TempTable トークンは
+    // 以前から解決可能だが、以下のテストで回帰（Parser/Lexer/symbol_table の変更による
+    // 壊れ）を検知する。
+
+    #[test]
+    fn test_definition_with_analysis_local_temp_table() {
+        // UC-1: CREATE TABLE #temp ... SELECT * FROM #temp で SELECT 側から CREATE 行へ
+        // 定義ジャンプできること。lexer は text="#temp" の TempTable トークンを生成し、
+        // ddl が同名で symbol_table に登録する（is_temporary=true）。
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TABLE #temp (id INT)\nSELECT * FROM #temp",
+        );
+        // SELECT FROM "#temp" は "SELECT * FROM " = 14 文字目から開始
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 14,
+            },
+        );
+        assert_eq!(ranges.len(), 1, "local #temp definition should resolve");
+        assert_eq!(ranges[0].start.line, 0, "should jump to CREATE TABLE line");
+        // text に '#' が含まれていることをテストフィクスチャで固定化
+        let (tok, _) = analysis
+            .find_token_at_position(Position {
+                line: 1,
+                character: 14,
+            })
+            .expect("token at #temp");
+        assert_eq!(tok.kind, TokenKind::TempTable);
+        assert_eq!(&*tok.text, "#temp");
+    }
+
+    #[test]
+    fn test_definition_with_analysis_global_temp_table() {
+        // UC-2 前提: グローバル一時テーブル ##global も定義ジャンプできること。
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TABLE ##global (id INT)\nSELECT * FROM ##global",
+        );
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 15,
+            },
+        );
+        assert_eq!(ranges.len(), 1, "global ##global definition should resolve");
+        assert_eq!(ranges[0].start.line, 0);
+        let (tok, _) = analysis
+            .find_token_at_position(Position {
+                line: 1,
+                character: 15,
+            })
+            .expect("token at ##global");
+        assert_eq!(tok.kind, TokenKind::GlobalTempTable);
+        assert_eq!(&*tok.text, "##global");
+    }
+
+    #[test]
+    fn test_definition_with_analysis_temp_table_case_insensitive() {
+        // #Temp と #temp は大文字小文字無視で同一シンボルに解決すること。
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TABLE #Temp (id INT)\nSELECT * FROM #temp",
+        );
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 14,
+            },
+        );
+        assert_eq!(ranges.len(), 1, "case-insensitive #temp lookup");
+        assert_eq!(ranges[0].start.line, 0);
+    }
+
+    #[test]
+    fn test_definition_with_analysis_undefined_temp_table_returns_empty() {
+        // UC-3: 未定義の #not_defined は定義が無いため空を返し、クラッシュしないこと。
+        let analysis = crate::analysis::DocumentAnalysis::new("SELECT * FROM #not_defined");
+        let ranges = definition_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 14,
+            },
+        );
+        assert!(ranges.is_empty(), "undefined #temp must not crash");
+    }
 }

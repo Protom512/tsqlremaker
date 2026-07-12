@@ -768,4 +768,214 @@ mod tests {
             .count();
         assert_eq!(line0_count, 1, "current-doc definition must not duplicate");
     }
+
+    // ===== UC-2: グローバル一時テーブル (##global) の Find All References =====
+    //
+    // 前提（empirical probe で実証済み）:
+    //   - lexer.rs:294 が '#'/')' プレフィックスを含む text を生成するため
+    //     `##global` トークンの text は "##global"（# を含む）。
+    //   - find_token_at_position は CREATE TABLE 行・SELECT 行のどちらでも
+    //     TokenKind::GlobalTempTable のトークンを返す。
+    //   - token_matches_symbol が TempTable/GlobalTempTable を許容する（Task 1 の修正）
+    //     ことで、reference_ranges_with_analysis / reference_locations の両経路が
+    //     自動修復される（呼び出し側の変更は不要）。
+
+    #[test]
+    fn test_references_with_analysis_global_temp_include_declaration() {
+        // UC-2: CREATE TABLE ##global + SELECT * FROM ##global で
+        // include_declaration=true のとき定義 + 使用箇所がともに収集されること。
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TABLE ##global (id INT)\nSELECT * FROM ##global",
+        );
+        // カーソルは1行目 SELECT の ##global 上（"SELECT * FROM " = 14 文字、## は offset 14）。
+        let ranges = reference_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 16,
+            },
+            true,
+        );
+        // 定義 (line 0) + 使用 (line 1) の 2 箇所。
+        assert!(
+            ranges.len() >= 2,
+            "include_declaration should collect both definition and usage for ##global"
+        );
+        let lines: Vec<u32> = ranges.iter().map(|r| r.start.line).collect();
+        assert!(
+            lines.contains(&0),
+            "definition (line 0) must be included when include_declaration=true"
+        );
+        assert!(lines.contains(&1), "usage (line 1) must be included");
+    }
+
+    #[test]
+    fn test_references_with_analysis_global_temp_exclude_declaration() {
+        // UC-2 対: include_declaration=false では CREATE 定義 (line 0) が除外され、
+        // 使用箇所 (line 1) のみ残ること。
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TABLE ##global (id INT)\nSELECT * FROM ##global",
+        );
+        let ranges = reference_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 16,
+            },
+            false,
+        );
+        assert!(
+            !ranges.is_empty(),
+            "usage must remain when declaration excluded"
+        );
+        for range in &ranges {
+            assert_ne!(
+                range.start.line, 0,
+                "##global definition (line 0) must be excluded"
+            );
+        }
+    }
+
+    #[test]
+    fn test_cross_ref_global_temp_table_usages_across_files() {
+        // UC-2 cross-file: 他文書の ##global 使用箇所がトークン走査で拾えること。
+        // cur.sql: CREATE TABLE ##global + SELECT (2 箇所)
+        // other.sql: INSERT INTO ##global (1 使用箇所)
+        let cur_src = "CREATE TABLE ##global (id INT)\nSELECT * FROM ##global";
+        let current = analysis_of(cur_src);
+        let other = analysis_of("INSERT INTO ##global (id) VALUES (1)");
+        let docs = vec![
+            (u("file:///cur.sql"), current.clone()),
+            (u("file:///other.sql"), other),
+        ];
+        let mut store = SymbolStore::new();
+        index_background(&mut store, &u("file:///cur.sql"), cur_src);
+
+        // カーソルは cur.sql の CREATE TABLE ##global 上
+        // ("CREATE TABLE " = 13 文字、## は offset 13)。
+        let locs = reference_locations(
+            &store,
+            &current,
+            &u("file:///cur.sql"),
+            Position {
+                line: 0,
+                character: 15,
+            },
+            true,
+            &docs,
+        );
+        let uris: Vec<Url> = locs.iter().map(|l| l.uri.clone()).collect();
+        assert!(
+            uris.contains(&u("file:///cur.sql")),
+            "current-doc usages of ##global should be collected"
+        );
+        assert!(
+            uris.contains(&u("file:///other.sql")),
+            "cross-file ##global usage should be collected via token scan"
+        );
+        // 他文書の使用箇所が INSERT 行 (line 0) にあることを確認。
+        let other_lines: Vec<u32> = locs
+            .iter()
+            .filter(|l| l.uri == u("file:///other.sql"))
+            .map(|l| l.range.start.line)
+            .collect();
+        assert!(
+            other_lines.contains(&0),
+            "other.sql INSERT INTO ##global (line 0) must be present"
+        );
+    }
+
+    #[test]
+    fn test_references_with_analysis_local_temp_table() {
+        // UC-1 前提: ローカル #temp の定義 + 使用箇所が両方とも拾えること。
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TABLE #temp (id INT)\nSELECT * FROM #temp",
+        );
+        let ranges = reference_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 14, // "#temp" in SELECT FROM
+            },
+            true,
+        );
+        assert!(
+            ranges.len() >= 2,
+            "local #temp should resolve definition + usage, got {}",
+            ranges.len()
+        );
+        // text 形状を固定化: TempTable で '#' プレフィック付き
+        let (tok, _) = analysis
+            .find_token_at_position(Position {
+                line: 1,
+                character: 14,
+            })
+            .expect("token at #temp");
+        assert_eq!(tok.kind, TokenKind::TempTable);
+        assert_eq!(&*tok.text, "#temp");
+    }
+
+    #[test]
+    fn test_references_with_analysis_temp_table_case_insensitive() {
+        // #Temp と #temp は大文字小文字無視で同一シンボルの参照として拾えること。
+        let analysis = crate::analysis::DocumentAnalysis::new(
+            "CREATE TABLE #Temp (id INT)\nSELECT * FROM #temp",
+        );
+        let ranges = reference_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 14,
+            },
+            true,
+        );
+        assert!(ranges.len() >= 2, "case-insensitive #temp references");
+    }
+
+    #[test]
+    fn test_references_with_analysis_undefined_temp_table_returns_cursor_only() {
+        // UC-3: 未定義 #not_defined はカーソル位置のトークンのみマッチし、
+        // クラッシュせず空にはならない（カーソルトークン自体が「使用」として扱われる）。
+        let analysis = crate::analysis::DocumentAnalysis::new("SELECT * FROM #not_defined");
+        let ranges = reference_ranges_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 14,
+            },
+            true,
+        );
+        // カーソルトークン自体 (1件) のみ。他の無関係トークンは混入しない。
+        assert_eq!(ranges.len(), 1, "undefined #temp matches only cursor token");
+    }
+
+    #[test]
+    fn test_cross_ref_temp_table_not_matched_as_unrelated_plain_table() {
+        // #temp と通常テーブル temp は別キー空間。lexer が # を text に含めるため、
+        // 通常の Ident "temp" が #temp の参照として誤ヒットしないこと。
+        let cur_src = "CREATE TABLE #temp (id INT)\nSELECT * FROM temp";
+        let current = analysis_of(cur_src);
+        let docs = vec![(u("file:///cur.sql"), current.clone())];
+        let mut store = SymbolStore::new();
+        index_background(&mut store, &u("file:///cur.sql"), cur_src);
+
+        let locs = reference_locations(
+            &store,
+            &current,
+            &u("file:///cur.sql"),
+            Position {
+                line: 0,
+                character: 17, // "#temp" in CREATE TABLE
+            },
+            true,
+            &docs,
+        );
+        // カレント文書の CREATE 定義 (line 0) のみ。SELECT 行の "temp" (Ident) は
+        // TempTable ではないためマッチしない。
+        assert_eq!(
+            locs.len(),
+            1,
+            "plain Ident 'temp' must not match TempTable '#temp'"
+        );
+    }
 }
