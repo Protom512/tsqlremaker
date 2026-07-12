@@ -25,8 +25,18 @@ pub fn rename_with_analysis(
     };
 
     let is_var = target_kind == TokenKind::LocalVar;
+    let is_temp_table = matches!(
+        target_kind,
+        TokenKind::TempTable | TokenKind::GlobalTempTable
+    );
 
     if is_var && !new_name.starts_with('@') {
+        return None;
+    }
+    // 一時テーブル識別子は '#' (ローカル) / '##' (グローバル) プレフィックスが必須。
+    // 変数の '@' ガードと同様、プレフィックスを欠く new_name は却下する。
+    // これにより "#temp" → "renamed" のようなプレフィックス喪失リネームを防ぐ。
+    if is_temp_table && !new_name.starts_with('#') {
         return None;
     }
     if new_name.trim().is_empty() {
@@ -373,5 +383,155 @@ mod tests {
         let changes = ws_edit.changes.expect("should have changes");
         let edits = changes.values().next().unwrap();
         assert_eq!(edits.len(), 3, "Should rename all 3 occurrences of @count");
+    }
+
+    // --- #temp / ##global temporary table rename (Issue #140) ---
+    //
+    // token_matches_symbol (lib.rs) が非変数ブランチで TempTable /
+    // GlobalTempTable を許容する前提。一時テーブルの lexer text は '#' /
+    // '##' プレフィックスを含む (lexer.rs:294) ため、search_upper も同形状に
+    // なり eq_ignore_ascii_case で定義↔使用がマッチする。
+
+    /// UC-1: ローカル一時テーブル (#temp) のリネームが定義+使用の両方に
+    /// TextEdit を生成することを検証する回帰テスト。
+    ///
+    /// new_name は '#' プレフィックスを保持する (#renamed)。変数リネームの
+    /// @プレフィックス検証 (rename.rs:29) と同様に、一時テーブルでも
+    /// プレフィックス保持の整合性が取れることを確認する。
+    #[test]
+    fn test_rename_temp_table_local_definition_and_usage() {
+        // CREATE TABLE #temp (id INT)   ← 定義 (offset ~13 に #temp)
+        // SELECT * FROM #temp           ← 使用  (offset ~31 に #temp)
+        let source = "CREATE TABLE #temp (id INT)\nSELECT * FROM #temp";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+
+        // カーソルを実行行の #temp 上に置く (SELECT * FROM #temp)
+        // "SELECT * FROM " = 14 chars → offset 29+len("\n")=30 から '#temp' 開始
+        let result = rename_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 14,
+            },
+            "#renamed",
+            &test_uri(),
+        );
+
+        let ws_edit = result.expect("#temp rename should produce a WorkspaceEdit");
+        let changes = ws_edit.changes.expect("should have changes");
+        let edits = changes
+            .get(&test_uri())
+            .expect("should have edits for test uri");
+
+        // 定義 (CREATE TABLE #temp) と 使用 (FROM #temp) の両方に TextEdit が
+        // 生成されること。token_matches_symbol が TempTable を許容すれば自動的に
+        // 両オカレンスがマッチする。
+        assert!(
+            edits.len() >= 2,
+            "Expected at least 2 edits (definition + usage) for #temp rename, got {}",
+            edits.len()
+        );
+        // 全 TextEdit が '#' プレフィックスを保持する new_name であること
+        assert!(
+            edits.iter().all(|e| e.new_text == "#renamed"),
+            "All edits should carry the '#'-prefixed new_name"
+        );
+    }
+
+    /// UC-2: グローバル一時テーブル (##global) のリネームが定義+使用の両方に
+    /// TextEdit を生成することを検証する。
+    #[test]
+    fn test_rename_temp_table_global_definition_and_usage() {
+        let source = "CREATE TABLE ##global (id INT)\nSELECT * FROM ##global";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+
+        let result = rename_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 14,
+            }, // 定義側 ##global 上
+            "##renamed",
+            &test_uri(),
+        );
+
+        let ws_edit = result.expect("##global rename should produce a WorkspaceEdit");
+        let changes = ws_edit.changes.expect("should have changes");
+        let edits = changes
+            .get(&test_uri())
+            .expect("should have edits for test uri");
+
+        assert!(
+            edits.len() >= 2,
+            "Expected at least 2 edits (definition + usage) for ##global rename, got {}",
+            edits.len()
+        );
+        assert!(
+            edits.iter().all(|e| e.new_text == "##renamed"),
+            "All edits should carry the '##'-prefixed new_name"
+        );
+    }
+
+    /// UC-3 (エッジケース): new_name が '#' プレフィックスを欠く場合、
+    /// 一時テーブルのリネームは拒否されること。
+    ///
+    /// 変数の「@なしリネーム拒否」(test_rename_with_analysis_var_without_at_prefix)
+    /// と対称な振る舞い。#temp は本来 '#' プレフィックスが意味を持つため、
+    /// プレフィックス欠落は一貫性違反として却下する。これは現在の実装では
+    /// rename.rs:29 の is_var ガードのみがプレフィックスを検査し、一時テーブル
+    /// ブランチには同様のガードが存在しない——すなわち非スコープではなく、
+    /// 現状は # なし new_name でも受け入れてしまう。本テストは仕様を文書化し、
+    /// ガード追加または非スコープ明記のいずれかで解決すべき振る舞いを固定する。
+    #[test]
+    fn test_rename_temp_table_new_name_without_hash_prefix() {
+        let source = "CREATE TABLE #temp (id INT)\nSELECT * FROM #temp";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+
+        let result = rename_with_analysis(
+            &analysis,
+            Position {
+                line: 1,
+                character: 14,
+            },
+            "renamed", // ← '#' プレフィックス欠落
+            &test_uri(),
+        );
+
+        // 一時テーブル識別子は '#' プレフィックスが必須。変数(@)と同様に、
+        // プレフィックスを欠く new_name は却下されるべき。
+        assert!(
+            result.is_none(),
+            "Rename of #temp with a '#'-less new_name should be rejected \
+             to preserve temporary-table prefix integrity"
+        );
+    }
+
+    /// カーソルが定義側 (#temp in CREATE TABLE) にあっても、使用側を含めて
+    /// 両方に TextEdit が生成されること（定義起点でも参照が追跡されること）。
+    #[test]
+    fn test_rename_temp_table_cursor_on_definition_covers_usage() {
+        let source = "CREATE TABLE #temp (id INT)\nSELECT * FROM #temp";
+        let analysis = crate::analysis::DocumentAnalysis::new(source);
+
+        let result = rename_with_analysis(
+            &analysis,
+            Position {
+                line: 0,
+                character: 14,
+            }, // 定義側 #temp 上
+            "#renamed",
+            &test_uri(),
+        );
+
+        let ws_edit = result.expect("#temp rename from definition should succeed");
+        let changes = ws_edit.changes.expect("should have changes");
+        let edits = changes
+            .get(&test_uri())
+            .expect("should have edits for test uri");
+        assert!(
+            edits.len() >= 2,
+            "Rename from definition should still cover usage, got {} edits",
+            edits.len()
+        );
     }
 }
