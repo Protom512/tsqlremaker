@@ -1828,3 +1828,247 @@ async fn test_code_lens_resolve_unloaded_document_returns_input_lens() {
         "fallback lens must preserve the embedded data URI, got {resolved:?}"
     );
 }
+
+// --- Inlay Hint tests (#118 Task 6: server handler end-to-end) ---
+
+/// Helper: extract inlay hint labels as strings from a JSON result.
+fn inlay_hint_labels(result_val: &serde_json::Value) -> Vec<String> {
+    let arr = result_val
+        .as_array()
+        .expect("inlayHint result must be an array");
+    arr.iter()
+        .map(|h| {
+            h.get("label")
+                .and_then(|l| l.as_str())
+                .expect("hint label is a string")
+                .to_string()
+        })
+        .collect()
+}
+
+/// `textDocument/inlayHint` on a DECLARE returns one `: INT` type hint (#118).
+#[tokio::test]
+async fn test_inlay_hint_declare_emits_type_hint() {
+    let mut service = setup();
+    init_and_open(&mut service, "file:///test.sql", "DECLARE @count INT").await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/inlayHint",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 100 }
+            }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("inlayHint must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+
+    let labels = inlay_hint_labels(&result_val);
+    assert!(
+        labels.iter().any(|l| l == ": INT"),
+        "expected ': INT' hint, got {labels:?}"
+    );
+
+    // #118 task 7 contract: the DECLARE hint must carry kind=1 (TYPE).
+    let arr = result_val
+        .as_array()
+        .expect("inlayHint result must be an array");
+    let type_hint = arr
+        .iter()
+        .find(|h| h.get("label").and_then(|l| l.as_str()) == Some(": INT"))
+        .expect("a ': INT' hint exists");
+    assert_eq!(
+        type_hint.get("kind").and_then(|k| k.as_i64()),
+        Some(1),
+        "DECLARE variable hint must be TYPE (kind=1), got {type_hint:?}"
+    );
+}
+
+/// `textDocument/inlayHint` on EXEC with positional args + in-document
+/// CREATE PROC signature emits PARAMETER hints (`@a:`, `@b:`).
+#[tokio::test]
+async fn test_inlay_hint_exec_emits_parameter_hints() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///test.sql",
+        "CREATE PROC myproc @a INT, @b INT AS\nSELECT 1\nEXEC myproc 10, 20",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/inlayHint",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 10, "character": 0 }
+            }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("inlayHint must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+
+    let labels = inlay_hint_labels(&result_val);
+    assert!(
+        labels.contains(&"@a:".to_string()),
+        "expected '@a:' hint, got {labels:?}"
+    );
+    assert!(
+        labels.contains(&"@b:".to_string()),
+        "expected '@b:' hint, got {labels:?}"
+    );
+
+    // #118 task 7 contract: EXEC positional-arg hints must carry kind=2
+    // (PARAMETER).
+    let arr = result_val
+        .as_array()
+        .expect("inlayHint result must be an array");
+    let param_hints: Vec<&serde_json::Value> = arr
+        .iter()
+        .filter(|h| {
+            h.get("label")
+                .and_then(|l| l.as_str())
+                .is_some_and(|l| l == "@a:" || l == "@b:")
+        })
+        .collect();
+    assert_eq!(
+        param_hints.len(),
+        2,
+        "exactly two PARAMETER hints, got {arr:?}"
+    );
+    assert!(
+        param_hints
+            .iter()
+            .all(|h| h.get("kind").and_then(|k| k.as_i64()) == Some(2)),
+        "EXEC positional-arg hints must be PARAMETER (kind=2), got {param_hints:?}"
+    );
+}
+
+/// `textDocument/inlayHint` on an unloaded document returns `null` (Ok(None)).
+#[tokio::test]
+async fn test_inlay_hint_unloaded_document_returns_null() {
+    let mut service = setup();
+    // Initialize but never open the target document.
+    let init = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    });
+    send(&mut service, &init.to_string()).await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/inlayHint",
+        "params": {
+            "textDocument": { "uri": "file:///never-opened.sql" },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 10 }
+            }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("inlayHint must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    assert!(
+        result_val.is_null(),
+        "unloaded document must yield null, got {result_val:?}"
+    );
+}
+
+/// A document with no DECLARE / EXEC yields an empty (but non-null) array.
+#[tokio::test]
+async fn test_inlay_hint_no_candidates_returns_empty_array() {
+    let mut service = setup();
+    init_and_open(&mut service, "file:///test.sql", "SELECT 1\nFROM t").await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/inlayHint",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 10, "character": 0 }
+            }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("inlayHint must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    let arr = result_val
+        .as_array()
+        .expect("non-null document must yield an array (possibly empty)");
+    assert!(arr.is_empty(), "no DECLARE/EXEC → no hints, got {arr:?}");
+}
+
+/// Disabling inlay hints via `workspace/didChangeConfiguration` suppresses
+/// subsequent `textDocument/inlayHint` output (#118 task 7 scenario 4).
+///
+/// Mirrors the formatting config-change integration test (lines 230+):
+/// (1) confirm the default config emits a hint, (2) push a settings update
+/// turning `enableVariableTypes` off, (3) re-request and assert the hint is
+/// gone. This pins the handler's config-threading contract — the
+/// `Arc<RwLock<Config>>` must be read on every request, not cached.
+#[tokio::test]
+async fn test_inlay_hint_config_disable_suppresses_hints() {
+    let mut service = setup();
+    init_and_open(&mut service, "file:///test.sql", "DECLARE @count INT").await;
+
+    // Stage 1: default config → one TYPE hint is emitted.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/inlayHint",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 100 }
+            }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("inlayHint must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    let labels_before = inlay_hint_labels(&result_val);
+    assert!(
+        labels_before.iter().any(|l| l == ": INT"),
+        "default config must emit the ': INT' hint, got {labels_before:?}"
+    );
+
+    // Stage 2: push a config change disabling variable-type hints.
+    let cfg = serde_json::json!({
+        "jsonrpc": "2.0", "method": "workspace/didChangeConfiguration",
+        "params": {
+            "settings": { "ase-ls": { "inlay": { "enableVariableTypes": false } } }
+        }
+    });
+    send(&mut service, &cfg.to_string()).await;
+
+    // Stage 3: re-request with a fresh id — the hint must now be suppressed.
+    let req2 = serde_json::json!({
+        "jsonrpc": "2.0", "id": 3, "method": "textDocument/inlayHint",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 100 }
+            }
+        }
+    });
+    let response = send(&mut service, &req2.to_string()).await;
+    let result = response.expect("inlayHint must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    let labels_after = inlay_hint_labels(&result_val);
+    assert!(
+        labels_after.is_empty(),
+        "after disabling enableVariableTypes no hints should be emitted, got {labels_after:?}"
+    );
+}

@@ -37,6 +37,8 @@ pub struct Config {
     pub diagnostics: DiagnosticsConfig,
     /// Completion behaviour (snippet emission).
     pub completion: CompletionConfig,
+    /// Inlay hint behaviour (#118).
+    pub inlay: InlayConfig,
 }
 
 impl Config {
@@ -52,6 +54,7 @@ impl Config {
             formatting: from_section(root.get("formatting")),
             diagnostics: from_section(root.get("diagnostics")),
             completion: from_section(root.get("completion")),
+            inlay: from_section(root.get("inlay")),
         }
     }
 }
@@ -164,6 +167,30 @@ impl Default for CompletionConfig {
     fn default() -> Self {
         Self {
             enable_snippets: true,
+        }
+    }
+}
+
+/// Inlay hint behaviour (#118).
+///
+/// Controls whether `textDocument/inlayHint` emits variable-type and
+/// parameter-name annotations. Both default to `true`; an unconfigured server
+/// surfaces every supported hint kind (pre-#118 intent — users opt out, not
+/// in).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct InlayConfig {
+    /// Emit type annotations after `DECLARE` variables (e.g. `: INT`).
+    pub enable_variable_types: bool,
+    /// Emit parameter-name annotations at `EXEC` call sites.
+    pub enable_parameter_names: bool,
+}
+
+impl Default for InlayConfig {
+    fn default() -> Self {
+        Self {
+            enable_variable_types: true,
+            enable_parameter_names: true,
         }
     }
 }
@@ -293,9 +320,95 @@ mod tests {
             completion: CompletionConfig {
                 enable_snippets: false,
             },
+            inlay: InlayConfig::default(),
         };
         let json_str = serde_json::to_string(&cfg).unwrap();
         let parsed: Config = serde_json::from_str(&json_str).unwrap();
         assert_eq!(cfg, parsed);
+    }
+
+    // ------------------------------------------------------------------
+    // InlayConfig (#118)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn inlay_defaults_are_true() {
+        let inlay = InlayConfig::default();
+        assert!(inlay.enable_variable_types);
+        assert!(inlay.enable_parameter_names);
+    }
+
+    #[test]
+    fn from_value_missing_inlay_section_uses_defaults() {
+        let cfg = Config::from_value(&json!({}));
+        assert!(cfg.inlay.enable_variable_types);
+        assert!(cfg.inlay.enable_parameter_names);
+    }
+
+    #[test]
+    fn from_value_inlay_namespaced_override() {
+        let cfg = Config::from_value(&json!({
+            "ase-ls": {
+                "inlay": { "enableVariableTypes": false }
+            }
+        }));
+        assert!(
+            !cfg.inlay.enable_variable_types,
+            "camelCase override should be honoured"
+        );
+        assert!(
+            cfg.inlay.enable_parameter_names,
+            "unspecified fields keep their defaults"
+        );
+    }
+
+    #[test]
+    fn from_value_inlay_raw_namespace_override() {
+        let cfg = Config::from_value(&json!({
+            "inlay": { "enableParameterNames": false }
+        }));
+        assert!(cfg.inlay.enable_variable_types);
+        assert!(!cfg.inlay.enable_parameter_names);
+    }
+
+    #[test]
+    fn from_value_invalid_inlay_section_falls_back_to_default_only() {
+        // enableVariableTypes has a non-boolean value → inlay section resets;
+        // a valid completion override in the same payload must survive.
+        let cfg = Config::from_value(&json!({
+            "ase-ls": {
+                "inlay": { "enableVariableTypes": "yes" },
+                "completion": { "enableSnippets": false }
+            }
+        }));
+        assert!(
+            cfg.inlay.enable_variable_types,
+            "invalid inlay section resets to default (true)"
+        );
+        assert!(
+            cfg.inlay.enable_parameter_names,
+            "invalid inlay section resets to default (true)"
+        );
+        assert!(
+            !cfg.completion.enable_snippets,
+            "valid completion override survives inlay failure"
+        );
+    }
+
+    #[test]
+    fn inlay_config_round_trips_through_serde() {
+        let inlay = InlayConfig {
+            enable_variable_types: false,
+            enable_parameter_names: false,
+        };
+        let json_str = serde_json::to_string(&inlay).unwrap();
+        let parsed: InlayConfig = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(inlay, parsed);
+
+        // Confirm wire format is camelCase.
+        assert!(
+            json_str.contains("enableVariableTypes"),
+            "expected camelCase field in serialized output, got: {json_str}"
+        );
     }
 }

@@ -8,6 +8,7 @@ use ase_ls_core::{
     config::Config,
     definition, diagnostics, folding, formatting, hover,
     incremental::apply_content_change,
+    inlay_hints,
     line_index::LineIndex,
     references, rename, semantic_tokens, signature_help,
     symbol_store::{DocumentSource, SymbolStore},
@@ -576,6 +577,18 @@ impl LanguageServer for AseLanguageServer {
                 code_lens_provider: Some(CodeLensOptions {
                     resolve_provider: Some(true),
                 }),
+                // #118: inlay hints (DECLARE variable types, EXEC parameter
+                // names). MVP returns labels eagerly (resolve_provider = false);
+                // lazy resolution is deferred until cross-file procedure lookup
+                // is needed (L-XL).
+                inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
+                    InlayHintOptions {
+                        work_done_progress_options: WorkDoneProgressOptions {
+                            work_done_progress: None,
+                        },
+                        resolve_provider: Some(false),
+                    },
+                ))),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     prepare_provider: Some(true),
@@ -1036,6 +1049,25 @@ impl LanguageServer for AseLanguageServer {
             }
             None => Ok(params),
         }
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        // #118: pure-function delegation. The handler is a thin adapter that
+        // fetches the analysis, reads the inlay config, and forwards both to
+        // `inlay_hints::inlay_hints` — no business logic lives here so the core
+        // function stays fully unit-testable without tower-lsp I/O.
+        let uri = &params.text_document.uri;
+        let Some(analysis) = self.get_analysis(uri).await else {
+            // Unloaded document: nothing to annotate. The null result lets the
+            // client clear any stale hints.
+            return Ok(None);
+        };
+        let inlay_cfg = self.config.read().await.inlay.clone();
+        Ok(Some(inlay_hints::inlay_hints(
+            &analysis,
+            Some(params.range),
+            &inlay_cfg,
+        )))
     }
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
