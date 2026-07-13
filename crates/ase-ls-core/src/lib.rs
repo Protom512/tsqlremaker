@@ -20,6 +20,7 @@ pub mod folding;
 pub mod formatting;
 pub mod hover;
 pub mod incremental;
+pub mod inlay_hints;
 pub mod line_index;
 pub mod references;
 pub mod rename;
