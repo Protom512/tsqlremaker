@@ -6,7 +6,7 @@ use ase_ls_core::{
     analysis::DocumentAnalysis,
     code_actions, code_lens, completion,
     config::Config,
-    definition, diagnostics, folding, formatting, hover,
+    definition, diagnostics, document_links, folding, formatting, hover,
     incremental::apply_content_change,
     inlay_hints,
     line_index::LineIndex,
@@ -590,6 +590,17 @@ impl LanguageServer for AseLanguageServer {
                     },
                 ))),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+                // #119: document links for SQLCMD `:r` file-include directives.
+                // resolve_provider = Some(true) because the target URI needs the
+                // owning document URI (the resolve request carries no
+                // textDocument); `document_link` returns links with target: None
+                // and `document_link/resolve` recovers the target from link.data.
+                document_link_provider: Some(DocumentLinkOptions {
+                    resolve_provider: Some(true),
+                    work_done_progress_options: WorkDoneProgressOptions {
+                        work_done_progress: None,
+                    },
+                }),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     prepare_provider: Some(true),
                     work_done_progress_options: WorkDoneProgressOptions {
@@ -1049,6 +1060,51 @@ impl LanguageServer for AseLanguageServer {
             }
             None => Ok(params),
         }
+    }
+
+    /// `textDocument/documentLink` (#119): emit clickable links for SQLCMD `:r`
+    /// file-include directives. Each link's target is resolved document-relative
+    /// against the owning URI and stashed in `data` for `documentLink/resolve`.
+    async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
+        let uri = &params.text_document.uri;
+        let Some(analysis) = self.get_analysis(uri).await else {
+            // Unloaded document: nothing to link. Null lets the client clear
+            // stale links.
+            return Ok(None);
+        };
+        let cfg = self.config.read().await.document_link.clone();
+        let links = document_links::document_links(&analysis, uri, &cfg);
+        if links.is_empty() {
+            Ok(Some(Vec::new()))
+        } else {
+            Ok(Some(links))
+        }
+    }
+
+    /// `documentLink/resolve` (#119): re-establish the target URI from the
+    /// payload stashed in the link's `data` field. The resolve request carries
+    /// no `textDocument`, so the owning document URI embedded in `data` is used
+    /// to fetch the analysis. When the document is no longer loaded (or the
+    /// payload is absent/malformed), the input link is returned unchanged so the
+    /// client keeps the already-resolved target rather than dropping the link.
+    async fn document_link_resolve(&self, params: DocumentLink) -> Result<DocumentLink> {
+        // Recover the owning document URI from the stashed payload to fetch the
+        // analysis. resolve_document_link is a pure fn of (&link, &analysis).
+        if let Some(uri_str) = document_links::link_uri(&params) {
+            if let Ok(uri) = Url::parse(&uri_str) {
+                if let Some(analysis) = self.get_analysis(&uri).await {
+                    if let Some(resolved) =
+                        document_links::resolve_document_link(&params, &analysis)
+                    {
+                        return Ok(resolved);
+                    }
+                }
+            }
+        }
+        // Fallback: cannot recompute (doc unloaded / payload gone) — return the
+        // link unchanged. document_links already populated `target` at
+        // documentLink time, so the client keeps that target.
+        Ok(params)
     }
 
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {

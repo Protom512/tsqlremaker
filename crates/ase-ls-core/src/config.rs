@@ -39,6 +39,8 @@ pub struct Config {
     pub completion: CompletionConfig,
     /// Inlay hint behaviour (#118).
     pub inlay: InlayConfig,
+    /// Document link behaviour (#119).
+    pub document_link: DocumentLinkConfig,
 }
 
 impl Config {
@@ -55,6 +57,7 @@ impl Config {
             diagnostics: from_section(root.get("diagnostics")),
             completion: from_section(root.get("completion")),
             inlay: from_section(root.get("inlay")),
+            document_link: from_section(root.get("documentLink")),
         }
     }
 }
@@ -195,6 +198,24 @@ impl Default for InlayConfig {
     }
 }
 
+/// Document link behaviour (#119).
+///
+/// Controls whether `textDocument/documentLink` emits clickable links for
+/// SQLCMD `:r` include directives. Defaults to `true`; an unconfigured server
+/// surfaces every supported link (pre-#119 intent — users opt out, not in).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DocumentLinkConfig {
+    /// Emit document links for SQLCMD `:r` file-include directives.
+    pub enable: bool,
+}
+
+impl Default for DocumentLinkConfig {
+    fn default() -> Self {
+        Self { enable: true }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::panic)]
@@ -321,6 +342,7 @@ mod tests {
                 enable_snippets: false,
             },
             inlay: InlayConfig::default(),
+            document_link: DocumentLinkConfig::default(),
         };
         let json_str = serde_json::to_string(&cfg).unwrap();
         let parsed: Config = serde_json::from_str(&json_str).unwrap();
@@ -409,6 +431,78 @@ mod tests {
         assert!(
             json_str.contains("enableVariableTypes"),
             "expected camelCase field in serialized output, got: {json_str}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // DocumentLinkConfig (#119)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn document_link_defaults_are_true() {
+        let document_link = DocumentLinkConfig::default();
+        assert!(document_link.enable);
+    }
+
+    #[test]
+    fn from_value_missing_document_link_section_uses_defaults() {
+        let cfg = Config::from_value(&json!({}));
+        assert!(cfg.document_link.enable);
+    }
+
+    #[test]
+    fn from_value_document_link_namespaced_override() {
+        let cfg = Config::from_value(&json!({
+            "ase-ls": {
+                "documentLink": { "enable": false }
+            }
+        }));
+        assert!(
+            !cfg.document_link.enable,
+            "namespaced override should be honoured"
+        );
+    }
+
+    #[test]
+    fn from_value_document_link_raw_namespace_override() {
+        // No "ase-ls" wrapper — raw root is accepted.
+        let cfg = Config::from_value(&json!({
+            "documentLink": { "enable": false }
+        }));
+        assert!(!cfg.document_link.enable);
+    }
+
+    #[test]
+    fn from_value_invalid_document_link_section_falls_back_to_default_only() {
+        // enable has a non-boolean value → documentLink section resets;
+        // a valid completion override in the same payload must survive.
+        let cfg = Config::from_value(&json!({
+            "ase-ls": {
+                "documentLink": { "enable": "yes" },
+                "completion": { "enableSnippets": false }
+            }
+        }));
+        assert!(
+            cfg.document_link.enable,
+            "invalid documentLink section resets to default (true)"
+        );
+        assert!(
+            !cfg.completion.enable_snippets,
+            "valid completion override survives documentLink failure"
+        );
+    }
+
+    #[test]
+    fn document_link_config_round_trips_through_serde() {
+        let document_link = DocumentLinkConfig { enable: false };
+        let json_str = serde_json::to_string(&document_link).unwrap();
+        let parsed: DocumentLinkConfig = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(document_link, parsed);
+
+        // Confirm wire format is camelCase.
+        assert!(
+            json_str.contains("enable"),
+            "expected enable field in serialized output, got: {json_str}"
         );
     }
 }

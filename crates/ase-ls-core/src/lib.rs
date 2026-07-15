@@ -16,6 +16,7 @@ pub mod config;
 pub mod db_docs;
 pub mod definition;
 pub mod diagnostics;
+pub mod document_links;
 pub mod folding;
 pub mod formatting;
 pub mod hover;
@@ -255,5 +256,21 @@ mod tests {
             "##GLOBAL",
             true
         ));
+    }
+
+    #[test]
+    fn test_document_links_module_wired() {
+        // document_links モジュールが lib.rs から pub で参照可能であること。
+        // code_lens / inlay_hints と同じ公開パス経由で pure functions に到達できる
+        // ことを、関数シンボルの参照可能性で検証する (コンパイル時 wiring check)。
+        let _: fn(
+            &crate::analysis::DocumentAnalysis,
+            &lsp_types::Url,
+            &crate::config::DocumentLinkConfig,
+        ) -> Vec<lsp_types::DocumentLink> = document_links::document_links;
+        let _: fn(
+            &lsp_types::DocumentLink,
+            &crate::analysis::DocumentAnalysis,
+        ) -> Option<lsp_types::DocumentLink> = document_links::resolve_document_link;
     }
 }

@@ -2072,3 +2072,235 @@ async fn test_inlay_hint_config_disable_suppresses_hints() {
         "after disabling enableVariableTypes no hints should be emitted, got {labels_after:?}"
     );
 }
+
+// --- Document Link tests (#119 Task 6: server handler end-to-end) ---
+//
+// Mirrors test_code_lens_* / test_inlay_hint_*: drive the full JSON-RPC cycle
+// through LspService::new + ServiceExt. These exercise the
+// textDocument/documentLink + documentLink/resolve two-stage pattern over the
+// SQLCMD `:r <path>` include directive.
+
+/// (a) `textDocument/documentLink` on a doc with `:r scripts/init.sql` returns
+/// exactly one link whose range covers the directive and whose target URI is
+/// resolved document-relative against the document directory.
+#[tokio::test]
+async fn test_document_link_returns_one_link_for_r_directive() {
+    let mut service = setup();
+    // The document lives under /home/user/scripts/ so a document-relative
+    // `:r scripts/init.sql` resolves to /home/user/scripts/scripts/init.sql.
+    // Use a sibling path so the target is clearly under the doc directory.
+    init_and_open(
+        &mut service,
+        "file:///home/user/scripts/main.sql",
+        ":r init.sql",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/documentLink",
+        "params": {
+            "textDocument": { "uri": "file:///home/user/scripts/main.sql" }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("documentLink must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+
+    let links = result_val
+        .as_array()
+        .expect("documentLink result must be an array of links");
+    assert_eq!(links.len(), 1, "one :r directive → one link: {links:?}");
+
+    let link = &links[0];
+    // Range starts at the colon (line 0, char 0) and spans the whole directive
+    // ":r init.sql" (11 chars).
+    let start = link
+        .get("range")
+        .and_then(|r| r.get("start"))
+        .expect("link has range.start");
+    assert_eq!(
+        start.get("line").and_then(|v| v.as_u64()),
+        Some(0),
+        "link starts at line 0"
+    );
+    assert_eq!(
+        start.get("character").and_then(|v| v.as_u64()),
+        Some(0),
+        "link starts at char 0 (the colon)"
+    );
+    let end = link
+        .get("range")
+        .and_then(|r| r.get("end"))
+        .expect("link has range.end");
+    assert_eq!(
+        end.get("line").and_then(|v| v.as_u64()),
+        Some(0),
+        "link ends on line 0"
+    );
+    assert_eq!(
+        end.get("character").and_then(|v| v.as_u64()),
+        Some(11),
+        "link ends at char 11 (end of ':r init.sql')"
+    );
+
+    // Target resolved document-relative against the document directory.
+    let target = link
+        .get("target")
+        .and_then(|t| t.as_str())
+        .expect("link must carry a resolved target");
+    assert!(
+        target.ends_with("/home/user/scripts/init.sql"),
+        "target must be document-relative to the scripts/ directory, got {target}"
+    );
+
+    // data must be stashed for the resolve stage.
+    assert!(
+        link.get("data").is_some_and(|d| !d.is_null()),
+        "link must carry data for documentLink/resolve"
+    );
+}
+
+/// (b) `documentLink/resolve` recovers the target via the embedded URI payload.
+/// Simulates a round-trip that strips the target: the resolve handler reads the
+/// owning document URI + raw path from `data` and re-establishes the target.
+#[tokio::test]
+async fn test_document_link_resolve_recovers_target_from_data() {
+    let mut service = setup();
+    init_and_open(
+        &mut service,
+        "file:///home/user/scripts/main.sql",
+        ":r init.sql",
+    )
+    .await;
+
+    // Stage 1: fetch the link.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/documentLink",
+        "params": {
+            "textDocument": { "uri": "file:///home/user/scripts/main.sql" }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("documentLink must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    let mut link = result_val
+        .as_array()
+        .and_then(|arr| arr.first())
+        .expect("at least one link")
+        .clone();
+    // Simulate a client round-trip that drops the target before resolving.
+    link["target"] = serde_json::Value::Null;
+
+    // Stage 2: resolve — the handler must recover the target from data.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 3, "method": "documentLink/resolve",
+        "params": link
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("documentLink/resolve must respond");
+    let resolved: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+
+    let target = resolved
+        .get("target")
+        .and_then(|t| t.as_str())
+        .expect("resolve must recover the target");
+    assert!(
+        target.ends_with("/home/user/scripts/init.sql"),
+        "resolve must re-establish the document-relative target, got {target}"
+    );
+}
+
+/// (c) A Windows backslash path argument normalises to forward-slash in the
+/// resolved target URI.
+#[tokio::test]
+async fn test_document_link_backslash_path_normalises_to_forward_slash() {
+    let mut service = setup();
+    // Quoted backslash path (the lexer tokenises an unquoted backslash path
+    // into Unknown tokens, so the path must be quoted to lex cleanly).
+    init_and_open(
+        &mut service,
+        "file:///home/user/scripts/main.sql",
+        r":r 'sub\child.sql'",
+    )
+    .await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/documentLink",
+        "params": {
+            "textDocument": { "uri": "file:///home/user/scripts/main.sql" }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("documentLink must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    let links = result_val
+        .as_array()
+        .expect("documentLink result must be an array");
+    assert_eq!(links.len(), 1, "backslash :r yields one link: {links:?}");
+
+    let target = links[0]
+        .get("target")
+        .and_then(|t| t.as_str())
+        .expect("link must carry a resolved target");
+    assert!(
+        target.ends_with("/home/user/scripts/sub/child.sql"),
+        "backslash must normalise to forward slash in target, got {target}"
+    );
+    assert!(
+        !target.contains('\\'),
+        "target must contain no backslash after normalisation, got {target}"
+    );
+}
+
+/// (d) An empty document (no `:r` directives) returns an empty array (non-null).
+#[tokio::test]
+async fn test_document_link_empty_document_returns_empty_array() {
+    let mut service = setup();
+    init_and_open(&mut service, "file:///test.sql", "").await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/documentLink",
+        "params": {
+            "textDocument": { "uri": "file:///test.sql" }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("documentLink must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    let arr = result_val
+        .as_array()
+        .expect("empty document must yield an array (possibly empty)");
+    assert!(arr.is_empty(), "empty document → no links, got {arr:?}");
+}
+
+/// (e) An unloaded document returns `null` (Ok(None)).
+#[tokio::test]
+async fn test_document_link_unloaded_document_returns_null() {
+    let mut service = setup();
+    // Initialize but never open the target document.
+    let init = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    });
+    send(&mut service, &init.to_string()).await;
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/documentLink",
+        "params": {
+            "textDocument": { "uri": "file:///never-opened.sql" }
+        }
+    });
+    let response = send(&mut service, &req.to_string()).await;
+    let result = response.expect("documentLink must respond");
+    let result_val: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&result.result()).unwrap()).unwrap();
+    assert!(
+        result_val.is_null(),
+        "unloaded document must yield null, got {result_val:?}"
+    );
+}
