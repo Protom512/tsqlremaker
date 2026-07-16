@@ -2,6 +2,7 @@
 //!
 //! tower-lsp を使用した Language Server のハンドラー実装。
 
+use crate::{error_taxonomy, panic_recovery};
 use ase_ls_core::{
     analysis::DocumentAnalysis,
     code_actions, code_lens, completion,
@@ -15,6 +16,7 @@ use ase_ls_core::{
     symbols, workspace_symbols,
 };
 use serde_json::json;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
@@ -303,6 +305,70 @@ impl AseLanguageServer {
         docs.docs
             .get(uri.as_str())
             .map(|entry| entry.analysis.clone())
+    }
+
+    // ---- #139: error visibility + panic recovery helpers ----
+
+    /// Run a feature's pure core computation with panic recovery and
+    /// visibility, for handlers whose core fn takes only `&DocumentAnalysis`
+    /// (plus `Copy` params captured by `compute`) and returns `Option<R>`
+    /// (#139 taxonomy: A-paths stay silent, B1 panic → notify, B2 parse-err →
+    /// log).
+    ///
+    /// `compute` is wrapped in [`AssertUnwindSafe`]: the core fns are pure
+    /// (they do not mutate shared state observed by `catch_unwind`) and any
+    /// lock a caller captures is tokio's (never poisons), so the blanket
+    /// unwind-safety assertion is sound. Handlers that hold a lock guard
+    /// across the call MUST scope-and-drop it before this `.await`s (see
+    /// `goto_definition` / `references`); this helper itself never holds a
+    /// server lock across its `notify_recoverable` await.
+    async fn run_feature<R>(
+        &self,
+        feature: &'static str,
+        uri: &Url,
+        analysis: &DocumentAnalysis,
+        compute: impl FnOnce(&DocumentAnalysis) -> Option<R>,
+    ) -> Result<Option<R>> {
+        let outcome = panic_recovery::guarded(feature, AssertUnwindSafe(|| compute(analysis)));
+        self.feature_outcome(feature, uri, analysis, outcome).await
+    }
+
+    /// Map a guarded feature outcome into an LSP response with visibility
+    /// (#139). See [`Self::run_feature`] for the taxonomy.
+    async fn feature_outcome<R>(
+        &self,
+        feature: &'static str,
+        uri: &Url,
+        analysis: &DocumentAnalysis,
+        outcome: std::result::Result<Option<R>, panic_recovery::CaughtPanic>,
+    ) -> Result<Option<R>> {
+        match outcome {
+            Ok(Some(value)) => Ok(Some(value)),
+            Ok(None) => {
+                error_taxonomy::log_parse_errors_if_any(analysis, feature, uri.as_str());
+                tracing::debug!(feature, uri = %uri, "feature produced no result");
+                Ok(None)
+            }
+            Err(panic) => {
+                self.notify_recoverable(error_taxonomy::from_panic(panic), feature)
+                    .await;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Show a recoverable-error notification to the user (taxonomy B1).
+    ///
+    /// Only caught panics notify today; parse errors stay log-only (already
+    /// surfaced as diagnostics — double-reporting would spam the status bar).
+    async fn notify_recoverable(
+        &self,
+        cause: error_taxonomy::RecoverableCause,
+        feature: &'static str,
+    ) {
+        self.client
+            .show_message(MessageType::WARNING, cause.message(feature))
+            .await;
     }
 
     /// 現在 open している全ドキュメントの URI スナップショットを返す。
@@ -802,21 +868,30 @@ impl LanguageServer for AseLanguageServer {
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        let uri = &params.text_document_position.text_document.uri;
+        let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         // 補完設定（#132: スニペット有効/無効）を読む。
         let comp_config = self.config.read().await.completion.clone();
-        if let Some(analysis) = self.get_analysis(uri).await {
+        if let Some(analysis) = self.get_analysis(&uri).await {
             // カーソル直前までの行テキストから補完コンテキストを推定 (#126)。
             // LSP position.character は UTF-16 単位だが、ASCII 主体の SQL では
             // 文字数で安全にプレフィックスを取り出せる。
-            let line = analysis.get_line(position.line);
-            let prefix: String = line.chars().take(position.character as usize).collect();
-            Ok(Some(completion::complete_for_context(
-                &prefix,
-                &analysis.symbol_table,
-                &comp_config,
-            )))
+            let prefix: String = analysis
+                .get_line(position.line)
+                .chars()
+                .take(position.character as usize)
+                .collect();
+            // #139: pure core call を run_feature でラップ（B1 panic 回復 + B2 parse-err 可視化）。
+            // comp_config は Clone して capture する（FnOnce の中で &comp_config を借るため）。
+            let comp_config_for_closure = comp_config.clone();
+            self.run_feature("completion", &uri, &analysis, move |a| {
+                Some(completion::complete_for_context(
+                    &prefix,
+                    &a.symbol_table,
+                    &comp_config_for_closure,
+                ))
+            })
+            .await
         } else {
             Ok(Some(completion::apply_snippet_config(
                 completion::complete_all().clone(),
@@ -829,18 +904,31 @@ impl LanguageServer for AseLanguageServer {
         &self,
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
-        let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
-            Ok(symbols::document_symbols_with_analysis(&analysis))
+        let uri = params.text_document.uri;
+        if let Some(analysis) = self.get_analysis(&uri).await {
+            // #139: B1 panic 回復 + B2 parse-err 可視化。document_symbols_with_analysis は
+            // 既に Option<DocumentSymbolResponse> を返す（空なら None: §1 A5 empty-by-contract）。
+            self.run_feature("document_symbol", &uri, &analysis, |a| {
+                symbols::document_symbols_with_analysis(a)
+            })
+            .await
         } else {
             Ok(None)
         }
     }
 
     async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
-        let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
-            Ok(Some(folding::folding_ranges_with_analysis(&analysis)))
+        let uri = params.text_document.uri;
+        if let Some(analysis) = self.get_analysis(&uri).await {
+            // #139: folding_ranges は Vec を返す。LSP 契約上、空でも空配列（non-null）
+            // を返す（クライアントが null を「クリア」扱いするため）。従って空 vec も
+            // Some(vec![]) として返し、run_feature はパニック時のみ None（B1 通知）。
+            let result = self
+                .run_feature("folding_range", &uri, &analysis, |a| {
+                    Some(folding::folding_ranges_with_analysis(a))
+                })
+                .await?;
+            Ok(Some(result.unwrap_or_default()))
         } else {
             Ok(Some(Vec::new()))
         }
@@ -850,11 +938,14 @@ impl LanguageServer for AseLanguageServer {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
-            Ok(Some(semantic_tokens::semantic_tokens_full_with_analysis(
-                &analysis,
-            )))
+        let uri = params.text_document.uri;
+        if let Some(analysis) = self.get_analysis(&uri).await {
+            // #139: semantic_tokens_full は常に SemanticTokensResult を返す（空でも Some）。
+            // パニック時のみ None となる（run_feature の B1 パス）。
+            self.run_feature("semantic_tokens_full", &uri, &analysis, |a| {
+                Some(semantic_tokens::semantic_tokens_full_with_analysis(a))
+            })
+            .await
         } else {
             Ok(None)
         }
@@ -864,40 +955,50 @@ impl LanguageServer for AseLanguageServer {
         &self,
         params: SemanticTokensRangeParams,
     ) -> Result<Option<SemanticTokensRangeResult>> {
-        let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
-            Ok(Some(semantic_tokens::semantic_tokens_range_with_analysis(
-                &analysis,
-                params.range,
-            )))
+        let uri = params.text_document.uri;
+        let range = params.range;
+        if let Some(analysis) = self.get_analysis(&uri).await {
+            // #139: range 版も full 版と同様に Some(Result) を返す。
+            self.run_feature("semantic_tokens_range", &uri, &analysis, move |a| {
+                Some(semantic_tokens::semantic_tokens_range_with_analysis(
+                    a, range,
+                ))
+            })
+            .await
         } else {
             Ok(None)
         }
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        let uri = &params.text_document_position_params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
-            Ok(hover::hover_with_analysis(
-                &analysis,
-                params.text_document_position_params.position,
-            ))
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        if let Some(analysis) = self.get_analysis(&uri).await {
+            // #139: hover_with_analysis は既に Option<Hover> を返すのでそのまま。
+            self.run_feature("hover", &uri, &analysis, move |a| {
+                hover::hover_with_analysis(a, position)
+            })
+            .await
         } else {
             Ok(None)
         }
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
-        let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        let uri = params.text_document.uri;
+        if let Some(analysis) = self.get_analysis(&uri).await {
             // フォーマット設定（#132: インデント幅・キーワード大小）を読む。
             let fmt_config = self.config.read().await.formatting.clone();
-            let edits = formatting::format(&analysis.source, &fmt_config);
-            if edits.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(edits))
-            }
+            // #139: format は Vec を返すので空を None・非空を Some に正規化（§1 A5 no-edits）。
+            self.run_feature("formatting", &uri, &analysis, move |a| {
+                let edits = formatting::format(&a.source, &fmt_config);
+                if edits.is_empty() {
+                    None
+                } else {
+                    Some(edits)
+                }
+            })
+            .await
         } else {
             Ok(None)
         }
@@ -907,27 +1008,31 @@ impl LanguageServer for AseLanguageServer {
         &self,
         params: DocumentRangeFormattingParams,
     ) -> Result<Option<Vec<TextEdit>>> {
-        let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        let uri = params.text_document.uri;
+        let range = params.range;
+        if let Some(analysis) = self.get_analysis(&uri).await {
             // フォーマット設定（#132）を読む。
             let fmt_config = self.config.read().await.formatting.clone();
             // 選択範囲のみを整形した単一 TextEdit を返す (#129)。
-            Ok(
-                formatting::format_range(&analysis.source, params.range, &fmt_config)
-                    .map(|edit| vec![edit]),
-            )
+            // #139: format_range は Option<TextEdit> を返すので vec! に包んで Some/None。
+            self.run_feature("range_formatting", &uri, &analysis, move |a| {
+                formatting::format_range(&a.source, range, &fmt_config).map(|edit| vec![edit])
+            })
+            .await
         } else {
             Ok(None)
         }
     }
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
-        let uri = &params.text_document_position_params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
-            Ok(signature_help::signature_help_with_analysis(
-                &analysis,
-                params.text_document_position_params.position,
-            ))
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        if let Some(analysis) = self.get_analysis(&uri).await {
+            // #139: signature_help_with_analysis は既に Option<SignatureHelp> を返す。
+            self.run_feature("signature_help", &uri, &analysis, move |a| {
+                signature_help::signature_help_with_analysis(a, position)
+            })
+            .await
         } else {
             Ok(None)
         }
@@ -937,24 +1042,38 @@ impl LanguageServer for AseLanguageServer {
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
-        let uri = &params.text_document_position_params.text_document.uri;
+        let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
         // DocumentAnalysis が無ければ即座にフォールバック（単一ファイルモード等）。
-        let Some(analysis) = self.get_analysis(uri).await else {
+        let Some(analysis) = self.get_analysis(&uri).await else {
             return Ok(None);
         };
         // SymbolStore を read lock で参照し、cross-file 版 goto definition へ。
         // 文書内定義が優先（definition_locations が current_uri 配下で解決）し、
         // 無ければ背景インデックスの CREATE 定義を返す。ストアが空（単一ファイル
         // モード）でも文書内フォールバックが機能する（条件 #6）。
-        let syms = self.symbols.read().await;
-        let locations = definition::definition_locations(&syms, &analysis, uri, position);
-        drop(syms);
-        if locations.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(GotoDefinitionResponse::Array(locations)))
-        }
+        //
+        // #139: definition_locations は lock guard を借用するため run_feature ではなく
+        // panic_recovery::guarded + AssertUnwindSafe で直接ラップし、feature_outcome で
+        // 可視化する（設計 §4: sync-call wrapper, lock は tokio のため poison しない）。
+        // guard は closure 内でスコープ化し、notify_recoverable の await 前に解放する。
+        let outcome = {
+            let syms = self.symbols.read().await;
+            panic_recovery::guarded(
+                "goto_definition",
+                AssertUnwindSafe(|| {
+                    let locations =
+                        definition::definition_locations(&syms, &analysis, &uri, position);
+                    if locations.is_empty() {
+                        None
+                    } else {
+                        Some(GotoDefinitionResponse::Array(locations))
+                    }
+                }),
+            )
+        };
+        self.feature_outcome("goto_definition", &uri, &analysis, outcome)
+            .await
     }
 
     /// Find All References — cross-file for objects, document-local for variables.
@@ -976,9 +1095,9 @@ impl LanguageServer for AseLanguageServer {
     /// Returns `None` on empty, `Some(Vec<Location>)` otherwise. In single-file
     /// mode (empty store/snapshot) the document-local fallback still works.
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
-        let uri = &params.text_document_position.text_document.uri;
+        let uri = params.text_document_position.text_document.uri;
         // DocumentAnalysis が無ければ即座にフォールバック（単一ファイルモード等）。
-        let Some(analysis) = self.get_analysis(uri).await else {
+        let Some(analysis) = self.get_analysis(&uri).await else {
             return Ok(None);
         };
         // ロック順序（documents-read-before-symbols-read）を遵守するため、
@@ -990,49 +1109,71 @@ impl LanguageServer for AseLanguageServer {
             let docs = self.documents.read().await;
             docs.analyses_snapshot()
         };
-        // SymbolStore を read lock で参照し、cross-file 版 Find All References へ。
-        // reference_locations は既知の各文書のトークン列を走査して使用箇所を集め、
-        // include_declaration が真ならストアの CREATE 定義を付加する。変数は
-        // 文書ローカル（current_uri 配下のみ）。ストア/スナップショットが空
-        // （単一ファイルモード）でも文書内フォールバックが機能する（条件 #6）。
-        let locations = {
+        let include_declaration = params.context.include_declaration;
+        let position = params.text_document_position.position;
+        // #139: reference_locations は SymbolStore guard を借用するため、goto_definition
+        // と同様に guarded + AssertUnwindSafe + feature_outcome で直接ラップ（設計 §4）。
+        // core fn は pure で tokio lock は poison しないため AssertUnwindSafe は健全。
+        let outcome = {
             let syms = self.symbols.read().await;
-            references::reference_locations(
-                &syms,
-                &analysis,
-                uri,
-                params.text_document_position.position,
-                params.context.include_declaration,
-                &docs_snapshot,
+            panic_recovery::guarded(
+                "references",
+                AssertUnwindSafe(|| {
+                    let locations = references::reference_locations(
+                        &syms,
+                        &analysis,
+                        &uri,
+                        position,
+                        include_declaration,
+                        &docs_snapshot,
+                    );
+                    if locations.is_empty() {
+                        None
+                    } else {
+                        Some(locations)
+                    }
+                }),
             )
         };
-        if locations.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(locations))
-        }
+        self.feature_outcome("references", &uri, &analysis, outcome)
+            .await
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
-        let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
-            let actions = code_actions::code_actions_with_analysis(&analysis, params.range, uri);
-            if actions.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(actions))
-            }
+        let uri = params.text_document.uri;
+        let range = params.range;
+        if let Some(analysis) = self.get_analysis(&uri).await {
+            // #139: code_actions は Vec を返すので空を None・非空を Some に正規化（§1 A5）。
+            // `uri` は run_feature にも渡すため参照キャプチャ（move しない）。
+            self.run_feature("code_action", &uri, &analysis, |a| {
+                let actions = code_actions::code_actions_with_analysis(a, range, &uri);
+                if actions.is_empty() {
+                    None
+                } else {
+                    Some(actions)
+                }
+            })
+            .await
         } else {
             Ok(None)
         }
     }
 
     async fn code_lens(&self, params: CodeLensParams) -> Result<Option<Vec<CodeLens>>> {
-        let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
+        let uri = params.text_document.uri;
+        if let Some(analysis) = self.get_analysis(&uri).await {
             // #117: 未解決レンズ（定義範囲 + data のみ）を返す。command は
             // `codeLens/resolve` で参照数を埋めるまで空。
-            Ok(Some(code_lens::code_lenses(&analysis, uri)))
+            // #139: code_lenses は Vec を返す。LSP 契約上、空でも空配列（non-null）
+            // を返す（クライアントが null を「クリア」扱いするため）。従って空 vec も
+            // Some(vec![]) として返し、run_feature はパニック時のみ None（B1 通知）。
+            // `uri` は run_feature にも渡すため参照キャプチャ（move しない）。
+            let result = self
+                .run_feature("code_lens", &uri, &analysis, |a| {
+                    Some(code_lens::code_lenses(a, &uri))
+                })
+                .await?;
+            Ok(Some(result.unwrap_or_default()))
         } else {
             Ok(None)
         }
@@ -1040,6 +1181,11 @@ impl LanguageServer for AseLanguageServer {
 
     async fn code_lens_resolve(&self, params: CodeLens) -> Result<CodeLens> {
         // resolve リクエストは textDocument を持たないため、URI は lens.data から復元。
+        //
+        // #139: このハンドラは Result<CodeLens>（Option ではない）を返すため run_feature
+        // ではラップできない。設計 §2 A6 の resolve-fallthrough（入力レンズをそのまま返す）
+        // を尊重しつつ、core 呼び出し(resolve_lens)を guarded で panic 回復する。
+        // パニック時は B1 通知を発火し、入力レンズを未解決で返す（A6 と同じ見え方）。
         match code_lens::lens_uri(&params).and_then(|s| Url::parse(&s).ok()) {
             Some(uri) => {
                 if let Some(analysis) = self.get_analysis(&uri).await {
@@ -1050,8 +1196,29 @@ impl LanguageServer for AseLanguageServer {
                     // Option<Command>, an Option<serde_json::Value>); the borrow
                     // alternative would require changing the pure-fn signature,
                     // which the CTO approval explicitly disallowed.
-                    if let Some(resolved) = code_lens::resolve_lens(params.clone(), &analysis) {
-                        return Ok(resolved);
+                    let outcome = panic_recovery::guarded(
+                        "code_lens_resolve",
+                        AssertUnwindSafe(|| code_lens::resolve_lens(params.clone(), &analysis)),
+                    );
+                    match outcome {
+                        Ok(Some(resolved)) => return Ok(resolved),
+                        Ok(None) => {
+                            // A6: 解決不能（data 不正・シンボル消失）。A-path なので silent。
+                            // ただし parse_errors があれば B2 として log する（設計 §1 B2）。
+                            error_taxonomy::log_parse_errors_if_any(
+                                &analysis,
+                                "code_lens_resolve",
+                                uri.as_str(),
+                            );
+                        }
+                        Err(panic) => {
+                            // B1: パニック回復。通知して入力レンズを返す。
+                            self.notify_recoverable(
+                                error_taxonomy::from_panic(panic),
+                                "code_lens_resolve",
+                            )
+                            .await;
+                        }
                     }
                 }
                 // 解決できない（data 不正・文書未ロード・シンボル消失）場合は
@@ -1066,19 +1233,24 @@ impl LanguageServer for AseLanguageServer {
     /// file-include directives. Each link's target is resolved document-relative
     /// against the owning URI and stashed in `data` for `documentLink/resolve`.
     async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
-        let uri = &params.text_document.uri;
-        let Some(analysis) = self.get_analysis(uri).await else {
+        let uri = params.text_document.uri;
+        let Some(analysis) = self.get_analysis(&uri).await else {
             // Unloaded document: nothing to link. Null lets the client clear
             // stale links.
             return Ok(None);
         };
         let cfg = self.config.read().await.document_link.clone();
-        let links = document_links::document_links(&analysis, uri, &cfg);
-        if links.is_empty() {
-            Ok(Some(Vec::new()))
-        } else {
-            Ok(Some(links))
-        }
+        // #119/#139: document_links は Vec を返す。LSP 契約上、空ドキュメントでも
+        // 空配列（non-null）を返す（クライアントが null を「クリア」扱いするため）。
+        // 従って空 vec も Some(vec![]) として返し、run_feature はパニック時のみ
+        // None を返す（B1 通知 → Ok(None)）。
+        // `uri` は run_feature にも渡すため参照キャプチャ（cfg も親スコープの参照）。
+        let result = self
+            .run_feature("document_link", &uri, &analysis, |a| {
+                Some(document_links::document_links(a, &uri, &cfg))
+            })
+            .await?;
+        Ok(Some(result.unwrap_or_default()))
     }
 
     /// `documentLink/resolve` (#119): re-establish the target URI from the
@@ -1087,16 +1259,40 @@ impl LanguageServer for AseLanguageServer {
     /// to fetch the analysis. When the document is no longer loaded (or the
     /// payload is absent/malformed), the input link is returned unchanged so the
     /// client keeps the already-resolved target rather than dropping the link.
+    ///
+    /// #139: Result<DocumentLink>（Option ではない）を返すため run_feature は使えず、
+    /// code_lens_resolve と同様に guarded + 手動 B1/B2 処理で panic 回復する（設計 §2 A6）。
     async fn document_link_resolve(&self, params: DocumentLink) -> Result<DocumentLink> {
         // Recover the owning document URI from the stashed payload to fetch the
         // analysis. resolve_document_link is a pure fn of (&link, &analysis).
         if let Some(uri_str) = document_links::link_uri(&params) {
             if let Ok(uri) = Url::parse(&uri_str) {
                 if let Some(analysis) = self.get_analysis(&uri).await {
-                    if let Some(resolved) =
-                        document_links::resolve_document_link(&params, &analysis)
-                    {
-                        return Ok(resolved);
+                    let outcome = panic_recovery::guarded(
+                        "document_link_resolve",
+                        AssertUnwindSafe(|| {
+                            document_links::resolve_document_link(&params, &analysis)
+                        }),
+                    );
+                    match outcome {
+                        Ok(Some(resolved)) => return Ok(resolved),
+                        Ok(None) => {
+                            // A6: 再計算不能（payload 不正等）。A-path だが parse_err が
+                            // あれば B2 log（設計 §1 B2）。
+                            error_taxonomy::log_parse_errors_if_any(
+                                &analysis,
+                                "document_link_resolve",
+                                uri.as_str(),
+                            );
+                        }
+                        Err(panic) => {
+                            // B1: パニック回復。通知して入力リンクを返す。
+                            self.notify_recoverable(
+                                error_taxonomy::from_panic(panic),
+                                "document_link_resolve",
+                            )
+                            .await;
+                        }
                     }
                 }
             }
@@ -1112,29 +1308,36 @@ impl LanguageServer for AseLanguageServer {
         // fetches the analysis, reads the inlay config, and forwards both to
         // `inlay_hints::inlay_hints` — no business logic lives here so the core
         // function stays fully unit-testable without tower-lsp I/O.
-        let uri = &params.text_document.uri;
-        let Some(analysis) = self.get_analysis(uri).await else {
+        let uri = params.text_document.uri;
+        let Some(analysis) = self.get_analysis(&uri).await else {
             // Unloaded document: nothing to annotate. The null result lets the
             // client clear any stale hints.
             return Ok(None);
         };
         let inlay_cfg = self.config.read().await.inlay.clone();
-        Ok(Some(inlay_hints::inlay_hints(
-            &analysis,
-            Some(params.range),
-            &inlay_cfg,
-        )))
+        let range = Some(params.range);
+        // #139: inlay_hints は Vec を返す。LSP 契約上、空でも空配列（non-null）を返す
+        // （クライアントが null を「クリア」扱いするため）。従って空 vec も Some(vec![])
+        // として返し、run_feature はパニック時のみ None（B1 通知）。
+        let result = self
+            .run_feature("inlay_hint", &uri, &analysis, move |a| {
+                Some(inlay_hints::inlay_hints(a, range, &inlay_cfg))
+            })
+            .await?;
+        Ok(Some(result.unwrap_or_default()))
     }
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
-        let uri = &params.text_document_position.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
-            Ok(rename::rename_with_analysis(
-                &analysis,
-                params.text_document_position.position,
-                &params.new_name,
-                uri,
-            ))
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let new_name = params.new_name;
+        if let Some(analysis) = self.get_analysis(&uri).await {
+            // #139: rename_with_analysis は Option<WorkspaceEdit> を返す。
+            // `uri` は run_feature にも渡すため参照キャプチャ（new_name も親スコープの参照）。
+            self.run_feature("rename", &uri, &analysis, |a| {
+                rename::rename_with_analysis(a, position, &new_name, &uri)
+            })
+            .await
         } else {
             Ok(None)
         }
@@ -1144,12 +1347,14 @@ impl LanguageServer for AseLanguageServer {
         &self,
         params: TextDocumentPositionParams,
     ) -> Result<Option<PrepareRenameResponse>> {
-        let uri = &params.text_document.uri;
-        if let Some(analysis) = self.get_analysis(uri).await {
-            Ok(rename::prepare_rename_with_analysis(
-                &analysis,
-                params.position,
-            ))
+        let uri = params.text_document.uri;
+        let position = params.position;
+        if let Some(analysis) = self.get_analysis(&uri).await {
+            // #139: prepare_rename_with_analysis は Option<PrepareRenameResponse> を返す。
+            self.run_feature("prepare_rename", &uri, &analysis, move |a| {
+                rename::prepare_rename_with_analysis(a, position)
+            })
+            .await
         } else {
             Ok(None)
         }
@@ -1165,12 +1370,33 @@ impl LanguageServer for AseLanguageServer {
         // In single-file mode the store still holds the one open document, so
         // symbol search keeps working (condition #6). The empty-query contract
         // (returns None) is preserved by workspace_symbols_with_store.
-        let syms = self.symbols.read().await;
-        let results = workspace_symbols::workspace_symbols_with_store(&syms, &params.query);
-        if results.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(results))
+        //
+        // #139: symbol は DocumentAnalysis を使わず SymbolStore のみを参照するため
+        // run_feature は使えない。workspace_symbols_with_store を guarded で panic 回復
+        // し、feature_outcome 風にマッピングする。但し analysis がないため parse_err
+        // ログはスキップし、B1 パニック時のみ通知する（設計 §2: symbol は B2 非対象）。
+        let query = params.query;
+        let outcome = {
+            let syms = self.symbols.read().await;
+            panic_recovery::guarded(
+                "symbol",
+                AssertUnwindSafe(|| {
+                    let results = workspace_symbols::workspace_symbols_with_store(&syms, &query);
+                    if results.is_empty() {
+                        None
+                    } else {
+                        Some(results)
+                    }
+                }),
+            )
+        };
+        match outcome {
+            Ok(value) => Ok(value),
+            Err(panic) => {
+                self.notify_recoverable(error_taxonomy::from_panic(panic), "symbol")
+                    .await;
+                Ok(None)
+            }
         }
     }
 }
