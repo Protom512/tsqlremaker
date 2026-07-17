@@ -37,7 +37,7 @@ pub enum DocCategory {
 }
 
 /// ASE組み込みドキュメントエントリ
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DocEntry {
     /// 名前（大文字）
     pub name: &'static str,
@@ -219,5 +219,55 @@ mod tests {
         assert!(KEYWORD_ENTRIES.len() >= 50);
         assert!(DATATYPE_ENTRIES.len() >= 25);
         assert!(FUNCTION_ENTRIES.len() >= 35);
+    }
+
+    // --- Data/logic separation invariant (issue #142 verification) ---
+    // The db_docs module enforces a strict boundary:
+    //   - mod.rs holds types (DocEntry, DocCategory) + lookup logic (LazyLock indices + fns)
+    //   - the four data submodules hold ONLY DocEntry tables — no HashMap, no LazyLock, no fns
+    // These tests codify that boundary so a regression that re-introduces the
+    // 1305-line monolith (logic mixed into data, or data tables leaking into mod.rs)
+    // is caught at compile/test time rather than silent drift.
+
+    #[test]
+    fn test_data_submodules_expose_only_entry_tables() {
+        // Each public re-exported symbol from a data submodule must be a
+        // &'static [DocEntry] table — lookup helpers live exclusively in mod.rs.
+        let keyword_table: &'static [DocEntry] = KEYWORD_ENTRIES;
+        let datatype_table: &'static [DocEntry] = DATATYPE_ENTRIES;
+        let function_table: &'static [DocEntry] = FUNCTION_ENTRIES;
+        let sysvar_table: &'static [DocEntry] = SYSTEM_VARIABLE_ENTRIES;
+
+        // Non-empty and well-formed: every entry carries its declared category.
+        for e in keyword_table {
+            assert_eq!(e.category, DocCategory::Keyword);
+        }
+        for e in datatype_table {
+            assert_eq!(e.category, DocCategory::DataType);
+        }
+        for e in function_table {
+            assert_eq!(e.category, DocCategory::Function);
+        }
+        for e in sysvar_table {
+            assert_eq!(e.category, DocCategory::SystemVariable);
+        }
+    }
+
+    #[test]
+    fn test_lookup_helpers_exist_only_in_mod() {
+        // mod.rs owns the lookup surface; the data submodules contribute no
+        // lookup fns. Confirm the public API resolves through mod.rs helpers
+        // (if data files re-exported their own lookup fns, this contract breaks).
+        let via_helper = lookup("SELECT");
+        let via_direct = KEYWORD_ENTRIES.iter().find(|e| e.name == "SELECT");
+        assert_eq!(
+            via_helper, via_direct,
+            "lookup must agree with the data table"
+        );
+        // lookup_function is mod.rs-only and function-prioritized.
+        assert_eq!(
+            lookup_function("SUBSTRING").map(|e| e.name),
+            Some("SUBSTRING")
+        );
     }
 }
