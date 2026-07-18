@@ -180,10 +180,7 @@ pub fn convert_to(input: &str, dialect: TargetDialect) -> JsValue {
     };
 
     // 直接 common_sql::ast::Statement へ変換 (非対応/DialectSpecific は None で除外)
-    let common_stmts: Vec<_> = stmts
-        .iter()
-        .filter_map(|stmt| to_common_sql(stmt))
-        .collect();
+    let common_stmts: Vec<_> = stmts.iter().filter_map(to_common_sql).collect();
 
     if common_stmts.is_empty() && !stmts.is_empty() {
         // パースは成功したが、Common AST に変換できない文が含まれる
@@ -381,19 +378,30 @@ mod tests {
         );
     }
 
-    // T6 (#158): 変換先のない DDL は None になる (T3: Create/AlterTable/BatchSeparator)。
+    // T6 (#158): CREATE TABLE は T2.3 で変換先 CreateTable variant を持つようになった。
+    // §0.5 parity 反転: 変換可能な DDL は Some(CreateTable) となり None-filter でドロップ
+    // されない。CREATE VIEW / PROCEDURE 等、依然として変換先なしの DDL は None のままで、
     // これが convert_to の "Statement contains unsupported features" エラー経路の根拠。
     #[cfg(not(feature = "wasm"))]
     #[test]
-    fn test_to_common_sql_unsupported_ddl_returns_none() {
+    fn test_to_common_sql_create_table_now_maps_to_some() {
         use tsql_parser::ast::to_common_sql::to_common_sql;
 
-        // CREATE TABLE は T-SQL DDL shape が変換先なし → None (T3)
+        // CREATE TABLE は T2.3 で CreateTable variant に変換される → Some
         let stmts = tsql_parser::parse("CREATE TABLE t (id INT)").unwrap_or_default();
         if let Some(stmt) = stmts.first() {
             assert!(
+                to_common_sql(stmt).is_some(),
+                "CREATE TABLE should now map to Some(CreateTable) after T2.3"
+            );
+        }
+
+        // CREATE VIEW は依然として変換先なし → None (エラー経路の根拠は維持)
+        let stmts = tsql_parser::parse("CREATE VIEW v AS SELECT 1 AS x").unwrap_or_default();
+        if let Some(stmt) = stmts.first() {
+            assert!(
                 to_common_sql(stmt).is_none(),
-                "CREATE TABLE should map to None (no destination variant)"
+                "CREATE VIEW should still map to None (no destination variant)"
             );
         }
     }
