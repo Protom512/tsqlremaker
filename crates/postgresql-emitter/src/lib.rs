@@ -46,6 +46,7 @@
 #![warn(clippy::panic)]
 
 mod config;
+mod ddl;
 mod error;
 pub mod mappers;
 
@@ -152,7 +153,7 @@ impl PostgreSqlEmitter {
     ///
     /// # Errors
     ///
-    /// サポート対象外のステートメント (DDL 系) の場合 [`EmitError::Unsupported`] を返す。
+    /// 列データ型等の式変換に未対応のノードが含まれる場合 [`EmitError`] を返す。
     pub fn emit(&mut self, stmt: &Statement) -> Result<String, EmitError> {
         self.reset();
         self.visit_statement(stmt)?;
@@ -190,12 +191,21 @@ impl PostgreSqlEmitter {
             Statement::Insert(insert) => self.visit_insert_statement(insert),
             Statement::Update(update) => self.visit_update_statement(update),
             Statement::Delete(delete) => self.visit_delete_statement(delete),
-            // DDL 系は本 emitter が未対応のため Unsupported を返す。
-            Statement::CreateTable(_)
-            | Statement::AlterTable(_)
-            | Statement::DropTable(_)
-            | Statement::CreateIndex(_)
-            | Statement::DropIndex(_) => Err(EmitError::Unsupported(statement_kind_name(stmt))),
+            // DDL 系 (T4): crates/postgresql-emitter/src/ddl.rs にて生成。
+            Statement::CreateTable(create) => self.visit_create_table(create),
+            Statement::AlterTable(alter) => self.visit_alter_table(alter),
+            Statement::DropTable(drop_) => {
+                self.visit_drop_table(drop_);
+                Ok(())
+            }
+            Statement::CreateIndex(create) => {
+                self.visit_create_index(create);
+                Ok(())
+            }
+            Statement::DropIndex(drop_) => {
+                self.visit_drop_index(drop_);
+                Ok(())
+            }
             // #158: DialectSpecific は common AST で表現できない T-SQL 制御構文等の
             // エスケープハッチ (Option B: verbatim source text)。本 emitter は真の
             // PL/pgSQL 変換を行わず、元ソースを構文カテゴリ別ガイドコメント付きで
@@ -392,19 +402,6 @@ impl PostgreSqlEmitter {
         } else {
             self.write(name);
         }
-    }
-}
-
-/// DDL 系の文種別名を返す (エラーメッセージ用)。
-fn statement_kind_name(stmt: &Statement) -> String {
-    match stmt {
-        Statement::CreateTable(_) => "CREATE TABLE".to_string(),
-        Statement::AlterTable(_) => "ALTER TABLE".to_string(),
-        Statement::DropTable(_) => "DROP TABLE".to_string(),
-        Statement::CreateIndex(_) => "CREATE INDEX".to_string(),
-        Statement::DropIndex(_) => "DROP INDEX".to_string(),
-        // DML/SELECT は呼び出し側で処理済みのため、ここでは到達しない。
-        _ => "UNKNOWN".to_string(),
     }
 }
 
@@ -666,12 +663,11 @@ mod tests {
         assert!(sql.contains("SELECT *;\nSELECT *"));
     }
 
-    // ===== DDL は Unsupported =====
+    // ===== DDL は crates/postgresql-emitter/src/ddl.rs で生成される (T4) =====
 
     #[test]
-    fn test_emit_ddl_returns_unsupported() {
-        // common_sql Statement に DialectSpecific はない。
-        // DDL 系は本 emitter が未対応のため Unsupported を返す。
+    fn test_emit_create_table_no_longer_unsupported() {
+        // T4: DDL 系は Unsupported を返さず SQL 文字列を生成する。
         let ddl = Statement::CreateTable(Box::new(CreateTableStatement {
             span: common_sql::ast::Span::new(0, 10),
             if_not_exists: false,
@@ -688,10 +684,7 @@ mod tests {
         }));
         let mut emitter = PostgreSqlEmitter::default();
         let result = emitter.emit(&ddl);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            EmitError::Unsupported(msg) => assert_eq!(msg, "CREATE TABLE"),
-            other => panic!("expected Unsupported, got {other:?}"),
-        }
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        assert_eq!(result.unwrap(), "CREATE TABLE t ()");
     }
 }

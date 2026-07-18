@@ -71,14 +71,14 @@ impl MySqlEmitter {
             Statement::Insert(s) => self.emit_insert(s),
             Statement::Update(s) => self.emit_update(s),
             Statement::Delete(s) => self.emit_delete(s),
-            Statement::CreateTable(_)
-            | Statement::AlterTable(_)
-            | Statement::DropTable(_)
-            | Statement::CreateIndex(_)
-            | Statement::DropIndex(_)
+            Statement::CreateTable(s) => crate::ddl::emit_create_table(self, s),
+            Statement::AlterTable(s) => crate::ddl::emit_alter_table(self, s),
+            Statement::DropTable(s) => crate::ddl::emit_drop_table(s),
+            Statement::CreateIndex(s) => crate::ddl::emit_create_index(s),
+            Statement::DropIndex(s) => crate::ddl::emit_drop_index(s),
             // DialectSpecific (T-SQL control-flow etc.) is out of MySQL emitter
             // scope — tracked by #158 (postgresql-emitter PL/pgSQL restoration).
-            | Statement::DialectSpecific { .. } => Err(EmitError::UnsupportedStatement {
+            Statement::DialectSpecific { .. } => Err(EmitError::UnsupportedStatement {
                 statement_type: statement_kind_name(stmt),
             }),
         }
@@ -507,23 +507,20 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_ddl_returns_error() {
-        // CreateTable はブリッジ未対応かつ emitter 未サポート → エラー。
-        let empty = common_sql::ast::ddl::CreateTableStatement {
+    fn dialect_specific_returns_unsupported_error() {
+        // DialectSpecific (T-SQL control-flow 等) は MySQL emitter のスコープ外。
+        // DDL (CreateTable 等) は T3 でサポート済みのため、ここでは
+        // DialectSpecific を未サポートケースとして検証する。
+        let stmt = Statement::DialectSpecific {
+            source: "DECLARE @v INT".to_string(),
             span: common_sql::ast::Span::new(0, 0),
-            if_not_exists: false,
-            temporary: false,
-            name: QualifiedName::new(None, "t".to_string()),
-            columns: vec![],
-            constraints: vec![],
-            options: common_sql::ast::ddl::TableOptions::default(),
         };
-        let result = MySqlEmitter::default_config().emit(&Statement::CreateTable(Box::new(empty)));
+        let result = MySqlEmitter::default_config().emit(&stmt);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(
             err,
-            EmitError::UnsupportedStatement { ref statement_type } if statement_type == "CREATE TABLE"
+            EmitError::UnsupportedStatement { ref statement_type } if statement_type == "UNKNOWN"
         ));
     }
 
