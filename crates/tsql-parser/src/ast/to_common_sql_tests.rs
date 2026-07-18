@@ -245,12 +245,17 @@ fn dialect_specific_span_matches_ast_node_span() {
     assert_eq!(span.end, expected_span.end);
 }
 
-// --- DDL / BatchSeparator: still None (dedicated variants / out of scope) -
+// --- DDL / BatchSeparator: T2 wires CREATE TABLE / CREATE INDEX / ALTER TABLE
+//     into dedicated common-sql variants (Some). CREATE PROCEDURE / VIEW /
+//     TRIGGER stay None (no destination). BatchSeparator stays None.
 
 #[test]
-fn create_table_returns_none() {
+fn create_table_parses_and_converts_to_create_table() {
     let stmt = crate::parse_one("CREATE TABLE t (id INT)").expect("parse CREATE TABLE");
-    assert!(to_common_sql(&stmt).is_none(), "CREATE -> None");
+    assert!(
+        matches!(to_common_sql(&stmt), Some(SqlStmt::CreateTable(_))),
+        "CREATE TABLE -> Some(CreateTable)"
+    );
 }
 
 #[test]
@@ -261,9 +266,12 @@ fn create_procedure_returns_none() {
 }
 
 #[test]
-fn alter_table_returns_none() {
+fn alter_table_parses_and_converts_to_alter_table() {
     let stmt = crate::parse_one("ALTER TABLE t ADD c INT").expect("parse ALTER TABLE");
-    assert!(to_common_sql(&stmt).is_none(), "ALTER TABLE -> None");
+    assert!(
+        matches!(to_common_sql(&stmt), Some(SqlStmt::AlterTable(_))),
+        "ALTER TABLE ADD COLUMN -> Some(AlterTable)"
+    );
 }
 
 // ===================================================================
@@ -1247,4 +1255,247 @@ fn qualified_name_constructs_without_schema() {
 fn table_alias_constructs() {
     let a = TableAlias::new("u".to_string(), vec![]);
     assert_eq!(a.name(), "u");
+}
+
+// ===================================================================
+// 9. DDL bridge: CREATE TABLE / CREATE INDEX / ALTER TABLE  (Task T2.1a RED)
+//
+// `to_common_sql` currently maps `Statement::Create(_) | AlterTable(_) |
+// BatchSeparator(_)` to `None` (to_common_sql.rs:144). Task T2 wires DDL into
+// dedicated `common_sql` destination variants:
+//   * `Create(Table)`            -> `Some(CreateTable(CreateTableStatement))`
+//   * `Create(Index)`            -> `Some(CreateIndex(CreateIndexStatement))`
+//   * `AlterTable(AddColumn)`    -> `Some(AlterTable(AlterTableStatement))`
+//   * `Create(View|Procedure|Trigger)` -> `None` (no destination)
+//   * `BatchSeparator`           -> `None` (unchanged)
+//
+// Per design.md §0.6, a CREATE TABLE whose column list contains a DataType
+// with no common-sql destination (Bit/Money/SmallMoney/SmallDateTime) short-
+// circuits the whole statement to None (parity with convert_select). Only
+// UniqueIdentifier maps (to Uuid) and returns Some.
+// ===================================================================
+
+use crate::ast::{
+    AddColumnDefinition, AlterTableOperation, AlterTableStatement,
+    ColumnDefinition as TsqlColumnDefinition, CreateStatement, DataType as TsqlDataType,
+    IndexDefinition, TableDefinition, TriggerDefinition, TriggerEvent, ViewDefinition,
+};
+use common_sql::ast::{
+    AlterTableAction as CsqlAlterAction, AlterTableStatement as CsqlAlterTable,
+    ColumnDef as CsqlColumnDef, CreateIndexStatement as CsqlCreateIndex,
+    CreateTableStatement as CsqlCreateTable, IndexColumn as CsqlIndexColumn, Statement as CsqlStmt,
+};
+use tsql_token::Span as TsqlSpan;
+
+fn cspan() -> TsqlSpan {
+    TsqlSpan::new(0, 100)
+}
+
+fn col_def(name: &str, dt: TsqlDataType) -> TsqlColumnDefinition {
+    TsqlColumnDefinition {
+        name: ident_name(name),
+        data_type: dt,
+        nullability: None,
+        default_value: None,
+        identity: false,
+        constraints: vec![],
+    }
+}
+
+fn table_def(name: &str, columns: Vec<TsqlColumnDefinition>) -> TableDefinition {
+    TableDefinition {
+        span: cspan(),
+        name: ident_name(name),
+        columns,
+        constraints: vec![],
+        temporary: false,
+    }
+}
+
+// --- Happy path ---
+
+#[test]
+fn create_table_single_column_returns_create_table() {
+    let td = table_def("users", vec![col_def("id", TsqlDataType::Int)]);
+    let stmt = Statement::Create(Box::new(CreateStatement::Table(td)));
+    let converted = to_common_sql(&stmt);
+    let Some(CsqlStmt::CreateTable(boxed)) = converted else {
+        panic!("expected Some(CreateTable), got {converted:?}");
+    };
+    let CsqlCreateTable {
+        name,
+        columns,
+        temporary,
+        if_not_exists,
+        ..
+    } = boxed.as_ref();
+    assert_eq!(name.name(), "users");
+    assert!(!temporary);
+    assert!(!if_not_exists);
+    assert_eq!(columns.len(), 1);
+    let CsqlColumnDef {
+        name, data_type, ..
+    } = &columns[0];
+    assert_eq!(name.value(), "id");
+    assert_eq!(*data_type, common_sql::ast::DataType::Int);
+}
+
+#[test]
+fn create_index_returns_create_index() {
+    let idx = IndexDefinition {
+        span: cspan(),
+        name: ident_name("idx_users_id"),
+        table: ident_name("users"),
+        columns: vec![ident_name("id")],
+        unique: true,
+    };
+    let stmt = Statement::Create(Box::new(CreateStatement::Index(idx)));
+    let converted = to_common_sql(&stmt);
+    let Some(CsqlStmt::CreateIndex(boxed)) = converted else {
+        panic!("expected Some(CreateIndex), got {converted:?}");
+    };
+    let CsqlCreateIndex {
+        name,
+        table,
+        columns,
+        unique,
+        if_not_exists,
+        ..
+    } = boxed.as_ref();
+    assert_eq!(name.value(), "idx_users_id");
+    assert_eq!(table.name(), "users");
+    assert!(unique);
+    assert!(!if_not_exists);
+    assert_eq!(columns.len(), 1);
+    let CsqlIndexColumn { name: cn, .. } = &columns[0];
+    assert_eq!(cn.value(), "id");
+}
+
+#[test]
+fn alter_table_add_column_returns_alter_table() {
+    let alter = AlterTableStatement {
+        span: cspan(),
+        table: ident_name("users"),
+        operation: AlterTableOperation::AddColumn(AddColumnDefinition {
+            name: ident_name("email"),
+            data_type: TsqlDataType::Varchar(Some(255)),
+            nullability: Some(true),
+            identity: false,
+        }),
+    };
+    let stmt = Statement::AlterTable(Box::new(alter));
+    let converted = to_common_sql(&stmt);
+    let Some(CsqlStmt::AlterTable(boxed)) = converted else {
+        panic!("expected Some(AlterTable), got {converted:?}");
+    };
+    // T-SQL operation (singular) must be wrapped into actions: Vec (plural).
+    let CsqlAlterTable { name, actions, .. } = boxed.as_ref();
+    assert_eq!(name.name(), "users");
+    assert_eq!(actions.len(), 1);
+    let CsqlAlterAction::AddColumn(CsqlColumnDef {
+        name: cn,
+        data_type,
+        ..
+    }) = &actions[0]
+    else {
+        panic!("expected AddColumn action, got {:?}", actions[0]);
+    };
+    assert_eq!(cn.value(), "email");
+    assert_eq!(
+        *data_type,
+        common_sql::ast::DataType::VarChar { length: Some(255) }
+    );
+}
+
+// --- Edge: Create variants with no destination -> None ---
+
+#[test]
+fn create_view_returns_none_t2() {
+    let view = ViewDefinition {
+        span: cspan(),
+        name: ident_name("v_users"),
+        query: Box::new(select_star("users")),
+    };
+    let stmt = Statement::Create(Box::new(CreateStatement::View(view)));
+    assert!(to_common_sql(&stmt).is_none(), "CREATE VIEW -> None");
+}
+
+#[test]
+fn create_trigger_returns_none_t2() {
+    let trig = TriggerDefinition {
+        span: cspan(),
+        name: ident_name("tr_users_ins"),
+        table: ident_name("users"),
+        events: vec![TriggerEvent::Insert],
+        body: vec![],
+    };
+    let stmt = Statement::Create(Box::new(CreateStatement::Trigger(trig)));
+    assert!(to_common_sql(&stmt).is_none(), "CREATE TRIGGER -> None");
+}
+
+#[test]
+fn batch_separator_returns_none_unchanged() {
+    let stmt = Statement::BatchSeparator(ast::BatchSeparator {
+        span: cspan(),
+        repeat_count: None,
+    });
+    assert!(to_common_sql(&stmt).is_none(), "BatchSeparator -> None");
+}
+
+// --- DataType short-circuit (design.md §0.6) ---
+//
+// Bit / Money / SmallMoney / SmallDateTime have no common-sql destination:
+// the whole CREATE TABLE returns None (parity with convert_select's whole-
+// statement None contract). UniqueIdentifier maps to Uuid and returns Some.
+
+fn table_with_col(dt: TsqlDataType) -> Statement {
+    let td = table_def("t", vec![col_def("c", dt)]);
+    Statement::Create(Box::new(CreateStatement::Table(td)))
+}
+
+#[test]
+fn create_table_bit_column_short_circuits_to_none() {
+    assert!(to_common_sql(&table_with_col(TsqlDataType::Bit)).is_none());
+}
+
+#[test]
+fn create_table_money_column_short_circuits_to_none() {
+    assert!(to_common_sql(&table_with_col(TsqlDataType::Money)).is_none());
+}
+
+#[test]
+fn create_table_smallmoney_column_short_circuits_to_none() {
+    assert!(
+        to_common_sql(&table_with_col(TsqlDataType::SmallMoney)).is_none(),
+        "SmallMoney has no common-sql dest -> whole stmt None"
+    );
+}
+
+#[test]
+fn create_table_smalldatetime_column_short_circuits_to_none() {
+    assert!(
+        to_common_sql(&table_with_col(TsqlDataType::SmallDateTime)).is_none(),
+        "SmallDateTime has no common-sql dest -> whole stmt None"
+    );
+}
+
+#[test]
+fn create_table_uniqueidentifier_maps_to_uuid() {
+    let stmt = table_with_col(TsqlDataType::UniqueIdentifier);
+    let Some(CsqlStmt::CreateTable(boxed)) = to_common_sql(&stmt) else {
+        panic!("expected Some(CreateTable) for UniqueIdentifier");
+    };
+    let col = &boxed.columns[0];
+    assert_eq!(col.data_type, common_sql::ast::DataType::Uuid);
+}
+
+// --- Non-regression: existing None-propagation for DML unchanged ---
+
+#[test]
+fn existing_create_none_dispatch_does_not_touch_select() {
+    // SELECT still converts even though Create/AlterTable/BatchSeparator share
+    // the dispatch table — the DDL wiring must not alter SELECT/INSERT paths.
+    let sel = select_star("users");
+    let stmt = Statement::Select(Box::new(sel));
+    assert!(to_common_sql(&stmt).is_some(), "SELECT must still convert");
 }
