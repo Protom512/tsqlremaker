@@ -200,3 +200,219 @@ fn emit_select_limit() {
     let mysql_sql = emitter().emit(&Statement::Select(Box::new(stmt))).unwrap();
     assert!(mysql_sql.contains("LIMIT 10"));
 }
+
+// =============================================================================
+// DDL emit tests (T3): CREATE / ALTER / DROP TABLE, CREATE / DROP INDEX
+// =============================================================================
+
+use common_sql::ast::ddl::{
+    AlterTableAction, AlterTableStatement, ColumnConstraint, ColumnDef, CreateIndexStatement,
+    CreateTableStatement, DropIndexStatement, DropTableStatement, IndexColumn, TableConstraint,
+    TableOptions,
+};
+use common_sql::ast::DataType;
+
+fn qualified(name: &str) -> QualifiedName {
+    QualifiedName::new(None, name.to_string())
+}
+
+fn column(name: &str, dt: DataType) -> ColumnDef {
+    ColumnDef {
+        span: span(),
+        name: ident(name),
+        data_type: dt,
+        nullable: true,
+        default: None,
+        constraints: vec![],
+    }
+}
+
+/// CREATE TABLE — single column, no constraints, no options.
+#[test]
+fn emit_create_table_basic() {
+    let stmt = CreateTableStatement {
+        span: span(),
+        if_not_exists: false,
+        temporary: false,
+        name: qualified("users"),
+        columns: vec![ColumnDef {
+            span: span(),
+            name: ident("id"),
+            data_type: DataType::BigInt,
+            nullable: false,
+            default: None,
+            constraints: vec![ColumnConstraint::PrimaryKey],
+        }],
+        constraints: vec![],
+        options: TableOptions::default(),
+    };
+    let sql = emitter()
+        .emit(&Statement::CreateTable(Box::new(stmt)))
+        .unwrap();
+    assert!(sql.starts_with("CREATE TABLE `users`"), "got: {sql}");
+    assert!(
+        sql.contains("`id` BIGINT NOT NULL PRIMARY KEY"),
+        "got: {sql}"
+    );
+}
+
+/// CREATE TABLE with TEMPORARY, IF NOT EXISTS, table-level constraint, and options.
+#[test]
+fn emit_create_table_with_constraint_and_options() {
+    let stmt = CreateTableStatement {
+        span: span(),
+        if_not_exists: true,
+        temporary: true,
+        name: QualifiedName::new(Some("dbo".to_string()), "orders".to_string()),
+        columns: vec![
+            column("id", DataType::BigInt),
+            column("user_id", DataType::BigInt),
+            column(
+                "total",
+                DataType::Decimal {
+                    precision: Some(18),
+                    scale: Some(4),
+                },
+            ),
+        ],
+        constraints: vec![
+            TableConstraint::PrimaryKey {
+                name: Some("pk_orders".to_string()),
+                columns: vec![ident("id")],
+            },
+            TableConstraint::ForeignKey {
+                name: None,
+                columns: vec![ident("user_id")],
+                ref_table: qualified("users"),
+                ref_columns: vec![ident("id")],
+            },
+        ],
+        options: TableOptions {
+            engine: Some("InnoDB".to_string()),
+            charset: Some("utf8mb4".to_string()),
+            collation: None,
+            comment: Some("order table".to_string()),
+        },
+    };
+    let sql = emitter()
+        .emit(&Statement::CreateTable(Box::new(stmt)))
+        .unwrap();
+    assert!(
+        sql.starts_with("CREATE TEMPORARY TABLE IF NOT EXISTS `dbo`.`orders`"),
+        "got: {sql}"
+    );
+    assert!(
+        sql.contains("CONSTRAINT `pk_orders` PRIMARY KEY (`id`)"),
+        "got: {sql}"
+    );
+    assert!(
+        sql.contains("FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)"),
+        "got: {sql}"
+    );
+    assert!(sql.contains("ENGINE=InnoDB"), "got: {sql}");
+    assert!(sql.contains("DEFAULT CHARSET=utf8mb4"), "got: {sql}");
+    assert!(sql.contains("COMMENT='order table'"), "got: {sql}");
+}
+
+/// ALTER TABLE — all 6 AlterTableAction variants in one statement.
+#[test]
+fn emit_alter_table_all_actions() {
+    let stmt = AlterTableStatement {
+        span: span(),
+        name: qualified("users"),
+        actions: vec![
+            AlterTableAction::AddColumn(ColumnDef {
+                span: span(),
+                name: ident("email"),
+                data_type: DataType::VarChar { length: Some(255) },
+                nullable: true,
+                default: None,
+                constraints: vec![],
+            }),
+            AlterTableAction::DropColumn(ident("legacy")),
+            AlterTableAction::AlterColumn {
+                column: ident("name"),
+                data_type: Some(DataType::VarChar { length: Some(200) }),
+                default: None,
+                nullable: Some(false),
+            },
+            AlterTableAction::AddConstraint(TableConstraint::Unique {
+                name: Some("uk_email".to_string()),
+                columns: vec![ident("email")],
+            }),
+            AlterTableAction::DropConstraint("uk_email".to_string()),
+            AlterTableAction::RenameTo(qualified("accounts")),
+        ],
+    };
+    let sql = emitter()
+        .emit(&Statement::AlterTable(Box::new(stmt)))
+        .unwrap();
+    assert!(sql.starts_with("ALTER TABLE `users`"), "got: {sql}");
+    assert!(
+        sql.contains("ADD COLUMN `email` VARCHAR(255)"),
+        "got: {sql}"
+    );
+    assert!(sql.contains("DROP COLUMN `legacy`"), "got: {sql}");
+    assert!(
+        sql.contains("MODIFY COLUMN `name` VARCHAR(200) NOT NULL"),
+        "got: {sql}"
+    );
+    assert!(
+        sql.contains("ADD CONSTRAINT `uk_email` UNIQUE (`email`)"),
+        "got: {sql}"
+    );
+    assert!(sql.contains("DROP CONSTRAINT `uk_email`"), "got: {sql}");
+    assert!(sql.contains("RENAME TO `accounts`"), "got: {sql}");
+}
+
+/// DROP TABLE — multiple names with IF EXISTS.
+#[test]
+fn emit_drop_table() {
+    let stmt = DropTableStatement {
+        span: span(),
+        if_exists: true,
+        names: vec![qualified("a"), qualified("b")],
+    };
+    let sql = emitter()
+        .emit(&Statement::DropTable(Box::new(stmt)))
+        .unwrap();
+    assert_eq!(sql, "DROP TABLE IF EXISTS `a`, `b`");
+}
+
+/// CREATE [UNIQUE] INDEX with directional columns.
+#[test]
+fn emit_create_index() {
+    let stmt = CreateIndexStatement {
+        span: span(),
+        unique: true,
+        if_not_exists: false,
+        name: ident("uk_email"),
+        table: qualified("users"),
+        columns: vec![IndexColumn {
+            name: ident("email"),
+            direction: Some(SortDirection::Desc),
+        }],
+    };
+    let sql = emitter()
+        .emit(&Statement::CreateIndex(Box::new(stmt)))
+        .unwrap();
+    assert_eq!(
+        sql,
+        "CREATE UNIQUE INDEX `uk_email` ON `users` (`email` DESC)"
+    );
+}
+
+/// DROP INDEX with ON table clause.
+#[test]
+fn emit_drop_index() {
+    let stmt = DropIndexStatement {
+        span: span(),
+        if_exists: false,
+        name: ident("uk_email"),
+        table: Some(qualified("users")),
+    };
+    let sql = emitter()
+        .emit(&Statement::DropIndex(Box::new(stmt)))
+        .unwrap();
+    assert_eq!(sql, "DROP INDEX `uk_email` ON `users`");
+}

@@ -50,6 +50,7 @@
 #![warn(clippy::panic)]
 
 mod config;
+mod ddl;
 mod error;
 mod function_mapper;
 
@@ -154,12 +155,18 @@ impl SqliteEmitter {
             // common_sql::ast::Statement に存在しなかったが、#158 で
             // DialectSpecific バリアントが再追加された。SQLite は未対応のため
             // Unsupported を返す (native 再実装は #158 で追跡)。
-            Statement::CreateTable(_)
-            | Statement::AlterTable(_)
-            | Statement::DropTable(_)
-            | Statement::CreateIndex(_)
-            | Statement::DropIndex(_)
-            | Statement::DialectSpecific { .. } => {
+            // DDL 系 (CREATE/ALTER/DROP TABLE + CREATE/DROP INDEX) は
+            // Group B (#182) で追加された ddl モジュールにディスパッチ。
+            // SQLite 固有の ALTER TABLE 制限 (design §0.4) は各 visit_* 内で
+            // EmitError::Unsupported として表現される。
+            Statement::CreateTable(ct) => self.visit_create_table(ct),
+            Statement::AlterTable(at) => self.visit_alter_table(at),
+            Statement::DropTable(dt) => self.visit_drop_table(dt),
+            Statement::CreateIndex(ci) => self.visit_create_index(ci),
+            Statement::DropIndex(di) => self.visit_drop_index(di),
+            // #158: DialectSpecific (T-SQL 制御構文等の方言固有文)。
+            // SQLite は native 変換しないため Unsupported を返す (復元は #158 で追跡)。
+            Statement::DialectSpecific { .. } => {
                 Err(EmitError::Unsupported(statement_kind_name(stmt)))
             }
         }
@@ -2211,35 +2218,34 @@ mod tests {
     }
 
     // ============================================================
-    // DDL は Unsupported (common_sql::ast::Statement に DialectSpecific なし)
+    // DDL: Group B (#182) で CREATE/DROP TABLE, CREATE/DROP INDEX, ALTER TABLE
+    // (ADD/DROP COLUMN, RENAME TO) が emit 対応された。ALTER COLUMN (型変更) と
+    // DROP CONSTRAINT は SQLite 仕様 (design §0.4) で Unsupported のまま。
     // ============================================================
 
     #[test]
-    fn test_emit_ddl_returns_unsupported() {
-        // DDL 系は本 emitter が未対応。
-        // 最小の CreateTableStatement を構築して Unsupported を確認。
-        use common_sql::ast::{CreateTableStatement, TableConstraint, TableOptions};
+    fn test_emit_create_table_dispatches_to_ddl_module() {
+        // DDL 系は Group B (#182) で emit 対応。Unsupported ではなく SQL を返す。
+        use common_sql::ast::{ColumnDef, CreateTableStatement, DataType, TableOptions};
         let ddl = Statement::CreateTable(Box::new(CreateTableStatement {
             span: Span::new(0, 10),
             if_not_exists: false,
             temporary: false,
             name: qualified_table("t"),
-            columns: vec![],
-            constraints: Vec::<TableConstraint>::new(),
-            options: TableOptions {
-                engine: None,
-                charset: None,
-                collation: None,
-                comment: None,
-            },
+            columns: vec![ColumnDef {
+                span: Span::new(0, 5),
+                name: id("c"),
+                data_type: DataType::Int,
+                nullable: true,
+                default: None,
+                constraints: vec![],
+            }],
+            constraints: vec![],
+            options: TableOptions::default(),
         }));
         let mut emitter = SqliteEmitter::default();
-        let result = emitter.emit(&ddl);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            EmitError::Unsupported(msg) => assert_eq!(msg, "CREATE TABLE"),
-            other => panic!("expected Unsupported, got {other:?}"),
-        }
+        let sql = emitter.emit(&ddl).unwrap();
+        assert_eq!(sql, "CREATE TABLE \"t\" (\"c\" INTEGER)");
     }
 
     // T6 (#158): DialectSpecific バリアントのパリティ検証。
@@ -2273,44 +2279,17 @@ mod tests {
     }
 
     #[test]
-    fn test_statement_kind_name_all_ddl() {
-        // 全 DDL バリアントの種別名 (エラーメッセージ用)
-        // 直接関数は private だが、エミット経由で各メッセージを検証
-        use common_sql::ast::{
-            CreateTableStatement, DropTableStatement, TableConstraint, TableOptions,
-        };
-        let mk = |kind: &str, stmt: Statement| {
-            let mut emitter = SqliteEmitter::default();
-            match emitter.emit(&stmt) {
-                Err(EmitError::Unsupported(msg)) => assert_eq!(msg, kind),
-                other => panic!("expected Unsupported({kind}), got {other:?}"),
-            }
-        };
-        mk(
-            "CREATE TABLE",
-            Statement::CreateTable(Box::new(CreateTableStatement {
-                span: Span::new(0, 10),
-                if_not_exists: false,
-                temporary: false,
-                name: qualified_table("t"),
-                columns: vec![],
-                constraints: Vec::<TableConstraint>::new(),
-                options: TableOptions {
-                    engine: None,
-                    charset: None,
-                    collation: None,
-                    comment: None,
-                },
-            })),
-        );
-        mk(
-            "DROP TABLE",
-            Statement::DropTable(Box::new(DropTableStatement {
-                span: Span::new(0, 10),
-                if_exists: false,
-                names: vec![qualified_table("t")],
-            })),
-        );
+    fn test_emit_drop_table_dispatches_to_ddl_module() {
+        // DROP TABLE も Group B (#182) で emit 対応。
+        use common_sql::ast::DropTableStatement;
+        let ddl = Statement::DropTable(Box::new(DropTableStatement {
+            span: Span::new(0, 10),
+            if_exists: false,
+            names: vec![qualified_table("t")],
+        }));
+        let mut emitter = SqliteEmitter::default();
+        let sql = emitter.emit(&ddl).unwrap();
+        assert_eq!(sql, "DROP TABLE \"t\"");
     }
 
     // ============================================================

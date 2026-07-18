@@ -45,6 +45,7 @@
 
 mod config;
 mod converters;
+mod ddl;
 mod emitter;
 mod error;
 mod statement;
