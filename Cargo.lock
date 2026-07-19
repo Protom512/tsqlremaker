@@ -1239,6 +1239,8 @@ version = "0.1.0"
 dependencies = [
  "common-sql",
  "rstest",
+ "serde",
+ "serde_json",
  "thiserror",
  "tsql-parser",
 ]

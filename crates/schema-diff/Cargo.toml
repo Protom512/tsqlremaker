@@ -27,6 +27,15 @@ common-sql = { path = "../common-sql" }
 # (schema-diff -> tsql-parser -> common-sql); tsql-parser does NOT depend on
 # schema-diff, so the workspace DAG stays clean (verified with `cargo tree`).
 tsql-parser = { path = "../tsql-parser" }
+# T8.1: serde/serde_json are NON-DEV dependencies used by JsonCatalogProvider
+# (T8.3) to deserialize the catalog JSON wire-format into CatalogSchema via a
+# private DTO. Pinned directly (NOT `{workspace=true}`) because serde is NOT a
+# workspace dependency — it is declared per-crate (ase-ls-core/ase-ls/wasm)
+# using this exact convention. Matching ase-ls-core keeps the version contract
+# identical across the workspace and avoids a {workspace=true} resolution
+# failure (serde is absent from [workspace.dependencies]).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 thiserror = { workspace = true }
 
 [dev-dependencies]
