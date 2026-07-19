@@ -1,0 +1,30 @@
+[package]
+name = "schema-diff"
+version = "0.1.0"
+edition = "2021"
+description = "Schema diff engine: computes DDL migration plans between a catalog and a desired schema."
+license = "MIT"
+
+# T6 scope: crate skeleton with catalog model + mapper + warning.
+#
+# The `ase` feature and its `ase-rs` git dependency are intentionally NOT
+# declared here yet. Cargo resolves optional git dependencies even on default
+# builds to read their metadata, and ase-rs lives in a private upstream that
+# requires authentication — declaring it now would break the T6 quality gate
+# (`cargo check -p schema-diff`) and every workspace command for all developers.
+#
+# T9 will add the `[features] ase = ["dep:ase-rs"]` line and the
+# `[dependencies.ase-rs] git = "..." optional = true` block alongside the
+# `#[cfg(feature = "ase")]` AseCatalogProvider in `src/adapters/ase.rs`.
+# This matches spec tasks.md line 253: "crates/schema-diff/Cargo.toml: T6 (作成)
+# → T9 (ase feature 行追加)".
+
+[dependencies]
+common-sql = { path = "../common-sql" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+
+[lints]
+workspace = true
