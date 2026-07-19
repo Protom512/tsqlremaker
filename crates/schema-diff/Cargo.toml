@@ -21,6 +21,12 @@ license = "MIT"
 
 [dependencies]
 common-sql = { path = "../common-sql" }
+# T7: `build_desired_schema` parses DDL via `tsql_parser::parse_with_errors`
+# and lifts it through `tsql_parser::ast::to_common_sql::to_common_sql` before
+# mapping into `CatalogSchema`. The dependency direction is one-way
+# (schema-diff -> tsql-parser -> common-sql); tsql-parser does NOT depend on
+# schema-diff, so the workspace DAG stays clean (verified with `cargo tree`).
+tsql-parser = { path = "../tsql-parser" }
 thiserror = { workspace = true }
 
 [dev-dependencies]

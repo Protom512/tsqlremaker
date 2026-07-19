@@ -1240,6 +1240,7 @@ dependencies = [
  "common-sql",
  "rstest",
  "thiserror",
+ "tsql-parser",
 ]
 
 [[package]]
