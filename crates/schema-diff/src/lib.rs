@@ -20,7 +20,11 @@
 //! - [`emit`]: `AlterOperation` + `plan_operations` + `to_statements` (design §4 / §5).
 //! - [`warning`]: `MigrationWarning` (design §2.6).
 //! - [`mapper`]: common-sql AST ↔ `CatalogSchema` conversions (design §7).
+//! - [`adapters`]: `CatalogProvider` implementations — `adapters::json`
+//!   (always compiled) and, under the `ase` feature, `adapters::ase`
+//!   (design §3.5 / §0.1).
 
+pub mod adapters;
 pub mod catalog;
 pub mod diff;
 pub mod emit;
