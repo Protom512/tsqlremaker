@@ -17,6 +17,8 @@
 //!
 //! - [`catalog`]: catalog data model and the `CatalogProvider` trait (design §3).
 //! - [`diff`]: diff data model + `diff_schema` (design §2 / §5).
+//! - [`dialect`]: `Dialect` enum — single source of truth for the three target
+//!   SQL dialects (design §0.1 / tasks.md Task 10.1). The bin CLI delegates here.
 //! - [`emit`]: `AlterOperation` + `plan_operations` + `to_statements` (design §4 / §5).
 //! - [`warning`]: `MigrationWarning` (design §2.6).
 //! - [`mapper`]: common-sql AST ↔ `CatalogSchema` conversions (design §7).
@@ -26,6 +28,7 @@
 
 pub mod adapters;
 pub mod catalog;
+pub mod dialect;
 pub mod diff;
 pub mod emit;
 pub mod mapper;
@@ -62,6 +65,24 @@ pub fn plan_operations(diff: &diff::SchemaDiff) -> Vec<emit::AlterOperation> {
 #[must_use]
 pub fn to_statements(ops: &[emit::AlterOperation]) -> Vec<ast::Statement> {
     emit::to_statements(ops)
+}
+
+/// `AlterOperation` 列を指定方言向けに `common_sql::ast::Statement` 列に変換する
+/// (design §0.4 / tasks.md Task 10.1)。
+///
+/// SQLite の場合、ネイティブ非サポートの `AlterColumn` / `DropConstraint` を
+/// per-action で警告化して SQL から除外する。詳細は
+/// [`emit::to_statements_for_dialect`] を参照。
+///
+/// 戻り値は `(statements, warnings)`。`warnings` は方言起因の
+/// `MigrationWarning::UnsupportedDialect` のみを含む (`SchemaDiff.warnings`
+/// とは独立)。呼び出し側は両方を STDERR に出力すること。
+#[must_use]
+pub fn to_statements_for_dialect(
+    ops: &[emit::AlterOperation],
+    dialect: dialect::Dialect,
+) -> (Vec<ast::Statement>, Vec<warning::MigrationWarning>) {
+    emit::to_statements_for_dialect(ops, dialect)
 }
 
 /// CREATE TABLE 系 DDL 文列をパースして desired 側 `CatalogSchema` を構築する。

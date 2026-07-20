@@ -42,12 +42,18 @@ use std::process::ExitCode;
 use clap::{Parser, ValueEnum};
 use schema_diff::adapters::json::JsonCatalogProvider;
 use schema_diff::catalog::CatalogProvider;
+use schema_diff::dialect::Dialect as LibDialect;
 use schema_diff::warning::MigrationWarning;
-use schema_diff::{build_desired_schema, diff_schema, plan_operations, to_statements};
+use schema_diff::{build_desired_schema, diff_schema, plan_operations, to_statements_for_dialect};
 
 /// The dialect emitted to STDOUT. Each variant dispatches to the matching
 /// emitter crate using the emitter's ACTUAL config-type name (CTO condition
 /// #3): mysql/sqlite use `EmitterConfig`, postgresql uses `EmissionConfig`.
+///
+/// This is a clap `ValueEnum` adapter that converts 1:1 into the library's
+/// [`LibDialect`] (the single source of truth in `crates/schema-diff/src/dialect.rs`).
+/// Keeping the conversion in one place prevents the variant spelling / ordering
+/// from drifting between the CLI and the emit layer (T10-4 wiring).
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum Dialect {
     /// MySQL / SAP ASE-compatible rendering.
@@ -56,6 +62,21 @@ enum Dialect {
     Postgresql,
     /// SQLite rendering.
     Sqlite,
+}
+
+impl Dialect {
+    /// Converts the clap `ValueEnum` into the library's [`LibDialect`].
+    ///
+    /// Order-preserving 1:1 mapping — both enums declare variants in the same
+    /// MySQL → PostgreSQL → SQLite order, so this conversion cannot drift.
+    #[must_use]
+    const fn to_lib(self) -> LibDialect {
+        match self {
+            Self::Mysql => LibDialect::Mysql,
+            Self::Postgresql => LibDialect::Postgresql,
+            Self::Sqlite => LibDialect::Sqlite,
+        }
+    }
 }
 
 /// schema-diff CLI arguments (design §5 / tasks.md Task 11.1).
@@ -121,7 +142,20 @@ fn run(cli: &Cli) -> Result<(), String> {
 
     // ---- plan: lift the diff into dialect-neutral AlterOperations ----
     let ops = plan_operations(&diff);
-    let stmts = to_statements(&ops);
+
+    // ---- partition: drop SQLite-unsupported actions, surface as warnings ----
+    // design §0.4 / tasks.md Task 10.1: SQLite's native ALTER TABLE limits mean
+    // `AlterColumn` (type change) and `DropConstraint` cannot be emitted as-is.
+    // `to_statements_for_dialect` partitions per-action (AddColumn survives,
+    // AlterColumn is warned + stripped) rather than dropping the whole ALTER.
+    // The returned `dialect_warnings` are merged into the same STDERR stream
+    // as `diff.warnings` (design §5 / §2.6).
+    let (stmts, dialect_warnings) = to_statements_for_dialect(&ops, cli.dialect.to_lib());
+
+    // Dialect-unsupported warnings go to STDERR alongside diff-derived warnings.
+    for warning in &dialect_warnings {
+        eprintln!("warning: {}", render_warning(warning));
+    }
 
     // ---- emit: dispatch to the selected dialect emitter ----
     let sql = match cli.dialect {
