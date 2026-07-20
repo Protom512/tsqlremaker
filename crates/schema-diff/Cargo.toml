@@ -5,6 +5,17 @@ edition = "2021"
 description = "Schema diff engine: computes DDL migration plans between a catalog and a desired schema."
 license = "MIT"
 
+# T11.1: `[[bin]]` target declared explicitly so `cargo build -p schema-diff`
+# (and `cargo nextest run -p schema-diff` integration tests via `cargo_bin`)
+# resolve the binary target. Added here ahead of T11.2 (binary implementation)
+# to keep the manifest stable across the remaining T11 tasks. The entry file
+# `src/bin/schema-diff.rs` ships as a minimal stub in T11.1 so the crate stays
+# compilable with default features (AC-5/AC-6); T11.2 replaces the stub with
+# the real clap-driven CLI.
+[[bin]]
+name = "schema-diff"
+path = "src/bin/schema-diff.rs"
+
 # T6 scope: crate skeleton with catalog model + mapper + warning.
 #
 # The `ase` feature and its `ase-rs` git dependency are intentionally NOT
@@ -20,6 +31,12 @@ license = "MIT"
 # → T9 (ase feature 行追加)".
 
 [dependencies]
+# T11.1: `clap` with `derive` powers the `#[derive(Parser)]` CLI struct added in
+# T11.2. Convention matches ase-ls/Cargo.toml:22 verbatim
+# (`clap = { version = "4", features = ["derive"] }`). Pinned directly
+# (NOT `{workspace=true}`) because clap is NOT a workspace dependency — it is
+# declared per-binary-crate using this exact form.
+clap = { version = "4", features = ["derive"] }
 common-sql = { path = "../common-sql" }
 # T7: `build_desired_schema` parses DDL via `tsql_parser::parse_with_errors`
 # and lifts it through `tsql_parser::ast::to_common_sql::to_common_sql` before
@@ -37,9 +54,24 @@ tsql-parser = { path = "../tsql-parser" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = { workspace = true }
+# T11.2: the three dialect emitters are runtime dependencies because the CLI
+# binary dispatches to the selected `--dialect` emitter to render the migration
+# statements into SQL text on STDOUT. Dependency direction stays strictly
+# downward (schema-diff -> {mysql,postgresql,sqlite}-emitter -> common-sql);
+# no emitter depends on schema-diff, so the workspace DAG stays clean.
+mysql-emitter = { path = "../mysql-emitter" }
+postgresql-emitter = { path = "../postgresql-emitter" }
+sqlite-emitter = { path = "../sqlite-emitter" }
 
 [dev-dependencies]
 rstest = { workspace = true }
+# T11.3: `assert_cmd` resolves the `schema-diff` binary target via
+# `cargo_bin("schema-diff")` (stdlib `current_exe`-based resolution; works on
+# Rust 1.85+, the workspace ships 1.95) so the integration test can drive the
+# published binary as a black box. `predicates` backs the STDOUT substring
+# matchers. Both are dev-only — they never reach the published artifact.
+assert_cmd = "2"
+predicates = "3"
 
 [lints]
 workspace = true
