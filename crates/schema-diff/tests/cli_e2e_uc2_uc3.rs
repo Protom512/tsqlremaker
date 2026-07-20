@@ -32,11 +32,15 @@ fn bin() -> Command {
 
 /// Writes `contents` to a fresh temp file and returns its path. Matches the
 /// helper convention in `cli_e2e.rs` (T11.3) so both files stay aligned.
+static TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn write_temp(name: &str, contents: &str) -> String {
+    let id = TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!(
-        "schema-diff-t11-45-{}-{}",
+        "schema-diff-t11-45-{}-{}-{}",
         std::process::id(),
-        name
+        id,
+        name.replace('.', "_")
     ));
     fs::create_dir_all(&dir).expect("temp dir creation must not fail in tests");
     let path = dir.join(name);
