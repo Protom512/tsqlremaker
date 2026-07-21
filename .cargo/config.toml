@@ -26,3 +26,33 @@
 #   - design.md §0.1 (feature-gate ACL) / §6.1 (5-dep ase-rs workspace split)
 [net]
 git-fetch-with-cli = true
+
+# T9.6 (CTO 2026-07-21 blocker resolution — PR #201): clear the Authorization
+# header Cargo/git would otherwise send when fetching the ase-rs upstream.
+#
+# Root cause: `actions/checkout@v7` runs with `persist-credentials: true`
+# (default), which writes the tsqlremaker-scoped GITHUB_TOKEN into
+# `http.https://github.com/.extraheader`. `includeIf.gitdir` scopes that
+# credential to the workspace gitdir, so when cargo (shelling out to git via
+# `git-fetch-with-cli = true` above) fetches the *separate public* repo
+# `github.com/Sou-Tokuda/ase-rs`, git sends the foreign-repo token as an
+# Authorization header. GitHub rejects the invalid-scope token (401/403) with
+# no anonymous fallback, surfacing as `revision ... not found` / exit 128
+# -> CI 7/9 red on PR #201.
+#
+# Fix: clear `extraHeader` for the ase-rs URL specifically. ase-rs is verified
+# public-read (`git ls-remote https://github.com/Sou-Tokuda/ase-rs` succeeds
+# anonymously, HEAD = main = 2bc35515), so cargo now fetches it without any
+# credential. This stanza is URL-scoped to the ase-rs repo and therefore does
+# NOT affect tsqlremaker's own checkout authentication.
+#
+# Key spelling note: cargo config uses `extraHeader` (camelCase), the
+# cargo-native key documented at
+# https://doc.rust-lang.org/cargo/reference/config.html#httpextra-header
+# (distinct from git config's lowercase `extraheader`).
+#
+# Refs:
+#   - design.md §6.1 (CI note added alongside this stanza)
+#   - PR #201 build logs (ase-rs fetch failures)
+[http."https://github.com/Sou-Tokuda/ase-rs"]
+extraHeader = ""
