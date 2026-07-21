@@ -16,12 +16,13 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7
-      # T9.6 (CTO 2026-07-21 PR #201): see ci.yml lint job note. Stops the
-      # workspace GITHUB_TOKEN from leaking as an Authorization header when
-      # cargo resolves the ase-rs git upstream (public-read repo) during
-      # `cargo build` / `cargo test`. Without this, ase-rs fetch fails with
-      # exit 128 / `revision ... not found`.
-      persist-credentials: false
+      with:
+        # T9.6 (CTO 2026-07-21 PR #201): see ci.yml lint job note. Stops the
+        # workspace GITHUB_TOKEN from leaking as an Authorization header when
+        # cargo resolves the ase-rs git upstream (public-read repo) during
+        # `cargo build` / `cargo test`. Without this, ase-rs fetch fails with
+        # exit 128 / `revision ... not found`.
+        persist-credentials: false
     - name: Build
       run: cargo build --verbose
     - name: Run tests

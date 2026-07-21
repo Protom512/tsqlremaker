@@ -16,9 +16,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7
-      # T9.6 (CTO 2026-07-21 PR #201): see ci.yml lint job note. Stops the
-      # workspace GITHUB_TOKEN from leaking on the ase-rs fetch (public-read).
-      persist-credentials: false
+      with:
+        # T9.6 (CTO 2026-07-21 PR #201): see ci.yml lint job note. Stops the
+        # workspace GITHUB_TOKEN from leaking on the ase-rs fetch
+        # (public-read).
+        persist-credentials: false
     - uses: actions-rs/toolchain@v1
       with:
         toolchain: nightly
