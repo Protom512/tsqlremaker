@@ -1,0 +1,28 @@
+# T9.0 (CTO 2026-07-14 condition #2 — collapsed): route Cargo's git fetches
+# through the system `git` CLI instead of the bundled libgit2.
+#
+# The `schema-diff` `ase` feature pulls optional crates from the public
+# upstream `https://github.com/Sou-Tokuda/ase-rs` (verified public-read: a
+# clean `git clone --depth 1` succeeds and `git ls-remote` lists every ref
+# including `refs/heads/main` = `2bc35515`). On CI, however, Cargo's default
+# libgit2-based fetch fails the GitHub auth handshake and surfaces as
+# `revision ... not found / failed to authenticate ... credential.helper`
+# (see PR #201 build logs). `net.git-fetch-with-cli = true` makes Cargo shell
+# out to `git`, which performs the public-read clone correctly.
+#
+# Placement: this MUST live at the WORKSPACE ROOT (not under
+# `crates/schema-diff/.cargo/`) because Cargo discovers config by walking UP
+# from the invocation cwd, and CI runs workspace-wide commands
+# (`cargo build`, `cargo nextest run --workspace`, `cargo clippy --workspace`)
+# from the repo root. A crate-local config would be invisible to those
+# commands (this was the first attempted fix — see the reverted commit).
+#
+# The setting has zero effect on the default (ase-rs-free) build: the
+# upstream is only resolved under `--features ase`, so `git-fetch-with-cli`
+# only engages when that feature is on.
+#
+# Refs:
+#   - https://doc.rust-lang.org/cargo/reference/config.html#netgit-fetch-with-cli
+#   - design.md §0.1 (feature-gate ACL) / §6.1 (5-dep ase-rs workspace split)
+[net]
+git-fetch-with-cli = true
