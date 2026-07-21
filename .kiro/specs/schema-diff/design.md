@@ -656,10 +656,16 @@ name = "schema-diff"
 version = "0.1.0"
 edition = "2021"
 
-# CI note: ase-rs is public-read, but actions/checkout injects the workspace
-# GITHUB_TOKEN that GitHub rejects for the foreign ase-rs URL. The workspace
-# .cargo/config.toml clears the Authorization header for the ase-rs URL
-# (see PR #201 / T9.6). Do NOT remove that stanza without a verified replacement.
+# CI note: ase-rs is public-read, but actions/checkout@v7 (default
+# persist-credentials: true) injects the workspace GITHUB_TOKEN that GitHub
+# rejects (401/403, no anonymous fallback) for the foreign ase-rs URL when
+# cargo fetches it. The first-attempt fix — clearing extraHeader in
+# .cargo/config.toml — did NOT work (cargo emitted `unused config key` and
+# the fetch still failed). The effective fix is
+# .github/workflows/ci.yml setting `persist-credentials: false` on every
+# actions/checkout@v7, so the token is never written to the git extraheader
+# in the first place (see PR #201 / T9.6). Do NOT re-enable
+# persist-credentials on those steps without a verified replacement.
 [features]
 default = []
 # ASE ライブカタログ取得 (非公開 git upstream `Sou-Tokuda/ase-rs`)。default off。

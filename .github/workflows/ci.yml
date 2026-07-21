@@ -17,6 +17,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        # T9.6 (CTO 2026-07-21 PR #201): prevent actions/checkout from writing
+        # the tsqlremaker-scoped GITHUB_TOKEN into
+        # `http.https://github.com/.extraheader`. With the default
+        # `persist-credentials: true`, git attaches that token as an
+        # Authorization header when cargo fetches the *separate public* repo
+        # github.com/Sou-Tokuda/ase-rs; GitHub rejects the invalid-scope token
+        # (401/403, no anonymous fallback) -> ase-rs fetch fails (exit 128).
+        # ase-rs is public-read, so no checkout credential is needed for it.
+        persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -58,6 +67,11 @@ jobs:
         rust: [stable]
     steps:
       - uses: actions/checkout@v7
+        # T9.6 (CTO 2026-07-21 PR #201): see lint job note. Stops the workspace
+        # GITHUB_TOKEN from leaking as an Authorization header on the ase-rs
+        # fetch (public-read repo). Required for `cargo build --workspace`
+        # under the matrix to resolve the ase-rs git upstream.
+        persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -97,6 +111,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        # T9.6 (CTO 2026-07-21 PR #201): see lint job note. Stops the workspace
+        # GITHUB_TOKEN from leaking on the ase-rs fetch (public-read repo).
+        persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -128,6 +145,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        # T9.6 (CTO 2026-07-21 PR #201): see lint job note.
+        persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -143,6 +162,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        # T9.6 (CTO 2026-07-21 PR #201): see lint job note. Required for
+        # `cargo doc --workspace --all-features` which resolves the ase-rs
+        # upstream (ase feature included via --all-features).
+        persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
