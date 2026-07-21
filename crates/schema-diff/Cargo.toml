@@ -16,21 +16,62 @@ license = "MIT"
 name = "schema-diff"
 path = "src/bin/schema-diff.rs"
 
-# T6 scope: crate skeleton with catalog model + mapper + warning.
+# T6 created the crate skeleton (catalog model + mapper + warning). T9 added
+# the `ase` feature + the `ase-types` / `ase-driver` optional git deps below;
+# both stay behind `default = []` so the default publishable build (T11 CLI)
+# never resolves the private upstream (design §0.1 / AC-5 / AC-6). The
+# matching `#[cfg(feature = "ase")]` adapter lives in
+# `src/adapters/ase.rs` (T9.1).
+
+# T9: `ase` feature — live ASE catalog introspection via the ase-rs upstream
+# (design §0.1 / §3.5). The upstream (`https://github.com/Sou-Tokuda/ase-rs`)
+# is a private git workspace (requires authentication), so it MUST stay
+# `optional = true` behind `default = []` — otherwise the default publishable
+# build (T11 CLI) breaks for every developer and CI run (AC-5/AC-6).
 #
-# The `ase` feature and its `ase-rs` git dependency are intentionally NOT
-# declared here yet. Cargo resolves optional git dependencies even on default
-# builds to read their metadata, and ase-rs lives in a private upstream that
-# requires authentication — declaring it now would break the T6 quality gate
-# (`cargo check -p schema-diff`) and every workspace command for all developers.
+# CTO 2026-07-14 condition: the upstream root Cargo.toml is `[workspace]`-only
+# (NO `[lib]`), so `dep:ase-rs` in design §6.1 is unresolvable. The real
+# crates are the workspace members `ase-driver` (live `Connection`) and
+# `ase-types` (owns `AseDataType`). `ase-driver` does NOT re-export
+# `AseDataType` (verified: `ase-driver/src/lib.rs` exports only
+# connection/error/rpc/statement/transaction), so `map_ase_type` must depend
+# on `ase-types` directly to name `AseDataType` in its signature.
+[features]
+default = []
+# Live ASE catalog access. Off by default — the T11 CLI uses the JSON provider
+# path (`adapters::json`) so it builds without resolving the private upstream.
 #
-# T9 will add the `[features] ase = ["dep:ase-rs"]` line and the
-# `[dependencies.ase-rs] git = "..." optional = true` block alongside the
-# `#[cfg(feature = "ase")]` AseCatalogProvider in `src/adapters/ase.rs`.
-# This matches spec tasks.md line 253: "crates/schema-diff/Cargo.toml: T6 (作成)
-# → T9 (ase feature 行追加)".
+# T9.3 wires the live connection path (`AseCatalogProvider`), which needs
+# `ase-dsn` (DSN string → `ConnectionConfig`) and `ase-tds`
+# (`TdsConnection::connect`) in addition to the T9.1 deps `ase-types`
+# (`AseDataType`) and `ase-driver` (high-level `Connection`). `tokio` is the
+# runtime that drives the `async` driver query from the sync
+# `CatalogProvider::load_schema` trait method (design §3.5 async note).
+ase = ["dep:ase-types", "dep:ase-driver", "dep:ase-dsn", "dep:ase-tds", "dep:tokio"]
 
 [dependencies]
+# T9: `ase-types` owns the `AseDataType` enum used by `map_ase_type`. Optional
+# + git so the default build never resolves the private upstream.
+ase-types = { git = "https://github.com/Sou-Tokuda/ase-rs", optional = true }
+# T9: `ase-driver` owns the live `Connection` held by `AseCatalogProvider`.
+# Same private upstream; gated behind the `ase` feature so the default
+# publishable build never resolves it (design §0.1 / AC-5 / AC-6).
+ase-driver = { git = "https://github.com/Sou-Tokuda/ase-rs", optional = true }
+# T9.3: `ase-dsn` parses a DSN string into a `ConnectionConfig`; `ase-tds`
+# owns `TdsConnection::connect(config)`. Both are workspace members of the
+# same private upstream and are needed to bridge a caller-supplied DSN string
+# to the `ase_driver::Connection`. All `optional` so the default build never
+# resolves the upstream (design §0.1 / AC-5 / AC-6).
+ase-dsn = { git = "https://github.com/Sou-Tokuda/ase-rs", optional = true }
+ase-tds = { git = "https://github.com/Sou-Tokuda/ase-rs", optional = true }
+# T9.3: `ase_driver::Connection::query` is `pub async fn`, but the
+# `CatalogProvider::load_schema` trait contract is sync. The adapter drives the
+# async query to completion on a private `tokio::runtime::Runtime` via
+# `block_on` (design §3.5 async-boundary note). `current_thread` + `enable_all`
+# is sufficient (schema introspection is not CPU-parallel). Only pulled in
+# under the `ase` feature; `default-features = false` keeps the dep minimal.
+tokio = { version = "1", optional = true, default-features = false, features = ["rt"] }
+
 # T11.1: `clap` with `derive` powers the `#[derive(Parser)]` CLI struct added in
 # T11.2. Convention matches ase-ls/Cargo.toml:22 verbatim
 # (`clap = { version = "4", features = ["derive"] }`). Pinned directly
