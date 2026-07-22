@@ -9,6 +9,28 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # CTO 2026-07-21 (option (a) — PR #201 / #194): ase-rs is a PRIVATE repo.
+  # The default GITHUB_TOKEN cannot read it, and `persist-credentials: false`
+  # (the prior 5 failed CI-fix commits) stripped the only credential and
+  # failed with `could not read Username` (exit 128). The approved fix exposes
+  # an ase-rs read-access PAT as repo secret CARGO_ASE_RS_TOKEN, plus
+  # GIT_ASKPASS pointing at .github/scripts/ase-rs-askpass.sh, so cargo (via
+  # net.git-fetch-with-cli = true in .cargo/config.toml) authenticates the git
+  # fetch of the 4 ase crates pinned in Cargo.lock. Auth is NOT feature-gated:
+  # schema-diff is a workspace member and Cargo.lock pins ase-rs rev 2bc35515,
+  # so EVERY `cargo --workspace` op resolves that git source on EVERY job
+  # (Lint / Test matrix / Coverage / Build Docs), not only --all-features.
+  CARGO_ASE_RS_TOKEN: ${{ secrets.CARGO_ASE_RS_TOKEN }}
+  GIT_ASKPASS: ${{ github.workspace }}/.github/scripts/ase-rs-askpass.sh
+  # T-WINDOWS-1 (PR #201): Windows runners fail the ase-rs git fetch with
+  # `fatal: Cannot prompt because user interactivity has been disabled` +
+  # `bash: line 1: /dev/tty: No such file or directory` + `error: failed to
+  # execute prompt script (exit code 1)`, because git-for-Windows tries a TTY
+  # prompt (no controlling terminal exists on a CI runner) and aborts BEFORE
+  # GIT_ASKPASS can supply the PAT. GIT_TERMINAL_PROMPT=0 forces git to rely
+  # solely on GIT_ASKPASS and never block on an interactive prompt. Harmless
+  # on ubuntu/macos (no TTY prompt is attempted there anyway).
+  GIT_TERMINAL_PROMPT: "0"
 
 jobs:
   # ==================== Lint & Format ====================
@@ -17,17 +39,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          # T9.6 (CTO 2026-07-21 PR #201): prevent actions/checkout from
-          # writing the tsqlremaker-scoped GITHUB_TOKEN into
-          # `http.https://github.com/.extraheader`. With the default
-          # `persist-credentials: true`, git attaches that token as an
-          # Authorization header when cargo fetches the *separate public* repo
-          # github.com/Sou-Tokuda/ase-rs; GitHub rejects the invalid-scope
-          # token (401/403, no anonymous fallback) -> ase-rs fetch fails
-          # (exit 128). ase-rs is public-read, so no checkout credential is
-          # needed for it.
-          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -69,13 +80,6 @@ jobs:
         rust: [stable]
     steps:
       - uses: actions/checkout@v7
-        with:
-          # T9.6 (CTO 2026-07-21 PR #201): see lint job note. Stops the
-          # workspace GITHUB_TOKEN from leaking as an Authorization header on
-          # the ase-rs fetch (public-read repo). Required for
-          # `cargo build --workspace` under the matrix to resolve the ase-rs
-          # git upstream.
-          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -115,11 +119,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          # T9.6 (CTO 2026-07-21 PR #201): see lint job note. Stops the
-          # workspace GITHUB_TOKEN from leaking on the ase-rs fetch
-          # (public-read repo).
-          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -151,9 +150,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          # T9.6 (CTO 2026-07-21 PR #201): see lint job note.
-          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -169,11 +165,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          # T9.6 (CTO 2026-07-21 PR #201): see lint job note. Required for
-          # `cargo doc --workspace --all-features` which resolves the ase-rs
-          # upstream (ase feature included via --all-features).
-          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

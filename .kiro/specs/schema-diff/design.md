@@ -656,16 +656,19 @@ name = "schema-diff"
 version = "0.1.0"
 edition = "2021"
 
-# CI note: ase-rs is public-read, but actions/checkout@v7 (default
-# persist-credentials: true) injects the workspace GITHUB_TOKEN that GitHub
-# rejects (401/403, no anonymous fallback) for the foreign ase-rs URL when
-# cargo fetches it. The first-attempt fix — clearing extraHeader in
-# .cargo/config.toml — did NOT work (cargo emitted `unused config key` and
-# the fetch still failed). The effective fix is
-# .github/workflows/ci.yml setting `persist-credentials: false` on every
-# actions/checkout@v7, so the token is never written to the git extraheader
-# in the first place (see PR #201 / T9.6). Do NOT re-enable
-# persist-credentials on those steps without a verified replacement.
+# CI note: ase-rs is a PRIVATE repo (gh api -> private:true), NOT public-read.
+# The runner's default GITHUB_TOKEN is scoped to the tsqlremaker repo and
+# CANNOT read the foreign private ase-rs upstream. The prior
+# `persist-credentials: false` fix (5 commits on PR #201) was based on the
+# false "public-read" premise — it stripped the only credential and failed
+# with `could not read Username` (exit 128). CTO decision (2026-07-21,
+# option (a)): expose an ase-rs read-access PAT as repo secret
+# `CARGO_ASE_RS_TOKEN`, route cargo through the system git CLI
+# (`net.git-fetch-with-cli = true` in workspace-root `.cargo/config.toml`),
+# and point `GIT_ASKPASS` at `.github/scripts/ase-rs-askpass.sh` on every
+# job of ci.yml / rust.yml / codecov.yml. Auth is NOT feature-gated: the
+# Cargo.lock pins ase-rs rev 2bc35515 and schema-diff is a workspace member,
+# so every `cargo --workspace` op resolves that git source. See PR #201.
 [features]
 default = []
 # ASE ライブカタログ取得 (非公開 git upstream `Sou-Tokuda/ase-rs`)。default off。
