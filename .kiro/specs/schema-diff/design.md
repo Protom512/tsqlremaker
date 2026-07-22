@@ -150,6 +150,17 @@ T2 が `convert_create_table` / `convert_column_def` を実装する際、`tsql_
 - `convert_create_table` は全列を走査し、いずれかの列が `None` なら全体 `None` (`?` 伝播で自然に実現)。
 - `convert_alter_table` (`AddColumn` action の場合) も同様。
 
+**T9 ASE カタログ側の短絡との対応**: 本節の `convert_data_type → None` 短絡は
+**desired 側 (DDL ソース → CatalogSchema 構築, T2/T7)** の契約である。
+**current 側 (live ASE カタログ → CatalogSchema, T9)** の対応する short-circuit は
+`map_ase_type` が非対応 ASE 型 (`AseDataType`) を検出した際に
+`CatalogError::UnsupportedCatalogShape` を返す経路 (§3.5.1)。これにより desired/current
+両経路で非対応型が一貫して表面化し、暗黙ドロップは発生しない。
+さらに T9 では CTO 2026-07-14 条件 #3 により、design.md が具体的カタログ問い合わせ
+(sysobjects/syscolumns/sysindexes) を規定しない表面 (= T9b イントロスペクション未実装) は
+暗黙の空スキーマではなく `CatalogError::NotImplemented` (§3.5.1) として明示的に表面化する
+(実装: `crates/schema-diff/src/catalog.rs:96-106`)。
+
 **テスト要件** (tasks.md Task 2.1 に明記):
 
 - 非対応型 (`Bit` 等を含む) CREATE TABLE は `to_common_sql` が `None` を返すこと。
@@ -495,30 +506,40 @@ pub trait CatalogProvider {
 
 ```rust
 /// カタログ取得エラー。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum CatalogError {
     /// カタログアクセス失敗 (接続・クエリエラー)。
+    #[error("catalog access failed: {message}")]
     AccessFailed {
         /// エラーメッセージ。
         message: String,
     },
     /// カタログ情報のパース失敗 (JSON 不正・型不整合)。
+    #[error("catalog parse failed: {message}")]
     ParseFailed {
         /// エラーメッセージ。
         message: String,
     },
-    /// 未対応の ASE 固有データ型・構造。
+    /// 未対応の ASE 固有データ型・構造 (design §0.6 短絡方針)。
+    #[error("unsupported catalog shape: {detail}")]
     UnsupportedCatalogShape {
         /// 詳細。
         detail: String,
     },
+    /// 機能が未実装 (CTO 2026-07-14 条件 #3: design.md が具体的カタログ問い合わせを
+    /// 規定しない表面は T9 範囲外とし、暗黙ドロップではなく明示的に表面化する)。
+    ///
+    /// T9 では `AseCatalogProvider::load_schema` のカタログイントロスペクション
+    /// (sysobjects/syscolumns/sysindexes 読み出し) がこの状態になる (T9b follow-up で実装)。
+    #[error("not implemented: {what}")]
+    NotImplemented {
+        /// 未実装の対象。
+        what: String,
+    },
 }
-
-impl std::fmt::Display for CatalogError {
-    // 各 variant の人間可読形式を実装 (本設計では表示形式まで規定)
-}
-impl std::error::Error for CatalogError {}
 ```
+
+参照型: `thiserror::Error` (workspace 依存、`#[error("...")]` 属性で `Display` を導出)。実装は `crates/schema-diff/src/catalog.rs:76-107` と完全一致 (retrospective-P5: design.md は実装の全 variant を列挙)。
 
 ## 4. AlterOperation (diff → ALTER SQL 変換の中間表現)
 
@@ -635,18 +656,78 @@ name = "schema-diff"
 version = "0.1.0"
 edition = "2021"
 
+# CI note: ase-rs is a PRIVATE repo (gh api -> private:true), NOT public-read.
+# The runner's default GITHUB_TOKEN is scoped to the tsqlremaker repo and
+# CANNOT read the foreign private ase-rs upstream. The prior
+# `persist-credentials: false` fix (5 commits on PR #201) was based on the
+# false "public-read" premise — it stripped the only credential and failed
+# with `could not read Username` (exit 128). CTO decision (2026-07-21,
+# option (a)): expose an ase-rs read-access PAT as repo secret
+# `CARGO_ASE_RS_TOKEN`, route cargo through the system git CLI
+# (`net.git-fetch-with-cli = true` in workspace-root `.cargo/config.toml`),
+# and point `GIT_ASKPASS` at `.github/scripts/ase-rs-askpass.sh` on every
+# job of ci.yml / rust.yml / codecov.yml. Auth is NOT feature-gated: the
+# Cargo.lock pins ase-rs rev 2bc35515 and schema-diff is a workspace member,
+# so every `cargo --workspace` op resolves that git source. See PR #201.
 [features]
 default = []
-# ase-rs (非公開 git upstream) によるライブカタログ取得。default off。
-ase = ["dep:ase-rs"]
+# ASE ライブカタログ取得 (非公開 git upstream `Sou-Tokuda/ase-rs`)。default off。
+#
+# CTO 2026-07-14 条件 #1 (design gate 修正): 上流ルート Cargo.toml は
+# `[workspace]`-only で `[lib]` を持たず、`dep:ase-rs` は解決不能
+# (実証済み: root は members=[ase-driver, ase-tds, ase-types, ase-dsn] のみ)。
+# design §6.1 旧版の `ase = ["dep:ase-rs"]` / `[dependencies.ase-rs]` は
+# dangling 参照 (retrospective-P5 違反) のため、実ワークスペースメンバ
+# (`ase-driver` / `ase-tds` / `ase-types` / `ase-dsn`) に読み替える。
+# `ase-driver` は AseDataType を re-export しないため、型名には `ase-types` を直接参照する。
+#
+# T9.1 (型マッピング + provider 構造体) は `ase-types` + `ase-driver` のみ必要。
+# T9.3 (live 接続パス) は加えて `ase-dsn` (DSN 文字列 → ConnectionConfig)、
+# `ase-tds` (TdsConnection::connect(config))、`tokio` (current_thread runtime で
+# async `ase_driver::Connection::query` を sync `load_schema` から駆動) を必要とする。
+# 全 5 optional dep が同一 git upstream から導入される (実装と一致:
+# `crates/schema-diff/Cargo.toml` 行 50)。
+ase = ["dep:ase-types", "dep:ase-driver", "dep:ase-dsn", "dep:ase-tds", "dep:tokio"]
 
 [dependencies]
 common-sql = { path = "../common-sql" }
 thiserror = { workspace = true }
 
-[dependencies.ase-rs]
+# T9: 以下 5 dep は全て同一 git upstream (`Sou-Tokuda/ase-rs`) のオプショナル依存。
+# default = [] の背後にあるため、デフォルト publishable ビルド (T11 CLI) は
+# 上流を解決しない (design §0.1 / AC-5/AC-6)。各 dep の役割は実装
+# (`crates/schema-diff/Cargo.toml` 行 50-73) と完全一致させること。
+#
+# T9.1: `ase-types` は `AseDataType` enum を所有 (map_ase_type のシグネチャで命名)。
+#        `ase-driver` は high-level live `Connection` を所有
+#        (AseCatalogProvider が保持するハンドル)。
+# T9.3: `ase-dsn` は DSN 文字列を `ConnectionConfig` にパースする。
+#        `ase-tds` は `TdsConnection::connect(config)` を所有し、DSN → Connection 橋を完成させる。
+#        `tokio` は `current_thread` + `enable_all` runtime で async query を
+#        sync `CatalogProvider::load_schema` (design §3.5) から `block_on` 駆動する
+#        (スキーマイントロスペクションは CPU 並列不要なため current_thread で十分)。
+#        `default-features = false` + `features = ["rt"]` で dep を最小化。
+[dependencies.ase-types]
 git = "https://github.com/Sou-Tokuda/ase-rs"
 optional = true
+
+[dependencies.ase-driver]
+git = "https://github.com/Sou-Tokuda/ase-rs"
+optional = true
+
+[dependencies.ase-dsn]
+git = "https://github.com/Sou-Tokuda/ase-rs"
+optional = true
+
+[dependencies.ase-tds]
+git = "https://github.com/Sou-Tokuda/ase-rs"
+optional = true
+
+[dependencies.tokio]
+version = "1"
+optional = true
+default-features = false
+features = ["rt"]
 
 [dev-dependencies]
 rstest = { workspace = true }

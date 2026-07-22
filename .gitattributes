@@ -2,3 +2,9 @@
 # .sql フィクスチャは include_str! / read_fixture で LF 前提のアサーションが
 # あるため、必ず LF でチェックアウト・コミットする (session-21 dogfooding テスト)。
 *.sql text eol=lf
+
+# CI で実行されるシェルスクリプト (GIT_ASKPASS helper / auth-wiring test) は
+# Linux runner 上で実行されるため、CRLF だと shebang (#!/usr/bin/env bash) と
+# set -u のパースが壊れる。必ず LF でコミット・チェックアウトする。
+# (core.autocrlf=true の Windows 環境での誤 CRLF 化を防ぐ)
+*.sh text eol=lf

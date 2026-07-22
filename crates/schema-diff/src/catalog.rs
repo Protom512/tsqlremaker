@@ -93,6 +93,17 @@ pub enum CatalogError {
         /// 詳細。
         detail: String,
     },
+    /// 機能が未実装 (CTO condition #3: design.md が具体的カタログ問い合わせを
+    /// 規定しない表面は T9 範囲外とし、明示的に表面化する)。
+    ///
+    /// T9 では `AseCatalogProvider::load_schema` のカタログイントロスペクション
+    /// (sysobjects/syscolumns/sysindexes 読み出し) がこの状態になる
+    /// (T9b follow-up で実装)。
+    #[error("not implemented: {what}")]
+    NotImplemented {
+        /// 未実装の対象。
+        what: String,
+    },
 }
 
 #[cfg(test)]

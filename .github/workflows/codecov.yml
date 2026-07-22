@@ -8,6 +8,14 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # CTO 2026-07-21 (option (a) — PR #201 / #194): see ci.yml env note. ase-rs
+  # is PRIVATE; the default GITHUB_TOKEN cannot read it. This workflow runs
+  # `cargo build` / `cargo test` (workspace-wide), which resolve the ase-rs
+  # git source pinned in Cargo.lock, so the PAT auth must be present here too.
+  CARGO_ASE_RS_TOKEN: ${{ secrets.CARGO_ASE_RS_TOKEN }}
+  GIT_ASKPASS: ${{ github.workspace }}/.github/scripts/ase-rs-askpass.sh
+  # T-WINDOWS-1 (PR #201): Windows /dev/tty blocker — see ci.yml note.
+  GIT_TERMINAL_PROMPT: "0"
 
 jobs:
   build:

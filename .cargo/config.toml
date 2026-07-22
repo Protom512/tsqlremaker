@@ -1,0 +1,30 @@
+# Route Cargo's git fetches through the system `git` CLI instead of the
+# bundled libgit2.
+#
+# CTO decision (2026-07-21, option (a)): `Sou-Tokuda/ase-rs` is a PRIVATE
+# repo. The 4 ase crates pinned in Cargo.lock (ase-driver / ase-types /
+# ase-dsn / ase-tds @ rev 2bc35515) are resolved from that upstream on every
+# `cargo --workspace` op (schema-diff is a workspace member). The runner's
+# default GITHUB_TOKEN cannot read the foreign private repo; the prior
+# `persist-credentials: false` approach stripped the only credential and
+# failed (`could not read Username`, exit 128).
+#
+# The approved fix exposes an ase-rs read-access PAT as repo secret
+# `CARGO_ASE_RS_TOKEN`, then makes cargo shell out to `git` (this setting)
+# so git honors `GIT_ASKPASS` (see `.github/scripts/ase-rs-askpass.sh`).
+# libgit2 does NOT honor GIT_ASKPASS, so this setting is load-bearing.
+#
+# Placement MUST be the WORKSPACE ROOT: Cargo discovers config by walking UP
+# from the invocation cwd, and CI runs workspace-wide commands
+# (`cargo build --workspace`, `cargo nextest run --workspace`,
+# `cargo clippy --workspace`) from the repo root.
+#
+# Zero effect on the default (ase-feature-off) build beyond the fetch path:
+# the upstream is only materialized when the lockfile is verified, and the
+# PAT is only consulted when git actually needs a credential.
+#
+# Refs:
+#   - https://doc.rust-lang.org/cargo/reference/config.html#netgit-fetch-with-cli
+#   - design.md §6.1 (CI note) / PR #201
+[net]
+git-fetch-with-cli = true
