@@ -5,6 +5,10 @@
 #![warn(missing_docs)]
 #![allow(clippy::module_name_repetitions)]
 
+// Non-WASM-gated AST-to-JS conversion helpers (Issue #61). Default features で
+// コンパイルされ cargo nextest で実行可能。wasm feature の背後に隠さないこと。
+mod ast_convert;
+
 #[cfg(feature = "wasm")]
 mod ast_js;
 #[cfg(feature = "wasm")]
