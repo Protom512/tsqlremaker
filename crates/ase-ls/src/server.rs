@@ -889,6 +889,7 @@ impl LanguageServer for AseLanguageServer {
                     &prefix,
                     &a.symbol_table,
                     &comp_config_for_closure,
+                    &a.statements,
                 ))
             })
             .await

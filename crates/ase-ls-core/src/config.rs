@@ -164,12 +164,27 @@ pub struct CompletionConfig {
     /// When `false`, function completions fall back to plain text (just the
     /// function name followed by `()`). Default `true` (pre-#132 behaviour).
     pub enable_snippets: bool,
+    /// Emit column-name completions in cursor contexts that follow a table
+    /// reference (#54 context-aware completion).
+    ///
+    /// When `false`, column suggestions are suppressed regardless of cursor
+    /// position. Default `true` — an unconfigured server surfaces columns
+    /// (post-#54 intent; users opt out, not in).
+    pub enable_column_completion: bool,
+    /// Prepend in-scope variable completions (`@var`) to the candidate list
+    /// in expression contexts (#54 context-aware completion).
+    ///
+    /// When `false`, variables are omitted from the completion list. Default
+    /// `true` — an unconfigured server surfaces declared variables.
+    pub enable_variable_completion: bool,
 }
 
 impl Default for CompletionConfig {
     fn default() -> Self {
         Self {
             enable_snippets: true,
+            enable_column_completion: true,
+            enable_variable_completion: true,
         }
     }
 }
@@ -340,6 +355,8 @@ mod tests {
             },
             completion: CompletionConfig {
                 enable_snippets: false,
+                enable_column_completion: false,
+                enable_variable_completion: false,
             },
             inlay: InlayConfig::default(),
             document_link: DocumentLinkConfig::default(),
@@ -347,6 +364,119 @@ mod tests {
         let json_str = serde_json::to_string(&cfg).unwrap();
         let parsed: Config = serde_json::from_str(&json_str).unwrap();
         assert_eq!(cfg, parsed);
+    }
+
+    // ------------------------------------------------------------------
+    // CompletionConfig context knobs (#54)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn completion_defaults_preserve_new_behaviour() {
+        let comp = CompletionConfig::default();
+        assert!(comp.enable_snippets, "pre-existing knob unchanged");
+        assert!(
+            comp.enable_column_completion,
+            "new knob defaults to true (preserve post-#54 behaviour)"
+        );
+        assert!(
+            comp.enable_variable_completion,
+            "new knob defaults to true (preserve post-#54 behaviour)"
+        );
+    }
+
+    #[test]
+    fn from_value_missing_completion_section_uses_new_defaults() {
+        let cfg = Config::from_value(&json!({}));
+        assert!(cfg.completion.enable_snippets);
+        assert!(cfg.completion.enable_column_completion);
+        assert!(cfg.completion.enable_variable_completion);
+    }
+
+    #[test]
+    fn from_value_completion_context_knobs_namespaced_override() {
+        let cfg = Config::from_value(&json!({
+            "ase-ls": {
+                "completion": {
+                    "enableColumnCompletion": false,
+                    "enableVariableCompletion": false
+                }
+            }
+        }));
+        assert!(
+            cfg.completion.enable_snippets,
+            "unspecified enable_snippets keeps its default"
+        );
+        assert!(
+            !cfg.completion.enable_column_completion,
+            "camelCase override should be honoured"
+        );
+        assert!(
+            !cfg.completion.enable_variable_completion,
+            "camelCase override should be honoured"
+        );
+    }
+
+    #[test]
+    fn from_value_completion_context_knobs_raw_namespace_override() {
+        // No "ase-ls" wrapper — raw root is accepted.
+        let cfg = Config::from_value(&json!({
+            "completion": { "enableColumnCompletion": false }
+        }));
+        assert!(!cfg.completion.enable_column_completion);
+        assert!(
+            cfg.completion.enable_variable_completion,
+            "unspecified field keeps its default"
+        );
+    }
+
+    #[test]
+    fn from_value_invalid_completion_section_falls_back_to_default_only() {
+        // enableColumnCompletion has a non-boolean value → completion section
+        // resets; a valid inlay override in the same payload must survive.
+        let cfg = Config::from_value(&json!({
+            "ase-ls": {
+                "completion": { "enableColumnCompletion": "yes" },
+                "inlay": { "enableVariableTypes": false }
+            }
+        }));
+        assert!(
+            cfg.completion.enable_snippets,
+            "invalid completion section resets to default (true)"
+        );
+        assert!(
+            cfg.completion.enable_column_completion,
+            "invalid completion section resets to default (true)"
+        );
+        assert!(
+            cfg.completion.enable_variable_completion,
+            "invalid completion section resets to default (true)"
+        );
+        assert!(
+            !cfg.inlay.enable_variable_types,
+            "valid inlay override survives completion failure"
+        );
+    }
+
+    #[test]
+    fn completion_context_knobs_round_trip_through_serde() {
+        let comp = CompletionConfig {
+            enable_snippets: true,
+            enable_column_completion: false,
+            enable_variable_completion: false,
+        };
+        let json_str = serde_json::to_string(&comp).unwrap();
+        let parsed: CompletionConfig = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(comp, parsed);
+
+        // Confirm wire format is camelCase for the new fields.
+        assert!(
+            json_str.contains("enableColumnCompletion"),
+            "expected camelCase field in serialized output, got: {json_str}"
+        );
+        assert!(
+            json_str.contains("enableVariableCompletion"),
+            "expected camelCase field in serialized output, got: {json_str}"
+        );
     }
 
     // ------------------------------------------------------------------
