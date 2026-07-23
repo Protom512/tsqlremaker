@@ -1,7 +1,19 @@
-//! SQLite 関数マッパー
+//! SQLite 関数マッパー (レガシー互換 shim)
 //!
 //! T-SQL 関数を SQLite 関数にマッピングします。
 //! 日付関数 (DATEADD, DATEDIFF) の datepart 変換も含みます。
+//!
+//! ## Issue #75 / Task 2 — 構造体ベースコンバータへの移行
+//!
+//! 旧実装の自由関数は [`crate::converters::FunctionConverter`] の関連関数へ
+//! 昇格されました。本モジュールは後方互換性のため、各自由関数を
+//! [`FunctionConverter`] の対応メソッドへの thin delegation として保持します。
+//! これにより `lib.rs` の既存呼び出し元 (Task 3 で委譲予定) と、既存の
+//! `function_mapper` 単体テストを壊さずに移行を進められます。
+//!
+//! 新規コードは [`crate::converters::FunctionConverter`] を直接使用してください。
+
+use crate::converters::FunctionConverter;
 
 /// T-SQL 関数名を SQLite 関数名にマッピングする。
 ///
@@ -10,47 +22,14 @@
 /// # Arguments
 ///
 /// * `name` - T-SQL 関数名（大文字）
+///
+/// # Deprecation
+///
+/// 後方互換のため残置されています。新規コードは
+/// [`FunctionConverter::map_function_name`] を使用してください。
+#[must_use]
 pub fn map_function_name(name: &str) -> Option<&'static str> {
-    match name {
-        // 日付時刻関数
-        "GETDATE" | "GETUTCDATE" => Some("datetime('now')"),
-        "DATENAME" => Some("strftime"),
-        "DATEPART" => Some("strftime"),
-
-        // 文字列関数
-        "LEN" => Some("length"),
-        "CHARINDEX" => Some("instr"),
-        "LEFT" => Some("substr"),
-        "RIGHT" => Some("substr"),
-        "REPLACE" => Some("replace"),
-        "SUBSTRING" => Some("substr"),
-        "LTRIM" => Some("ltrim"),
-        "RTRIM" => Some("rtrim"),
-        "TRIM" => Some("trim"),
-        "UPPER" => Some("upper"),
-        "LOWER" => Some("lower"),
-
-        // 数学関数
-        "ABS" => Some("abs"),
-        "CEILING" => Some("ceil"),
-        "FLOOR" => Some("floor"),
-        "POWER" => Some("pow"),
-        "ROUND" => Some("round"),
-        "SQRT" => Some("sqrt"),
-
-        // 集計関数（SQLite でも同じ名前、小文字化のみ）
-        "COUNT" => Some("count"),
-        "SUM" => Some("sum"),
-        "AVG" => Some("avg"),
-        "MIN" => Some("min"),
-        "MAX" => Some("max"),
-
-        // NULL 処理
-        "ISNULL" => Some("ifnull"),
-        "COALESCE" => Some("coalesce"),
-
-        _ => None,
-    }
+    FunctionConverter::map_function_name(name)
 }
 
 /// T-SQL の datepart 文字列を SQLite の修飾子単位に変換する。
@@ -59,58 +38,41 @@ pub fn map_function_name(name: &str) -> Option<&'static str> {
 /// 例: `"week"` → `("days", 7)`, `"quarter"` → `("months", 3)`, `"day"` → `("days", 1)`
 ///
 /// ミリ秒は SQLite でサポートされないため `None` を返す。
+///
+/// # Deprecation
+///
+/// 後方互換のため残置されています。新規コードは
+/// [`FunctionConverter::map_datepart_to_modifier`] を使用してください。
+#[must_use]
 pub fn map_datepart_to_modifier(datepart: &str) -> Option<(&'static str, i64)> {
-    match datepart {
-        "year" | "yyyy" | "yy" => Some(("years", 1)),
-        "quarter" | "qq" | "q" => Some(("months", 3)),
-        "month" | "mm" | "m" => Some(("months", 1)),
-        "dayofyear" | "dy" | "y" => Some(("days", 1)),
-        "day" | "dd" | "d" => Some(("days", 1)),
-        "week" | "ww" | "wk" => Some(("days", 7)),
-        "hour" | "hh" => Some(("hours", 1)),
-        "minute" | "mi" | "n" => Some(("minutes", 1)),
-        "second" | "ss" | "s" => Some(("seconds", 1)),
-        "millisecond" | "ms" => None,
-        _ => None,
-    }
+    FunctionConverter::map_datepart_to_modifier(datepart)
 }
 
 /// 時刻を含む datepart かどうかを判定する。
 ///
 /// `true` の場合、SQLite で `datetime()` を使用すべき。
+///
+/// # Deprecation
+///
+/// 後方互換のため残置されています。新規コードは
+/// [`FunctionConverter::is_time_datepart`] を使用してください。
+#[must_use]
 pub fn is_time_datepart(datepart: &str) -> bool {
-    matches!(
-        datepart,
-        "hour" | "hh" | "minute" | "mi" | "n" | "second" | "ss" | "s"
-    )
+    FunctionConverter::is_time_datepart(datepart)
 }
 
 /// datepart が日付ベースの差分計算でサポートされるかどうか。
 ///
 /// DATEDIFF 用: 時間ベース (hour/minute/second/millisecond) は
 /// julianday では精度が不十分なためエラーとする。
+///
+/// # Deprecation
+///
+/// 後方互換のため残置されています。新規コードは
+/// [`FunctionConverter::is_date_datepart`] を使用してください。
+#[must_use]
 pub fn is_date_datepart(datepart: &str) -> bool {
-    matches!(
-        datepart,
-        "year"
-            | "yyyy"
-            | "yy"
-            | "quarter"
-            | "qq"
-            | "q"
-            | "month"
-            | "mm"
-            | "m"
-            | "dayofyear"
-            | "dy"
-            | "y"
-            | "day"
-            | "dd"
-            | "d"
-            | "week"
-            | "ww"
-            | "wk"
-    )
+    FunctionConverter::is_date_datepart(datepart)
 }
 
 #[cfg(test)]
