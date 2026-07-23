@@ -56,6 +56,7 @@ mod error;
 mod function_mapper;
 
 pub use config::EmitterConfig;
+pub use converters::FunctionConverter;
 pub use error::EmitError;
 
 use common_sql::ast::clause::{GroupByItem, OrderByClause, SortDirection};

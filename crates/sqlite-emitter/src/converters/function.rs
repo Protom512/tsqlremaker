@@ -29,7 +29,7 @@
 /// # 例
 ///
 /// ```
-/// use sqlite_emitter::converters::FunctionConverter;
+/// use sqlite_emitter::FunctionConverter;
 ///
 /// assert_eq!(FunctionConverter::map_function_name("LEN"), Some("length"));
 /// assert_eq!(FunctionConverter::map_function_name("ISNULL"), Some("ifnull"));
