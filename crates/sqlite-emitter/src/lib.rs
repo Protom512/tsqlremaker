@@ -50,6 +50,7 @@
 #![warn(clippy::panic)]
 
 mod config;
+mod converters;
 mod ddl;
 mod error;
 mod function_mapper;
@@ -1636,6 +1637,185 @@ mod tests {
             sql.unwrap(),
             "SELECT (julianday('2024-01-10') - julianday('2024-01-01'))"
         );
+    }
+
+    // ============================================================
+    // DATEADD / DATEDIFF パラメトリック回帰テスト (T1 安全網)
+    //
+    // 目的: T2/T3 で emit_dateadd/emit_datediff/extract_date_expression を
+    // function_converter モジュールへ移動する際の安全網。
+    // 既存の個別テスト (test_dateadd_*, test_datediff_*) の期待出力を
+    // バイトレベルで正確にキャプチャし、テーブル駆動 (parametric) 形式で
+    // 再実行する。期待文字列を変更する場合は、対応する個別テストも同時に更新すること。
+    // ============================================================
+
+    /// DATEADD/DATEDIFF の入力 (関数名 + 引数式リスト)。
+    #[derive(Clone)]
+    struct DateCallCase {
+        name: &'static str,
+        args: Vec<Expression>,
+    }
+
+    /// 日付関数のパラメトリックケース。成功 (Ok) とエラー (Err) を両方扱う。
+    enum DateExpectation {
+        /// バイトレベルで完全一致することを検証する成功期待値 (SELECT ... の完全な SQL)。
+        Ok(&'static str),
+        /// エラーメッセージに部分文字列 `fragment` が含まれることを検証する。
+        Err { fragment: &'static str },
+    }
+
+    /// パラメトリックケース 1 件。
+    struct DateCase {
+        label: &'static str,
+        call: DateCallCase,
+        expected: DateExpectation,
+    }
+
+    /// 全日付関数回帰ケースのテーブル。
+    /// 既存の個別テスト (lines 1499-1639) の期待出力を正確に再現する。
+    fn date_regression_cases() -> Vec<DateCase> {
+        vec![
+            // --- DATEADD 成功系 (byte-exact) ---
+            DateCase {
+                label: "dateadd_day_with_getdate",
+                call: DateCallCase {
+                    name: "DATEADD",
+                    args: vec![str_expr("day"), int_expr(7), func_call("GETDATE", vec![])],
+                },
+                expected: DateExpectation::Ok("SELECT date('now', '+7 days')"),
+            },
+            DateCase {
+                label: "dateadd_month_with_string_date",
+                call: DateCallCase {
+                    name: "DATEADD",
+                    args: vec![str_expr("month"), int_expr(3), str_expr("2024-01-01")],
+                },
+                expected: DateExpectation::Ok("SELECT date('2024-01-01', '+3 months')"),
+            },
+            DateCase {
+                label: "dateadd_hour_negative_getdate",
+                call: DateCallCase {
+                    name: "DATEADD",
+                    args: vec![str_expr("hour"), int_expr(-2), func_call("GETDATE", vec![])],
+                },
+                expected: DateExpectation::Ok("SELECT datetime('now', '-2 hours')"),
+            },
+            DateCase {
+                label: "dateadd_quarter_multiplier",
+                call: DateCallCase {
+                    name: "DATEADD",
+                    args: vec![
+                        str_expr("quarter"),
+                        int_expr(1),
+                        func_call("GETDATE", vec![]),
+                    ],
+                },
+                expected: DateExpectation::Ok("SELECT date('now', '+3 months')"),
+            },
+            DateCase {
+                label: "dateadd_week_multiplier",
+                call: DateCallCase {
+                    name: "DATEADD",
+                    args: vec![str_expr("week"), int_expr(2), func_call("GETDATE", vec![])],
+                },
+                expected: DateExpectation::Ok("SELECT date('now', '+14 days')"),
+            },
+            DateCase {
+                label: "dateadd_with_identifier_datepart_and_date",
+                call: DateCallCase {
+                    name: "DATEADD",
+                    args: vec![ident_expr("day"), int_expr(7), ident_expr("created_at")],
+                },
+                expected: DateExpectation::Ok("SELECT date(created_at, '+7 days')"),
+            },
+            // --- DATEADD エラー系 ---
+            DateCase {
+                label: "dateadd_error_invalid_args",
+                call: DateCallCase {
+                    name: "DATEADD",
+                    args: vec![str_expr("day"), int_expr(7)],
+                },
+                expected: DateExpectation::Err {
+                    fragment: "expected 3 arguments",
+                },
+            },
+            DateCase {
+                label: "dateadd_error_unsupported_datepart_millisecond",
+                call: DateCallCase {
+                    name: "DATEADD",
+                    args: vec![
+                        str_expr("millisecond"),
+                        int_expr(100),
+                        str_expr("2024-01-01"),
+                    ],
+                },
+                expected: DateExpectation::Err {
+                    fragment: "millisecond",
+                },
+            },
+            // --- DATEDIFF 成功系 (byte-exact) ---
+            DateCase {
+                label: "datediff_day",
+                call: DateCallCase {
+                    name: "DATEDIFF",
+                    args: vec![
+                        str_expr("day"),
+                        str_expr("2024-01-01"),
+                        str_expr("2024-01-10"),
+                    ],
+                },
+                expected: DateExpectation::Ok(
+                    "SELECT (julianday('2024-01-10') - julianday('2024-01-01'))",
+                ),
+            },
+        ]
+    }
+
+    /// 日付関数呼び出しを SELECT リストに包んで emit する。
+    fn emit_date_select(call: &DateCallCase) -> Result<String, EmitError> {
+        let expr = func_call(call.name, call.args.clone());
+        let mut emitter = SqliteEmitter::default();
+        emitter.emit(&Statement::Select(Box::new(SelectStatement::simple(vec![
+            SelectItem::Expression { expr, alias: None },
+        ]))))
+    }
+
+    #[test]
+    fn test_date_functions_parametric_regression() {
+        for case in date_regression_cases() {
+            let result = emit_date_select(&case.call);
+            match case.expected {
+                DateExpectation::Ok(expected) => {
+                    let actual = match result {
+                        Ok(sql) => sql,
+                        Err(e) => panic!("[{}] expected Ok, got Err: {e}", case.label),
+                    };
+                    // バイトレベル完全一致 (spacing / quote / modifier syntax 含む)。
+                    assert_eq!(
+                        actual, expected,
+                        "[{}] byte-level mismatch (T1 safety-net). \
+                         formatting must not change during T2/T3 move",
+                        case.label,
+                    );
+                }
+                DateExpectation::Err { fragment } => {
+                    let err = match result {
+                        Ok(sql) => panic!(
+                            "[{}] expected Err containing {:?}, got Ok: {sql}",
+                            case.label, fragment
+                        ),
+                        Err(e) => e,
+                    };
+                    assert!(
+                        err.to_string().contains(fragment),
+                        "[{}] error message {:?} should contain {:?}",
+                        case.label,
+                        err.to_string(),
+                        fragment,
+                    );
+                }
+            }
+        }
     }
 
     // ============================================================
