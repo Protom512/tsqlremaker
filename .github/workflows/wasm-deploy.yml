@@ -29,6 +29,20 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # CTO 2026-07-21 (option (a) — PR #201 / #194): see ci.yml env note. ase-rs
+  # is PRIVATE; the default GITHUB_TOKEN cannot read it. `wasm-pack build`
+  # internally shells out to `cargo metadata` / `cargo build`, which resolves
+  # the workspace-wide dependency graph and thus fetches the ase-rs git source
+  # pinned in Cargo.lock (schema-diff is a workspace member). Without these
+  # three env vars the fetch failed with `could not read Username` (exit 128) on
+  # BOTH `Build WASM` and `Test WASM Build` (PR #204 CI red). Auth is NOT
+  # feature-gated: cargo metadata resolves the whole workspace regardless of
+  # the `--features wasm` flag, so the PAT must be present here too. Routed
+  # through the system git CLI (`net.git-fetch-with-cli = true` in
+  # `.cargo/config.toml`) so git honors GIT_ASKPASS.
+  CARGO_ASE_RS_TOKEN: ${{ secrets.CARGO_ASE_RS_TOKEN }}
+  GIT_ASKPASS: ${{ github.workspace }}/.github/scripts/ase-rs-askpass.sh
+  GIT_TERMINAL_PROMPT: "0"
 
 permissions:
   contents: read

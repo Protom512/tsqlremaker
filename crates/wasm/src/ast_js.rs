@@ -137,34 +137,41 @@ pub enum JsStatement {
 impl TryFrom<Statement> for JsStatement {
     type Error = String;
 
+    /// Issue #61: 旧実装はパース済み AST を無視してハードコード stub を返していた。
+    /// 本 impl は純粋な delegate であり、実ロジックは
+    /// [`crate::ast_convert`] (non-wasm, nextest で検証済み) に委譲する。
     fn try_from(stmt: Statement) -> Result<Self, String> {
+        // 先に CREATE TRIGGER を検出して JsStatement::Trigger に redirect する。
+        // ast_convert::create_to_js は Trigger を (None, None) として返し、本 impl は
+        // Trigger 専用 variant を使用するため、ここで分岐する。
+        if matches!(
+            stmt,
+            Statement::Create(ref c) if matches!(**c, tsql_parser::CreateStatement::Trigger(_))
+        ) {
+            return Ok(Self::Trigger);
+        }
+
         match stmt {
-            Statement::Select(_) => Ok(Self::Select {
-                columns: vec!["*".to_string()], // Simplified
-                from: None,
+            Statement::Select(s) => {
+                let (columns, from) = crate::ast_convert::select_to_js(&s);
+                Ok(Self::Select { columns, from })
+            }
+            Statement::Insert(s) => Ok(Self::Insert {
+                // InsertStatement.table は Identifier。name を直接取り出す。
+                table: Some(s.table.name.clone()),
             }),
-            Statement::Insert(_) => Ok(Self::Insert { table: None }),
-            Statement::Update(_) => Ok(Self::Update { table: None }),
-            Statement::Delete(_) => Ok(Self::Delete { table: None }),
-            Statement::Create(s) => match *s {
-                tsql_parser::CreateStatement::Table(_) => Ok(Self::Create {
-                    object_type: Some("TABLE".to_string()),
-                    name: None,
-                }),
-                tsql_parser::CreateStatement::Index(_) => Ok(Self::Create {
-                    object_type: Some("INDEX".to_string()),
-                    name: None,
-                }),
-                tsql_parser::CreateStatement::View(_) => Ok(Self::Create {
-                    object_type: Some("VIEW".to_string()),
-                    name: None,
-                }),
-                tsql_parser::CreateStatement::Procedure(_) => Ok(Self::Create {
-                    object_type: Some("PROCEDURE".to_string()),
-                    name: None,
-                }),
-                tsql_parser::CreateStatement::Trigger(_) => Ok(Self::Trigger),
-            },
+            Statement::Update(s) => Ok(Self::Update {
+                // UpdateStatement.table は TableReference → table_ref_to_name で解決。
+                table: crate::ast_convert::table_ref_to_name(&s.table),
+            }),
+            Statement::Delete(s) => Ok(Self::Delete {
+                // DeleteStatement.table は Identifier。name を直接取り出す。
+                table: Some(s.table.name.clone()),
+            }),
+            Statement::Create(s) => {
+                let (object_type, name) = crate::ast_convert::create_to_js(&s);
+                Ok(Self::Create { object_type, name })
+            }
             Statement::Block(_) => Ok(Self::Block),
             Statement::If(_) => Ok(Self::IfStatement),
             Statement::While(_) => Ok(Self::WhileStatement),
@@ -181,6 +188,130 @@ impl TryFrom<Statement> for JsStatement {
             Statement::Raiserror(_) => Ok(Self::Raiserror),
             Statement::Exec(_) => Ok(Self::Exec),
             Statement::AlterTable(_) => Ok(Self::AlterTable),
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "wasm")]
+#[allow(clippy::unwrap_used)]
+#[allow(clippy::panic)]
+#[allow(clippy::expect_used)]
+mod delegate_tests {
+    use super::*;
+
+    // Issue #61: end-to-end delegate 検証。ヘルパ単体テスト (ast_convert.rs) と
+    // TryFrom の接続を検証し、旧ハードコード stub (columns=["*"], table=None,
+    // name=None) が実際の AST データで置き換えられたことを保証する。
+
+    /// SELECT a, b FROM t → columns=["a","b"], from=Some("t") (旧 stub は ["*"]/None)
+    #[test]
+    fn delegate_select_populates_real_columns_and_from() {
+        let stmts = tsql_parser::parse("SELECT a, b FROM t").unwrap();
+        let js = JsStatement::try_from(stmts.into_iter().next().unwrap()).unwrap();
+        match js {
+            JsStatement::Select { columns, from } => {
+                assert_eq!(columns, vec!["a".to_string(), "b".to_string()]);
+                assert_eq!(from.as_deref(), Some("t"));
+            }
+            other => panic!("expected Select, got {other:?}"),
+        }
+    }
+
+    /// INSERT INTO t (a) VALUES (1) → table=Some("t") (旧 stub は None)
+    #[test]
+    fn delegate_insert_populates_real_table() {
+        let stmts = tsql_parser::parse("INSERT INTO t (a) VALUES (1)").unwrap();
+        let js = JsStatement::try_from(stmts.into_iter().next().unwrap()).unwrap();
+        match js {
+            JsStatement::Insert { table } => {
+                assert_eq!(table.as_deref(), Some("t"));
+            }
+            other => panic!("expected Insert, got {other:?}"),
+        }
+    }
+
+    /// UPDATE t SET a = 1 → table=Some("t") (旧 stub は None)
+    #[test]
+    fn delegate_update_populates_real_table() {
+        let stmts = tsql_parser::parse("UPDATE t SET a = 1").unwrap();
+        let js = JsStatement::try_from(stmts.into_iter().next().unwrap()).unwrap();
+        match js {
+            JsStatement::Update { table } => {
+                assert_eq!(table.as_deref(), Some("t"));
+            }
+            other => panic!("expected Update, got {other:?}"),
+        }
+    }
+
+    /// DELETE FROM t WHERE a = 1 → table=Some("t") (旧 stub は None)
+    #[test]
+    fn delegate_delete_populates_real_table() {
+        let stmts = tsql_parser::parse("DELETE FROM t WHERE a = 1").unwrap();
+        let js = JsStatement::try_from(stmts.into_iter().next().unwrap()).unwrap();
+        match js {
+            JsStatement::Delete { table } => {
+                assert_eq!(table.as_deref(), Some("t"));
+            }
+            other => panic!("expected Delete, got {other:?}"),
+        }
+    }
+
+    /// CREATE TABLE t (id INT) → object_type="TABLE", name=Some("t") (旧 stub は None)
+    #[test]
+    fn delegate_create_table_populates_object_and_name() {
+        let stmts = tsql_parser::parse("CREATE TABLE t (id INT)").unwrap();
+        let js = JsStatement::try_from(stmts.into_iter().next().unwrap()).unwrap();
+        match js {
+            JsStatement::Create { object_type, name } => {
+                assert_eq!(object_type.as_deref(), Some("TABLE"));
+                assert_eq!(name.as_deref(), Some("t"));
+            }
+            other => panic!("expected Create, got {other:?}"),
+        }
+    }
+
+    /// CREATE INDEX idx ON t (c) → object_type="INDEX", name=Some("idx")
+    #[test]
+    fn delegate_create_index_populates_object_and_name() {
+        let stmts = tsql_parser::parse("CREATE INDEX idx ON t (c)").unwrap();
+        let js = JsStatement::try_from(stmts.into_iter().next().unwrap()).unwrap();
+        match js {
+            JsStatement::Create { object_type, name } => {
+                assert_eq!(object_type.as_deref(), Some("INDEX"));
+                assert_eq!(name.as_deref(), Some("idx"));
+            }
+            other => panic!("expected Create, got {other:?}"),
+        }
+    }
+
+    /// CREATE TRIGGER → 専用 Trigger variant (Create ではない)
+    #[test]
+    fn delegate_create_trigger_routes_to_trigger_variant() {
+        let stmts =
+            tsql_parser::parse("CREATE TRIGGER tr ON t FOR INSERT AS BEGIN RETURN END").unwrap();
+        let js = JsStatement::try_from(stmts.into_iter().next().unwrap()).unwrap();
+        assert!(
+            matches!(js, JsStatement::Trigger),
+            "CREATE TRIGGER must map to Trigger variant, got {js:?}"
+        );
+    }
+
+    /// SELECT a + b FROM t → BinaryOp は EXPR_PLACEHOLDER へフォールバック
+    #[test]
+    fn delegate_select_binary_op_falls_back_to_placeholder() {
+        let stmts = tsql_parser::parse("SELECT a + b FROM t").unwrap();
+        let js = JsStatement::try_from(stmts.into_iter().next().unwrap()).unwrap();
+        match js {
+            JsStatement::Select { columns, .. } => {
+                assert!(
+                    columns
+                        .iter()
+                        .any(|c| c == crate::ast_convert::EXPR_PLACEHOLDER),
+                    "BinaryOp must fall back to placeholder, got {columns:?}"
+                );
+            }
+            other => panic!("expected Select, got {other:?}"),
         }
     }
 }
