@@ -369,20 +369,20 @@ Group 5 (Group 4 依存):
 
 ### 各タスク完了時
 
-- [ ] コードが `cargo fmt` でフォーマットされている
-- [ ] `cargo clippy` で警告がない
-- [ ] `cargo check` でコンパイルエラーがない
-- [ ] ユニットテストが追加されている
-- [ ] テストがパスしている
+- [x] コードが `cargo fmt` でフォーマットされている
+- [x] `cargo clippy` で警告がない
+- [x] `cargo check` でコンパイルエラーがない
+- [x] ユニットテストが追加されている
+- [x] テストがパスしている
 
 ### 実装完了時（全タスク）
 
-- [ ] 全てのタスクが完了
-- [ ] `cargo test --package postgresql-emitter` がパス
-- [ ] カバレッジ 80% 以上
-- [ ] ドキュメントコメントが追加されている
-- [ ] `cargo doc --no-deps` で警告がない
-- [ ] 実際の T-SQL が PostgreSQL に変換できる
+- [x] 全てのタスクが完了
+- [x] `cargo test --package postgresql-emitter` がパス
+- [x] カバレッジ 80% 以上
+- [x] ドキュメントコメントが追加されている
+- [x] `cargo doc --no-deps` で警告がない
+- [x] 実際の T-SQL が PostgreSQL に変換できる
 
 ## T-SQL → PostgreSQL 変換フィクスチャ例
 

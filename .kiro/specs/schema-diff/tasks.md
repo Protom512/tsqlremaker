@@ -255,9 +255,11 @@ T1 (本 spec) は全12タスクのクリティカルパス上にあるため、P
 
 ## チェックリスト (実行前)
 
-- [ ] design gate (CTO) が T1 を承認 (全フィールド列挙 / dangling 参照解決 / 破壊的変更方針 / common-sql stability contract / ASE 依存決定 / **wasm silent-drop→hard-fail parity (§0.5)** / **DataType 非対応型短絡方針 (§0.6)** の7点)
-- [ ] **`.kiro/specs/schema-diff/` が git tracked であること** (spec 未コミット状態での ESTIMATE 承認・実装着手は不可 — parallel-impl-workflow 前提)
-- [ ] T2 が Group B/C 解放の hard prereq であることを全員が認識
-- [ ] T11 CLI が `ase` feature 無しで完全テスト可能であることを T1 時点で検証済み (design §0.1 + §5)
-- [ ] 並列実行時は `parallel-impl-workflow.md` の git worktree 分離を適用 (同じファイルへの並列編集回避)
-- [ ] T2 の品質 gate が `cargo nextest run --workspace` であることを Engineer が認識 (単 `-p tsql-parser` は P-003 違反)
+> **状態 (2026-07-24 update)**: T1 meta gate は CTO 承認済み。T2-T11 全タスク master 着地済み (PR #181/#183/#185/#187/#189/#191/#193/#201)。Issue #162 CLOSED (2026-07-20)。以下は実行前 gate として満たされた項目の実績記録。
+
+- [x] design gate (CTO) が T1 を承認 (全フィールド列挙 / dangling 参照解決 / 破壊的変更方針 / common-sql stability contract / ASE 依存決定 / **wasm silent-drop→hard-fail parity (§0.5)** / **DataType 非対応型短絡方針 (§0.6)** の7点)
+- [x] **`.kiro/specs/schema-diff/` が git tracked であること** (spec 未コミット状態での ESTIMATE 承認・実装着手は不可 — parallel-impl-workflow 前提)
+- [x] T2 が Group B/C 解放の hard prereq であることを全員が認識
+- [x] T11 CLI が `ase` feature 無しで完全テスト可能であることを T1 時点で検証済み (design §0.1 + §5)
+- [x] 並列実行時は `parallel-impl-workflow.md` の git worktree 分離を適用 (同じファイルへの並列編集回避)
+- [x] T2 の品質 gate が `cargo nextest run --workspace` であることを Engineer が認識 (単 `-p tsql-parser` は P-003 違反)
