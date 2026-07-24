@@ -40,14 +40,14 @@ Group 4 (Group 3 依存):
 
 **依存**: なし
 
-- [ ] 1.1 (P) mysql-emitter クレートの作成
+- [x] 1.1 (P) mysql-emitter クレートの作成
   - `crates/mysql-emitter/Cargo.toml` を作成
   - `common-sql-ast` への依存を追加
   - `thiserror` への依存を追加
   - `src/lib.rs` にモジュール宣言を追加
   - `_Requirements: 17_
 
-- [ ] 1.2 (P) EmitError の実装
+- [x] 1.2 (P) EmitError の実装
   - `EmitError` enum を実装
   - `UnsupportedStatement`, `UnsupportedExpression`, `UnsupportedDataType`, `UnsupportedFunction` variantを追加
   - `thiserror` を使用してエラー型を定義
@@ -55,7 +55,7 @@ Group 4 (Group 3 依存):
   - 単体テストを追加
   - `_Requirements: 13_
 
-- [ ] 1.3 (P) EmitterConfig の実装
+- [x] 1.3 (P) EmitterConfig の実装
   - `EmitterConfig` 構造体を実装
   - `format: bool`, `indent_size: usize` フィールドを追加
   - `Debug`, `Clone` を derive
@@ -69,7 +69,7 @@ Group 4 (Group 3 依存):
 
 **依存**: Group 0 完了
 
-- [ ] 2.1 (P) DataTypeConverter の実装
+- [x] 2.1 (P) DataTypeConverter の実装
   - `DataTypeConverter` 構造体を実装（ユニット構造体）
   - `convert()` メソッドを実装
     - `TinyInt` → `TINYINT`
@@ -98,7 +98,7 @@ Group 4 (Group 3 依存):
   - 単体テストを追加（全24パターン）
   - `_Requirements: 2_
 
-- [ ] 2.2 (P) FunctionConverter の実装
+- [x] 2.2 (P) FunctionConverter の実装
   - `FunctionConverter` 構造体を実装（ユニット構造体）
   - `convert_function()` メソッドを実装
     - 引数: `name: &Identifier`, `args: &[Expression]`, `distinct: bool`, `emitter: &mut MySqlEmitter`
@@ -119,7 +119,7 @@ Group 4 (Group 3 依存):
   - 単体テストを追加（全27パターン）
   - `_Requirements: 3_
 
-- [ ] 2.3 (P) SyntaxConverter の実装
+- [x] 2.3 (P) SyntaxConverter の実装
   - `SyntaxConverter` 構造体を実装（ユニット構造体）
   - `convert_top_to_limit()` メソッドを実装
     - `TOP n` を `LIMIT n` に変換
@@ -137,7 +137,7 @@ Group 4 (Group 3 依存):
 
 **依存**: Group 0, 1 完了
 
-- [ ] 3.1 MySqlEmitter 構造体の実装
+- [x] 3.1 MySqlEmitter 構造体の実装
   - `MySqlEmitter` 構造体を実装
     - `buffer: String` フィールド
     - `indent_level: usize` フィールド
@@ -149,7 +149,7 @@ Group 4 (Group 3 依存):
   - 単体テストを追加
   - `_Requirements: 1, 14, 16_
 
-- [ ] 3.2 Visitor trait - Statement の実装
+- [x] 3.2 Visitor trait - Statement の実装
   - `Visitor` trait を `MySqlEmitter` に実装
   - `type Output = String` を定義
   - `visit_statement()` メソッドを実装
@@ -164,7 +164,7 @@ Group 4 (Group 3 依存):
   - 単体テストを追加
   - `_Requirements: 1, 5, 6, 7, 8, 9_
 
-- [ ] 3.3 Visitor trait - Expression の実装
+- [x] 3.3 Visitor trait - Expression の実装
   - 以下の visit メソッドを実装
     - `visit_expression()` - ディスパッチ
     - `visit_literal()`
@@ -192,7 +192,7 @@ Group 4 (Group 3 依存):
 
 **依存**: Group 2 完了
 
-- [ ] 4.1 SELECT 文生成の実装
+- [x] 4.1 SELECT 文生成の実装
   - `visit_select_statement()` の詳細実装
     - WITH 句（CTE）の出力
     - SELECT リストの出力
@@ -208,7 +208,7 @@ Group 4 (Group 3 依存):
   - 単体テストを追加
   - `_Requirements: 5, 1_
 
-- [ ] 4.2 INSERT 文生成の実装
+- [x] 4.2 INSERT 文生成の実装
   - `visit_insert_statement()` の詳細実装
     - `INSERT INTO table VALUES (...)`
     - `INSERT INTO table (cols) VALUES (...)`
@@ -217,7 +217,7 @@ Group 4 (Group 3 依存):
   - 単体テストを追加
   - `_Requirements: 6, 1_
 
-- [ ] 4.3 UPDATE/DELETE 文生成の実装
+- [x] 4.3 UPDATE/DELETE 文生成の実装
   - `visit_update_statement()` の詳細実装
     - FROM 句がある場合、JOIN に変換
     - TOP を LIMIT に変換
@@ -227,7 +227,7 @@ Group 4 (Group 3 依存):
   - 単体テストを追加
   - `_Requirements: 7, 8, 4, 1_
 
-- [ ] 4.4 DDL 文生成の実装
+- [x] 4.4 DDL 文生成の実装
   - `visit_create_table_statement()` の詳細実装
     - `CREATE TABLE table (...)`
     - カラム定義の出力（名前、型、制約）
@@ -247,7 +247,7 @@ Group 4 (Group 3 依存):
 
 **依存**: Group 3 完了
 
-- [ ] 5.1 Formatter の実装
+- [x] 5.1 Formatter の実装
   - `Formatter` 構造体を実装
   - `format()` メソッドを実装
     - 適切な位置で改行を挿入
@@ -256,7 +256,7 @@ Group 4 (Group 3 依存):
   - 単体テストを追加
   - `_Requirements: 16_
 
-- [ ] 5.2 単体テストの実装
+- [x] 5.2 単体テストの実装
   - 各コンポーネントの単体テストを実装
     - `DataTypeConverter` テスト（24パターン）
     - `FunctionConverter` テスト（27パターン）
@@ -267,7 +267,7 @@ Group 4 (Group 3 依存):
   - クリティカルパス（データ型、関数、構文変換）は 90% 以上
   - `_Requirements: 13, 15_
 
-- [ ] 5.3 統合テストの実装
+- [x] 5.3 統合テストの実装
   - `tests/fixtures/` に SQL フィクスチャを作成
     - `select.sql` - 各種 SELECT クエリ
     - `insert.sql` - INSERT 文
@@ -314,22 +314,22 @@ Group 4 (Group 3 依存):
 
 ### 各タスク完了時
 
-- [ ] コードが `cargo fmt` でフォーマットされている
-- [ ] `cargo clippy` で警告がない
-- [ ] `cargo check` でコンパイルエラーがない
-- [ ] `cargo test` でテストがパスしている
-- [ ] `panic!` / `unwrap()` / `expect()` が使用されていない
-- [ ] エラー処理が `Result` 型で実装されている
+- [x] コードが `cargo fmt` でフォーマットされている
+- [x] `cargo clippy` で警告がない
+- [x] `cargo check` でコンパイルエラーがない
+- [x] `cargo test` でテストがパスしている
+- [x] `panic!` / `unwrap()` / `expect()` が使用されていない
+- [x] エラー処理が `Result` 型で実装されている
 
 ### 実装完了時（全タスク）
 
-- [ ] 全てのタスクが完了
-- [ ] `cargo test --package mysql-emitter` がパス
-- [ ] カバレッジ 80% 以上（クリティカルパス 90% 以上）
-- [ ] ドキュメントコメントが追加されている
-- [ ] `cargo doc --no-deps` で警告がない
-- [ ] `common-sql-ast` のみに依存している
-- [ ] `tsql-parser` / `tsql-lexer` に直接依存していない
+- [x] 全てのタスクが完了
+- [x] `cargo test --package mysql-emitter` がパス
+- [x] カバレッジ 80% 以上（クリティカルパス 90% 以上）
+- [x] ドキュメントコメントが追加されている
+- [x] `cargo doc --no-deps` で警告がない
+- [x] `common-sql-ast` のみに依存している
+- [x] `tsql-parser` / `tsql-lexer` に直接依存していない
 
 ## 要件カバレッジ
 
