@@ -167,3 +167,4 @@ CTO は design review で上記を満たさない設計を**REJECT**する（「
 - [ ] 影響を受ける既存モジュールを特定した
 - [ ] **設計書が構造体フィールドを完全列挙し、全参照型が定義済み（dangling参照なし）**
 - [ ] **完了宣言には `cargo nextest run --workspace` の貼り付け出力が伴う（lib-only check は不可）**
+- [ ] **パーサー/ランタイム挙動に依存する見積もりは empirical probe で前提を実証**（例: 破棄可能な `examples/<name>_probe.rs` で span/variant 挙動を確認し「未検証」を「実証済み」に格上げ・probe はコミットしない）
